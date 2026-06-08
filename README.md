@@ -23,6 +23,7 @@ Install from the source tree:
 
 ```bash
 git clone https://github.com/JinsenLi/pyCurves
+cd pyCurves
 pip install .
 ```
 
