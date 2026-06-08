@@ -16,6 +16,7 @@ for reproducibility and downstream comparison.
 
 ```
 conda create -n pycurves python=3.12
+conda activate pycurves
 ```
 
 Install from the source tree:
