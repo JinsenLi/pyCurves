@@ -266,8 +266,6 @@ runner.analyze()
 json_text = runner.output(fmt="json")
 ```
 
-The installed `process_dna` module provides a pyCurves-backed compatibility
-function for downstream pipelines that previously used DSSR/X3DNA plus Curves.
 
 ## Project Layout
 
