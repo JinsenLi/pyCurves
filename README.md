@@ -12,6 +12,12 @@ for reproducibility and downstream comparison.
 
 ## Quick Start
 
+(Optional) It is highly recommended to use a standalone environment to install pyCurves.
+
+```
+conda create -n pycurves python=3.12
+```
+
 Install from the source tree:
 
 ```bash
