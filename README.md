@@ -15,7 +15,8 @@ for reproducibility and downstream comparison.
 Install from the source tree:
 
 ```bash
-pip install -e .
+git clone https://github.com/JinsenLi/pyCurves
+pip install .
 ```
 
 Run a structure directly from PDB or mmCIF:
