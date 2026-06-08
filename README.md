@@ -92,12 +92,6 @@ Basic install:
 pip install .
 ```
 
-Editable development install:
-
-```bash
-pip install -e .
-```
-
 The package installs these command-line entry points:
 
 ```bash
