@@ -10,6 +10,10 @@ The default mode keeps the legacy Curves 5.3 curvilinear-axis minimization, but
 pyCurves also supports standard Curves+/3DNA-compatible local reference frames
 for reproducibility and downstream comparison.
 
+This project is being developed and will be updated periodically. Functions are subject to change 
+without prior notice.
+If you use this work before publication, please cite this github page. 
+
 ## Quick Start
 
 (Optional) It is highly recommended to use a standalone environment to install pyCurves.
