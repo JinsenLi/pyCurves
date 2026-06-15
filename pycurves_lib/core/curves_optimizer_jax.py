@@ -282,9 +282,16 @@ class HelicalOptimizerJAX(HelicalOptimizer):
 
     def enable_jax_mode(self):
         p = self.ctx.params
+        axis_frames = getattr(p, "axis_frames", None)
+        if (
+            axis_frames is None
+            or axis_frames.shape != p.frames.shape
+            or not np.any(axis_frames)
+        ):
+            axis_frames = p.frames
 
         self._j_li = jnp.asarray(self.ctx.li, dtype=jnp.int32)
-        self._j_frames = jnp.asarray(p.frames, dtype=jnp.float64)
+        self._j_frames = jnp.asarray(axis_frames, dtype=jnp.float64)
         self._j_efd = jnp.asarray(getattr(p, 'efd'), dtype=jnp.float64)
         self._j_efc = jnp.asarray(getattr(p, 'efc'), dtype=jnp.float64)
         self._j_helical0 = jnp.asarray(p.helical, dtype=jnp.float64)

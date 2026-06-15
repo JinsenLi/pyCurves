@@ -8,11 +8,11 @@ class MolecularLoader:
     Replaces the functionality of input.f.
     Responsible for parsing coordinate files and populating MolecularStructure.
     """
-    
+
     # Element lookup table simplified from Fortran 'nam' and 'ind' [cite: 2, 12]
     ELEMENT_MAP = {
         'H': 1, 'HE': 2, 'LI': 3, 'BE': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'NE': 10,
-        # ... Add other elements as needed. 
+        # ... Add other elements as needed.
         # Curves specific: 'M' maps to Carbon (6), 'W' maps to Oxygen (8).
         'M': 6, 'W': 8
     }
@@ -40,7 +40,7 @@ class MolecularLoader:
                 break
             clean_name = name.strip()
             standardized_names.append(clean_name)
-            
+
             first_char = "".join(filter(str.isalpha, clean_name))[:1].upper()
             element_indices.append(MolecularLoader.ELEMENT_MAP.get(first_char, 0))
 
@@ -69,9 +69,9 @@ class MolecularLoader:
         else:
             raise ValueError(f"Unknown geometry file type: {file_path}")
 
-        # Post-processing equivalent to Fortran loops 10 and 12 
+        # Post-processing equivalent to Fortran loops 10 and 12
         MolecularLoader._standardize_and_map(context)
-        # Identify subunit boundaries (ncen) 
+        # Identify subunit boundaries (ncen)
         MolecularLoader._find_subunits(context)
         MolecularLoader._build_connectivity(context)
 
@@ -109,11 +109,11 @@ class MolecularLoader:
                     except ValueError:
                         crystal_cell = None
                         spacegroup_hm = ""
-                
+
                 is_atom = record == "ATOM  "
                 is_hetatm = record == "HETATM"
                 res_name = line[17:20].strip()
-                
+
                 if not is_atom:
                     if not (is_hetatm and is_known_modified_base(res_name)):
                         continue
@@ -149,7 +149,7 @@ class MolecularLoader:
         context.molecule.mcode = title
         context.molecule.crystal_cell = crystal_cell
         context.molecule.spacegroup_hm = spacegroup_hm
-        
+
         # Populate MolecularStructure
         n = len(atoms_data)
         context.molecule.kam = n
@@ -168,7 +168,7 @@ class MolecularLoader:
         doc = gemmi.cif.read_file(file_path)
         if not doc:
             raise ValueError(f"Empty CIF file: {file_path}")
-            
+
         block = doc[-1]
         title = block.find_value('_struct.title')
         if title:
@@ -177,7 +177,7 @@ class MolecularLoader:
             title = "No Title"
 
         st = gemmi.make_structure_from_block(block)
-        
+
         atoms_data = []
         if len(st) > 0:
             for chain in st[0]:  # Process only the first model
@@ -208,7 +208,7 @@ class MolecularLoader:
             st.cell.a, st.cell.b, st.cell.c, st.cell.alpha, st.cell.beta, st.cell.gamma
         ) if len(st) > 0 else None
         context.molecule.spacegroup_hm = st.spacegroup_hm if len(st) > 0 else ""
-        
+
         n = len(atoms_data)
         context.molecule.kam = n
         context.molecule.atom_names = np.array([a['name'] for a in atoms_data])
@@ -329,6 +329,8 @@ class MolecularLoader:
                 "opening": float_value(row, "opening"),
                 "pair_family": "hoogsteen" if is_hoogsteen else "watson_crick_or_other",
                 "is_hoogsteen": is_hoogsteen,
+                "shape_parameters_supported": True,
+                "shape_skip_reason": "",
             })
         return rows
 
@@ -549,8 +551,8 @@ class MolecularLoader:
                     "hbond_distances": hinfo["distances"],
                     "pair_family": "hoogsteen" if hinfo["is_hoogsteen"] else "geometry_inferred",
                     "is_hoogsteen": hinfo["is_hoogsteen"],
-                    "shape_parameters_supported": not hinfo["is_hoogsteen"],
-                    "shape_skip_reason": "hoogsteen_placeholder_pending_math" if hinfo["is_hoogsteen"] else "",
+                    "shape_parameters_supported": True,
+                    "shape_skip_reason": "",
                 })
 
         return expanded_atoms, generated_pairs
@@ -783,10 +785,10 @@ class MolecularLoader:
             header = lines[0].split()
             kam = int(header[0])
             context.molecule.kam = kam
-            
+
             # Implementation of fixed-format read for MAC [cite: 5]
             # (Simplified for demonstration)
-            pass 
+            pass
 
     @staticmethod
     def _find_subunits(context: 'CurvesContext'):
@@ -798,13 +800,13 @@ class MolecularLoader:
         res_names = mol.residue_names
         res_ids = mol.residue_ids
         chain_ids = mol.chain_ids if mol.chain_ids is not None else np.full(mol.kam, "")
-        
+
         boundaries = [0]
         if mol.kam > 0:
             current_name = res_names[0]
             current_id = res_ids[0]
             current_chain = chain_ids[0]
-            
+
             for i in range(1, mol.kam):
                 if (res_names[i] != current_name or
                         res_ids[i] != current_id or
@@ -814,10 +816,10 @@ class MolecularLoader:
                     current_id = res_ids[i]
                     current_chain = chain_ids[i]
             boundaries.append(mol.kam)
-        
+
         mol.subunit_boundaries = np.array(boundaries)
         mol.kcen = len(boundaries) - 1
-    
+
     @staticmethod
     def _build_connectivity(context: 'CurvesContext', threshold=1.8):
         """
@@ -826,12 +828,12 @@ class MolecularLoader:
         from scipy.spatial import KDTree
         coords = mol.coordinates
         tree = KDTree(coords)
-        
+
         pairs = tree.query_pairs(threshold)
-        
+
         connectivity = np.zeros((len(coords), 7), dtype=int)
         counts = np.zeros(len(coords), dtype=int)
-        
+
         for i, j in pairs:
             if counts[i] < 6:
                 connectivity[i, counts[i]] = j + 1
@@ -839,26 +841,26 @@ class MolecularLoader:
             if counts[j] < 6:
                 connectivity[j, counts[j]] = i + 1
                 counts[j] += 1
-        
+
         connectivity[:, 6] = counts
-                
+
         mol.connectivity = connectivity
 
     def _identify_base_atoms(self, strand: int, level: int, ctx: 'CurvesContext'):
         mol = ctx.molecule
         start_idx = mol.subunit_boundaries[level]
         end_idx = mol.subunit_boundaries[level + 1]
-        
+
         res_name = mol.residue_names[start_idx].strip().upper()
         is_purine = any(p in res_name for p in ['A', 'G', 'ADE', 'GUA'])
-        
+
         indices = {}
         for i in range(start_idx, end_idx):
             name = mol.atom_names[i]
-            
+
             if name in ["C1'", "C1*"]:
                 indices['v1_ref'] = i
-                
+
             if is_purine:
                 if name == 'N9': indices['base_origin_ref'] = i
                 if name == 'C4': indices['v2_ref'] = i
@@ -867,7 +869,7 @@ class MolecularLoader:
                 if name == 'N1': indices['base_origin_ref'] = i
                 if name == 'C2': indices['v2_ref'] = i
                 if name == 'C6': indices['v3_ref'] = i
-        
+
         if len(indices) < 4:
             return None
         return indices

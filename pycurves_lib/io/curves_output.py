@@ -598,7 +598,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 continue
             rows.append({
                 "annotation_type": "base_pair",
-                "severity": "warn" if row.get("is_hoogsteen") or row.get("is_mismatch") else "info",
+                "severity": "warn" if row.get("is_mismatch") else "info",
                 "level": row.get("level"),
                 "location": f"level {row.get('level')}",
                 "code": row.get("pair_family", ""),

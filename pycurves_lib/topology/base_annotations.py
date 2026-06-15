@@ -37,9 +37,9 @@ def annotate_context(ctx) -> Dict[str, List[Dict[str, Any]]]:
         "noncanonical_warnings": warnings,
     }
     ctx.annotations.update(annotations)
-    # These lists used to suppress Curves rows for unsupported/noncanonical
-    # geometries. They are intentionally kept empty now: pyCurves reports the
-    # current calculation and uses annotations to flag pending specialized math.
+    # Older output paths used these lists to suppress unsupported/noncanonical
+    # rows. Keep the keys for compatibility; current shape calculations report
+    # the available Hoogsteen/noncanonical values directly.
     ctx.annotations["unsupported_shape_levels"] = []
     ctx.annotations["unsupported_shape_steps"] = []
     return annotations
@@ -182,6 +182,8 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
                 "confidence": "topology_warning",
                 "method": "identity_and_inp_topology",
                 "geometry_flag": "",
+                "shape_parameters_supported": True,
+                "shape_skip_reason": "",
             })
             continue
 
@@ -194,9 +196,32 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
         geometry_flag = _geometry_flag(ctx, s1, s2, level)
         source_pair = source_by_level.get(level)
         source_hoogsteen = bool(source_pair and source_pair.get("is_hoogsteen"))
+        marked_hoogsteen = _hoogsteen_marker_matches(ctx, level, s1 + 1, s2 + 1)
         if source_hoogsteen:
             geometry_flag = "hoogsteen_from_source"
-        is_hoogsteen = source_hoogsteen or geometry_flag == "possible_hoogsteen"
+        elif marked_hoogsteen:
+            geometry_flag = "hoogsteen_from_inp"
+        is_hoogsteen = source_hoogsteen or marked_hoogsteen or geometry_flag == "possible_hoogsteen"
+        if source_hoogsteen:
+            pair_family = "hoogsteen"
+            pair_subtype = "source_annotation"
+            confidence = "source_mmcif"
+            method = "mmcif_ndb_struct_na_base_pair"
+        elif marked_hoogsteen:
+            pair_family = "hoogsteen"
+            pair_subtype = "inp_marker"
+            confidence = "inp_topology"
+            method = "inp_hoogsteen_marker"
+        elif geometry_flag == "possible_hoogsteen":
+            pair_family = "possible_hoogsteen"
+            pair_subtype = subtype
+            confidence = "heuristic_geometry"
+            method = "identity_and_base_pair_geometry"
+        else:
+            pair_family = family
+            pair_subtype = subtype
+            confidence = "identity"
+            method = "identity_and_base_pair_geometry"
         rows.append({
             "level": level,
             "strand_1": s1 + 1,
@@ -207,18 +232,18 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "base_2": b2,
             "parent_base_1": b1,
             "parent_base_2": b2,
-            "pair_family": "hoogsteen" if source_hoogsteen else ("possible_hoogsteen" if geometry_flag == "possible_hoogsteen" else family),
-            "pair_subtype": "source_annotation" if source_hoogsteen else subtype,
-            "is_canonical": canonical and not geometry_flag and not source_hoogsteen,
+            "pair_family": pair_family,
+            "pair_subtype": pair_subtype,
+            "is_canonical": canonical and not geometry_flag and not source_hoogsteen and not marked_hoogsteen,
             "is_mismatch": family == "mismatch" and not is_hoogsteen,
             "is_hoogsteen": is_hoogsteen,
             "has_modified_base": is_modified_base(r1["residue_name"]) or is_modified_base(r2["residue_name"]),
-            "confidence": "source_mmcif" if source_hoogsteen else ("heuristic_geometry" if geometry_flag else "identity"),
-            "method": "mmcif_ndb_struct_na_base_pair" if source_hoogsteen else "identity_and_base_pair_geometry",
+            "confidence": confidence,
+            "method": method,
             "geometry_flag": geometry_flag,
             "source_pair_number": source_pair.get("pair_number") if source_pair else None,
-            "shape_parameters_supported": not source_hoogsteen,
-            "shape_skip_reason": "hoogsteen_placeholder_pending_math" if source_hoogsteen else "",
+            "shape_parameters_supported": True,
+            "shape_skip_reason": "",
         })
     return rows
 
@@ -354,6 +379,18 @@ def _wrap_180(value: float) -> float:
     return float(value)
 
 
+def _hoogsteen_marker_matches(ctx, level: int, strand_1: int, strand_2: int) -> bool:
+    markers = getattr(ctx, "hoogsteen_markers", set()) or set()
+    if level in markers:
+        return True
+    return (
+        (strand_1, level) in markers
+        or (strand_2, level) in markers
+        or (strand_1, strand_2, level) in markers
+        or (strand_2, strand_1, level) in markers
+    )
+
+
 def _source_base_pair_annotations(ctx) -> List[Dict[str, Any]]:
     source_rows = list(getattr(ctx.molecule, "source_base_pairs", None) or [])
     if not source_rows:
@@ -412,8 +449,8 @@ def _source_base_pair_annotations(ctx) -> List[Dict[str, Any]]:
             "mapped_strand_1": mapped_strands[0] if mapped_strands else None,
             "mapped_strand_2": mapped_strands[1] if mapped_strands else None,
             "topology_status": "mapped_to_curves_level" if mapped_level is not None else "source_pair_not_in_current_inp_topology",
-            "shape_parameters_supported": not bool(row.get("is_hoogsteen")),
-            "shape_skip_reason": "hoogsteen_placeholder_pending_math" if row.get("is_hoogsteen") else "",
+            "shape_parameters_supported": mapped_level is not None,
+            "shape_skip_reason": "" if mapped_level is not None else "source_pair_not_in_current_inp_topology",
         }
         annotations.append(annotation)
     return annotations
@@ -430,7 +467,7 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs, skip
         if row.get("pair_family") == "ambiguous_topology":
             warnings.append(_warning("warn", "ambiguous_topology", location, row.get("pair_subtype", "")))
         elif row.get("is_hoogsteen"):
-            warnings.append(_warning("warn", "hoogsteen_pair", location, f"{row['residue_1']} paired with {row['residue_2']} is Hoogsteen-like; specialized Hoogsteen shape math is pending, so the current Curves-style values are reported as-is."))
+            warnings.append(_warning("info", "hoogsteen_pair", location, f"{row['residue_1']} paired with {row['residue_2']} is Hoogsteen-like; local shape parameters use Hoogsteen-aware fitted frames."))
         elif row.get("is_mismatch"):
             warnings.append(_warning("warn", "mismatch_pair", location, f"{row['residue_1']} paired with {row['residue_2']} is not Watson-Crick/wobble by identity."))
         elif row.get("pair_family") == "wobble":

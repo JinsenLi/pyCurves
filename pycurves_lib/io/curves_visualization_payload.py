@@ -326,12 +326,23 @@ class VisualizationPayloadMixin:
                 continue
             first_xyz = np.array([first["x"], first["y"], first["z"]], dtype=float)
             second_xyz = np.array([second["x"], second["y"], second["z"]], dtype=float)
-            midpoint = (first_xyz + second_xyz) / 2.0
+            atom_midpoint = (first_xyz + second_xyz) / 2.0
+            first_origin = first.get("frame_origin", {})
+            second_origin = second.get("frame_origin", {})
+            first_frame_origin = np.array([first_origin.get(axis, np.nan) for axis in ("x", "y", "z")], dtype=float)
+            second_frame_origin = np.array([second_origin.get(axis, np.nan) for axis in ("x", "y", "z")], dtype=float)
+            frame_midpoint = None
+            if _all_finite(first_frame_origin) and _all_finite(second_frame_origin):
+                frame_midpoint = (first_frame_origin + second_frame_origin) / 2.0
+            else:
+                frame_midpoint = atom_midpoint
             base_pairs.append({
                 "level": level,
                 "first": first,
                 "second": second,
-                "midpoint": point_payload(midpoint),
+                "midpoint": point_payload(atom_midpoint),
+                "atom_midpoint": point_payload(atom_midpoint),
+                "frame_midpoint": point_payload(frame_midpoint),
                 "pair_family": pair.get("pair_family", ""),
                 "pair_subtype": pair.get("pair_subtype", ""),
                 "is_canonical": bool(pair.get("is_canonical", False)),

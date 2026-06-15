@@ -662,6 +662,8 @@ class HelicalParameters:
     """
     # Fortran /dat/ block.
     frames: np.ndarray        # Fortran rex/rey/rez: base frame axes and origin
+    shape_frames: np.ndarray  # Shape-parameter frame view, including Hoogsteen fitted frames
+    axis_frames: np.ndarray   # Sign-continuous reference frames for the global-axis optimizer
     helical: np.ndarray       # Fortran hel: global base-axis parameters
     inter_base: np.ndarray    # Cached Section E global inter-base step parameters
     
@@ -764,6 +766,7 @@ class CurvesContext:
         self.ng = cfg.get('ng', np.zeros(self.nst, dtype=int))
         self.nr = cfg.get('nr', np.zeros(self.nst, dtype=int))
         self.ni_map = np.array(cfg['ni_map'])   # Fortran ni: subunit index per strand/level.
+        self.hoogsteen_markers = set(cfg.get('hoogsteen_markers', set()) or set())
         self.active_start_levels = self.ng  # Readable alias for Fortran ng.
         self.active_end_levels = self.nr  # Readable alias for Fortran nr.
         self.subunit_map = self.ni_map  # Readable alias for Fortran ni.
@@ -797,6 +800,8 @@ class CurvesContext:
 
         self.params = HelicalParameters(
             frames = np.zeros((self.n_strands, n3, 4, 3)),
+            shape_frames = np.zeros((self.n_strands, n3, 4, 3)),
+            axis_frames = np.zeros((self.n_strands, n3, 4, 3)),
             helical = np.zeros((self.n_strands, n3, 6)),
             inter_base = np.zeros((self.n_strands, n3, 6)),
             

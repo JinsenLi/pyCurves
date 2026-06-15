@@ -49,7 +49,6 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
         help="Global-axis convention. Default keeps the pyCurves legacy minimization axis; 'curvesplus' reproduces Curves+ axis/smooth output.",
     )
 
-
 def pycurves_runner_kwargs(args) -> dict:
     """Return CurvesWrapper keyword arguments from shared CLI options."""
     return {

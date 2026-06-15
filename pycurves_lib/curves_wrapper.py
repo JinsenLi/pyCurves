@@ -16,6 +16,7 @@ from pycurves_lib.core.curves_dataclasses import (
 from pycurves_lib.io.curves_config_loader import ConfigLoader
 from pycurves_lib.core.curves_analyzer import BackboneAnalyzer, HelicalOptimizer
 from pycurves_lib.core.curves_calculator import HelicalCalculator
+from pycurves_lib.core.parameter_conventions import build_axis_reference_frames
 from pycurves_lib.io.curves_output import CurvesOutputFormatter
 from pycurves_lib.topology.topology_inferrer import RobustTopologyInferrer
 from pycurves_lib.topology.base_annotations import annotate_context
@@ -73,12 +74,32 @@ class CurvesWrapper:
             self.inpfile = self.generated_inpfiles[0]
 
     @classmethod
-    def from_file(cls, path: str, output_dir: str = ".", continuous_strands: bool = False, frame_convention: str = "legacy", axis_convention: str = "legacy"):
+    def from_file(
+        cls,
+        path: str,
+        output_dir: str = ".",
+        continuous_strands: bool = False,
+        frame_convention: str = "legacy",
+        axis_convention: str = "legacy",
+    ):
         suffix = Path(path).suffix.lower()
         if suffix == ".inp":
             pdbfile = cls._pdbfile_from_inp(path)
-            return cls(pdbfile=pdbfile, inpfile=path, output_dir=output_dir, continuous_strands=continuous_strands, frame_convention=frame_convention, axis_convention=axis_convention)
-        return cls(pdbfile=path, output_dir=output_dir, continuous_strands=continuous_strands, frame_convention=frame_convention, axis_convention=axis_convention)
+            return cls(
+                pdbfile=pdbfile,
+                inpfile=path,
+                output_dir=output_dir,
+                continuous_strands=continuous_strands,
+                frame_convention=frame_convention,
+                axis_convention=axis_convention,
+            )
+        return cls(
+            pdbfile=path,
+            output_dir=output_dir,
+            continuous_strands=continuous_strands,
+            frame_convention=frame_convention,
+            axis_convention=axis_convention,
+        )
 
     def analyze(
         self,
@@ -104,7 +125,7 @@ class CurvesWrapper:
         )
         if self.mini_override is not None:
             mini = self.mini_override
-            
+
         if self.inpfile is None:
             self.generated_inpfiles = self.generate_inp(pdbfile=self.pdbfile, output_dir=self.output_dir, continuous_strands=self.continuous_strands)
             self.inpfile = self.generated_inpfiles[0]
@@ -173,6 +194,7 @@ class CurvesWrapper:
         locator = BaseLocator(BaseGeometryConstants(), reference_library=reference_library)
         log_parts.append(self._capture_call(lambda: locator.locate_all(self.ctx), echo=verbose))
         annotate_context(self.ctx)
+        build_axis_reference_frames(self.ctx)
 
         self.bak = BackboneAnalyzer()
         log_parts.append(self._capture_call(lambda: self.bak.analyze(self.ctx), echo=verbose))

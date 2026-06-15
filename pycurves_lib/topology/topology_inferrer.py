@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -55,8 +55,8 @@ BASE_PAIR_HBONDS = {
     ("G", "C"): (("N1", "N3"), ("N2", "O2"), ("O6", "N4")),
     ("G", "U"): (("N1", "O2"), ("O6", "N3")),
     ("I", "C"): (("N1", "N3"), ("O6", "N4")),
-    # Hoogsteen-like contacts are accepted for topology construction. Shape
-    # math remains annotated as pending elsewhere, but the pair belongs in inp.
+    # Hoogsteen-like contacts are accepted for topology construction and are
+    # marked in generated inp files so Hoogsteen-aware fitted frames are used.
     ("A", "T", "hoogsteen"): (("N7", "N3"), ("N6", "O4")),
     ("A", "U", "hoogsteen"): (("N7", "N3"), ("N6", "O4")),
     ("G", "C", "hoogsteen"): (("N7", "N3"), ("O6", "N4")),
@@ -88,6 +88,7 @@ class BasePairCandidate:
     score: float
     pair_family: str
     atom_pairs: Tuple[Tuple[str, str, float], ...]
+    is_hoogsteen: bool = False
 
 
 @dataclass
@@ -103,6 +104,7 @@ class InferredTopology:
     fit: bool = True
     grv: bool = True
     ends: bool = False
+    hoogsteen_markers: set = field(default_factory=set)
 
     @property
     def n_strands(self) -> int:
@@ -126,8 +128,17 @@ class InferredTopology:
         ]
         padded_nu = self.nu_raw + [0] * (4 - len(self.nu_raw))
         lines.append(" ".join([str(self.n_strands)] + [str(v) for v in padded_nu]))
-        for row in self.ni_map:
-            lines.append(" " + " ".join(str(int(v)) for v in row))
+        for strand, row in enumerate(self.ni_map, start=1):
+            tokens = []
+            for level, value in enumerate(row, start=1):
+                token = str(int(value))
+                if int(value) != 0 and (
+                    (strand, level) in self.hoogsteen_markers
+                    or level in self.hoogsteen_markers
+                ):
+                    token = f"{token}[Hoog]"
+                tokens.append(token)
+            lines.append(" " + " ".join(tokens))
         lines.append("0.0 0.0 0.0 0.0")
         if self.ends:
             lines.append("0.0 0.0 3.4 0.0 0.0 0.0")
@@ -398,6 +409,7 @@ class RobustTopologyInferrer:
                         score=-100.0 + center_distance,
                         pair_family="source_annotated",
                         atom_pairs=(),
+                        is_hoogsteen=bool(row.get("is_hoogsteen")),
                     ))
         return candidates
 
@@ -442,6 +454,7 @@ class RobustTopologyInferrer:
             score=score,
             pair_family=pair_family,
             atom_pairs=tuple(matches),
+            is_hoogsteen=pair_family == "hoogsteen_like",
         )
 
     def _pattern_hbond_matches(
@@ -651,6 +664,28 @@ class RobustTopologyInferrer:
         nu_raw = [sum(1 for subunit in row_1 if subunit > 0), partner_direction * sum(1 for subunit in row_2 if subunit > 0)]
         ni_map = np.array([row_1, row_2], dtype=int)
         pair_edges = [(candidate.first, candidate.second) for candidate in selected_pairs]
+        level_by_subunit = {}
+        strand_by_subunit = {}
+        for level, subunit in enumerate(row_1, start=1):
+            if subunit > 0:
+                level_by_subunit[subunit] = level
+                strand_by_subunit[subunit] = 1
+        for level, subunit in enumerate(row_2, start=1):
+            if subunit > 0:
+                level_by_subunit[subunit] = level
+                strand_by_subunit[subunit] = 2
+        hoogsteen_markers = set()
+        for candidate in selected_pairs:
+            if not candidate.is_hoogsteen:
+                continue
+            if candidate.first not in level_by_subunit or candidate.second not in level_by_subunit:
+                continue
+            if level_by_subunit[candidate.first] != level_by_subunit[candidate.second]:
+                continue
+            marker_subunit = self._hoogsteen_marker_subunit(candidate)
+            if marker_subunit not in level_by_subunit:
+                continue
+            hoogsteen_markers.add((strand_by_subunit[marker_subunit], level_by_subunit[marker_subunit]))
 
         return InferredTopology(
             pdbfile=self.pdbfile,
@@ -663,7 +698,19 @@ class RobustTopologyInferrer:
             comb=True,
             fit=True,
             grv=paired_count >= 4,
+            hoogsteen_markers=hoogsteen_markers,
         )
+
+    def _hoogsteen_marker_subunit(self, candidate: BasePairCandidate) -> int:
+        """Return the base that uses the Hoogsteen edge in a marked pair."""
+        purines = {"A", "G", "I"}
+        first_is_purine = self.residues[candidate.first].base in purines
+        second_is_purine = self.residues[candidate.second].base in purines
+        if first_is_purine and not second_is_purine:
+            return candidate.first
+        if second_is_purine and not first_is_purine:
+            return candidate.second
+        return candidate.first
 
     def _drop_isolated_register_outliers(
         self,

@@ -18,9 +18,11 @@ class CurvesPlusAxisMixin:
     def _calculate_curvesplus_global_parameters(self):
         """Curves+ standard global axis/BP-axis path.
 
-        Curves+ first forms base-pair mean frames (``upm``) from fitted
-        standard base frames, then derives and smooths a curvilinear helical
-        axis (``uvw``) from adjacent base screw axes.
+        Curves+ first forms base-pair mean frames (``upm``) from standard
+        reference frames, then derives and smooths a curvilinear helical axis
+        (``uvw``) from adjacent base screw axes.  Hoogsteen-aware runs use the
+        same axis reference frames as the legacy optimizer so syn/Hoogsteen
+        discontinuities do not bend the smooth path.
         """
         if not (self.ctx.cfg.comb and self.ctx.nst > 1):
             return
@@ -28,23 +30,35 @@ class CurvesPlusAxisMixin:
         ref = self._curvesplus_reference_frames()
         upm = self._curvesplus_base_pair_frames(ref)
         uvw = self._curvesplus_smoothed_axis(ref, upm)
-        invert = self._curvesplus_inversion_flags(upm)
+        axis_upm = self._curvesplus_axis_parameter_frames(upm, uvw)
+        invert = self._curvesplus_inversion_flags(axis_upm)
 
         nux = self.ctx.n_levels
         self.curvesplus_reference_frames = ref
         self.curvesplus_base_pair_frames = upm
+        self.curvesplus_axis_base_pair_frames = axis_upm
         self.curvesplus_axis_frames = uvw
         self.curvesplus_invert = invert
 
         self.curvesplus_bp_axis = np.full((nux + 1, 4), np.nan, dtype=float)
         for level in range(1, nux + 1):
-            self.curvesplus_bp_axis[level] = self._curvesplus_bp_axis_values(upm[level], uvw[level], invert[level])
+            self.curvesplus_bp_axis[level] = self._curvesplus_bp_axis_values(axis_upm[level], uvw[level], invert[level])
 
         self.curvesplus_inter_base_pair = np.full((nux + 1, 6), np.nan, dtype=float)
         for level in range(2, nux + 1):
+            if not (
+                np.all(np.isfinite(axis_upm[level - 1]))
+                and np.all(np.isfinite(axis_upm[level]))
+            ):
+                continue
+            previous_frame, current_frame = self.parameter_convention._step_aligned_frames(
+                self._frame_from_array(axis_upm[level - 1]),
+                self._frame_from_array(axis_upm[level]),
+                self.cdr,
+            )
             values = self.parameter_convention._rigid_body_values(
-                self._frame_from_array(upm[level - 1]),
-                self._frame_from_array(upm[level]),
+                previous_frame,
+                current_frame,
                 self.cdr,
                 translation_sign=1.0,
                 rotation_sign=1.0,
@@ -86,12 +100,19 @@ class CurvesPlusAxisMixin:
     def _curvesplus_reference_frames(self):
         nux = self.ctx.n_levels
         nst = self.ctx.nst
+        source_frames = getattr(self.ctx.params, "axis_frames", None)
+        if (
+            source_frames is None
+            or source_frames.shape != self.ctx.params.frames.shape
+            or not np.any(source_frames)
+        ):
+            source_frames = self.ctx.params.frames
         ref = np.full((nux + 1, nst, 4, 3), np.nan, dtype=float)
         for strand in range(nst):
             for level in range(1, nux + 1):
                 if not self._has_level(strand, level):
                     continue
-                frame = self.ctx.params.frames[strand, level].copy()
+                frame = source_frames[strand, level].copy()
                 if strand > 0:
                     if self.ctx.idr[strand] < 0:
                         frame[1] *= -1.0
@@ -107,15 +128,37 @@ class CurvesPlusAxisMixin:
         upm = np.full((nux + 1, 4, 3), np.nan, dtype=float)
         for level in range(1, nux + 1):
             if self._has_level(0, level) and self._has_level(1, level):
-                # Curves+ calls screw(r2, r1, 0): the midpoint frame between
-                # the strand-2 and strand-1 reference systems.
-                upm[level] = self._curvesplus_middle_frame(ref[level, 1], ref[level, 0])
+                if self.parameter_convention._is_hoogsteen_pair(self, 1, level):
+                    pair_frame = self.parameter_convention._base_pair_frame(self, 1, level)
+                    if pair_frame is None:
+                        continue
+                    upm[level, :3] = pair_frame.axes
+                    upm[level, 3] = pair_frame.origin
+                else:
+                    # Curves+ calls screw(r2, r1, 0): the midpoint frame between
+                    # the strand-2 and strand-1 reference systems.
+                    upm[level] = self._curvesplus_middle_frame(ref[level, 1], ref[level, 0])
             else:
                 for strand in range(self.ctx.nst):
                     if self._has_level(strand, level):
                         upm[level] = ref[level, strand]
                         break
         return upm
+
+    def _curvesplus_axis_parameter_frames(self, upm, uvw):
+        axis_upm = upm.copy()
+        nux = self.ctx.n_levels
+        for level in range(1, nux + 1):
+            if not (
+                np.all(np.isfinite(axis_upm[level]))
+                and np.all(np.isfinite(uvw[level, 2]))
+                and np.all(np.isfinite(uvw[level, 3]))
+            ):
+                continue
+            if np.dot(axis_upm[level, 2], uvw[level, 2]) < 0.0:
+                axis_upm[level, 1] *= -1.0
+                axis_upm[level, 2] *= -1.0
+        return axis_upm
 
     def _curvesplus_smoothed_axis(self, ref, upm):
         nux = self.ctx.n_levels
@@ -194,7 +237,11 @@ class CurvesPlusAxisMixin:
     def _curvesplus_bp_axis_values(self, upm_frame, uvw_frame, invert):
         axis = uvw_frame[2]
         point = uvw_frame[3]
-        if not (np.all(np.isfinite(axis)) and np.all(np.isfinite(point))):
+        if not (
+            np.all(np.isfinite(upm_frame))
+            and np.all(np.isfinite(axis))
+            and np.all(np.isfinite(point))
+        ):
             return np.full(4, np.nan)
 
         dot = np.clip(np.dot(upm_frame[2], axis), -1.0, 1.0)

@@ -58,6 +58,17 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         iene = ien + 1 if self.ctx.cfg.ends else ien
         return ist, ien, iste, iene
 
+    def _axis_reference_frames(self):
+        p = self.ctx.params
+        axis_frames = getattr(p, "axis_frames", None)
+        if (
+            axis_frames is None
+            or axis_frames.shape != p.frames.shape
+            or not np.any(axis_frames)
+        ):
+            return p.frames
+        return axis_frames
+
     def calculate_all(self):
         """Run the regular Curves calculation stages in Fortran call order."""
         self._set_axis_directions()
@@ -108,6 +119,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         point, and vx/wx are the two transverse axes used for displacements.
         """
         p = self.ctx.params
+        axis_frames = self._axis_reference_frames()
         cfg = self.ctx.cfg
         nst = self.ctx.nst
         n3 = self.ctx.n_levels + 2
@@ -142,14 +154,14 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             else:
                 ulx_m[iste:iene+1, k] = self.optimizer.uho[iste:iene+1, :, is_idx] * self.inv[k]
 
-            rex_4 = p.frames[k, iste:iene+1, 3, :]
+            rex_4 = axis_frames[k, iste:iene+1, 3, :]
             hho_is = self.optimizer.hho[iste:iene+1, :, is_idx]
             
             rel_pos = rex_4 - hho_is
             dot_p = np.einsum('ij,ij->i', rel_pos, ulx_m[iste:iene+1, k])
             px_m[iste:iene+1, k] = hho_is + ulx_m[iste:iene+1, k] * dot_p[:, np.newaxis]
 
-            dax = p.frames[k, iste:iene+1, 1, :]
+            dax = axis_frames[k, iste:iene+1, 1, :]
             dot_u_dax = np.einsum('ij,ij->i', ulx_m[iste:iene+1, k], dax)
             wx = dax - ulx_m[iste:iene+1, k] * dot_u_dax[:, np.newaxis]
             wx_norm = np.linalg.norm(wx, axis=1)
@@ -191,7 +203,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             sgn_cln = np.sign(np.einsum('ij,ij->i', tx_c, vx_m[iste:iene+1, k]))
             p.helical[k, iste:iene+1, 3] = cln * sgn_cln
             
-            fx = p.frames[k, iste:iene+1, 2, :] # Base Dz
+            fx = axis_frames[k, iste:iene+1, 2, :] # Base Dz
             qx = np.cross(vx_m[iste:iene+1, k], dax)
             rq = np.linalg.norm(qx, axis=1)
             dot_tip = np.clip(np.einsum('ij,ij->i', qx, fx) / (rq + 1e-12), -1.0, 1.0)
@@ -408,7 +420,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
 
     def _global_base_base_values(self, partner_strand: int, level: int):
         """Return Section D global base-base values for strand 0 with partner_strand."""
-        if self._use_curvesplus_axis_convention():
+        if self._use_curvesplus_axis_convention() or getattr(self.ctx, "axis_reference_uses_continuity", False):
             return self._local_base_base_values(partner_strand, level)
 
         if not (self._has_level(0, level) and self._has_level(partner_strand, level)):
@@ -548,6 +560,8 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                 if abs(h_twist) > 180.0:
                     h_twist -= math.copysign(360.0, h_twist)
                 self.pal[i, 5, k] = h_twist
+
+        self.parameter_convention.fill_local_strand_steps(self)
 
         # ==========================================
         # Local Inter-Base Pair Parameters (Section H) [cite: 95-104]
@@ -701,16 +715,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         rotation = Rotation.from_matrix(first @ other.T)
         return float(-rotation.as_euler("zyx", degrees=True)[0])
 
-    def _unsupported_shape_level(self, level: int) -> bool:
-        return False
-
-    def _unsupported_shape_step(self, step_level: int) -> bool:
-        return False
-
-    @staticmethod
-    def _shape_skip_note() -> str:
-        return "reported: specialized non-WC geometry math is pending"
-
     @staticmethod
     def _all_finite(values) -> bool:
         return bool(np.all(np.isfinite(np.asarray(values, dtype=float))))
@@ -729,10 +733,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             print("                    (Dx)     (Dy)      (Dz)     (tau)    (rho)  (Omega)")
             _, _, iste, iene = self._axis_bounds(k)
             for i in range(iste + 1, iene + 1):
-                if ctx.cfg.comb and self._unsupported_shape_step(i - 1):
-                    step_id = self._step_label(k, i)
-                    print(f"  {i:3d}) {step_id:11s} {self._shape_skip_note()}")
-                    continue
                 l = self.pal[i, :, k]
                 step_id = self._step_label(k, i)
                 if not self._all_finite(l[:6]):
@@ -756,9 +756,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                     if not (self._has_level(0, i - 1) and self._has_level(0, i) and
                             self._has_level(k, i - 1) and self._has_level(k, i)):
                         print(f"  {i:3d})      -")
-                        continue
-                    if self._unsupported_shape_step(i - 1):
-                        print(f"  {i:3d}) {step_id:11s} {self._shape_skip_note()}")
                         continue
                     lb = self.pab[i, :, k]
                     if not self._all_finite(lb[:6]):
@@ -939,11 +936,8 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                     if self._has_level(0, i) and self._has_level(k, i):
                         res_name_1, _, res_num_1 = self._residue_label(0, i)
                         res_name_k, _, res_num_k = self._residue_label(k, i)
-                        
+
                         duplex_id = f"{res_name_1}{res_num_1:3d}-{res_name_k}{res_num_k:3d}"
-                        if self._unsupported_shape_level(i):
-                            print(f"  {i:3d}) {duplex_id}  {self._shape_skip_note()}")
-                            continue
 
                         nav += 1
 
@@ -1004,10 +998,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                         res_name_1, _, res_num_1 = self._residue_label(0, i)
                         res_name_k, _, res_num_k = self._residue_label(k, i)
                         duplex_id = f"{res_name_1}{res_num_1:3d}-{res_name_k}{res_num_k:3d}"
-                        if self._unsupported_shape_level(i):
-                            stg, opn = 0.0, 0.0
-                            print(f"  {i:3d}) {duplex_id} {self._shape_skip_note()}")
-                            continue
 
                         if i > self.optimizer.iste:
                             if self.ctx.li[i-1, 0] < -1 or self.ctx.li[i-1, k] < -1:
@@ -1053,10 +1043,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             print("                    (Dx)     (Dy)      (Dz)     (tau)    (rho)  (Omega)")
             _, _, iste, iene = self._axis_bounds(k)
             for i in range(iste + 1, iene + 1):
-                if self.ctx.cfg.comb and self._unsupported_shape_step(i - 1):
-                    step_id = self._step_label(k, i)
-                    print(f"  {i:3d}) {step_id:11s} {self._shape_skip_note()}")
-                    continue
                 vals = self._global_inter_base_values(k, i)
                 if vals is not None and self._all_finite(vals):
                     shif, slid, rise, tilt, roll, twis = vals
@@ -1092,9 +1078,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                     if (self._has_level(0, i - 1) and self._has_level(0, i) and
                             self._has_level(k, i - 1) and self._has_level(k, i)):
                         step_id = self._step_label(0, i)
-                        if self._unsupported_shape_step(i - 1):
-                            print(f"  {i:3d}) {step_id:11s} {self._shape_skip_note()}")
-                            continue
                         nav += 1
 
                         xs = (p.helical[0, i, 0] + p.helical[k, i, 0]) / 2.0
@@ -1146,10 +1129,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             print("                    (Dx)     (Dy)      (Dz)     (tau)    (rho)  (Omega)")
             _, _, iste, iene = self._axis_bounds(k)
             for i in range(iste + 1, iene + 1):
-                if self.ctx.cfg.comb and self._unsupported_shape_step(i - 1):
-                    step_id = self._step_label(k, i)
-                    print(f"  {i:3d}) {step_id:11s} {self._shape_skip_note()}")
-                    continue
                 l = self.pal[i, :, k]
                 step_id = self._step_label(k, i)
                 if not self._all_finite(l[:6]):
@@ -1175,9 +1154,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                     if not (self._has_level(0, i - 1) and self._has_level(0, i) and
                             self._has_level(k, i - 1) and self._has_level(k, i)):
                         print(f"  {i:3d})      -")
-                        continue
-                    if self._unsupported_shape_step(i - 1):
-                        print(f"  {i:3d}) {step_id:11s} {self._shape_skip_note()}")
                         continue
                     lb = self.pab[i, :, k]
                     if not self._all_finite(lb[:6]):

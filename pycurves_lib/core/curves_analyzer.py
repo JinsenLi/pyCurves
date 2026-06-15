@@ -529,6 +529,17 @@ class HelicalOptimizer:
         if self.ctx.cfg.zaxe:
             self._setup_z_axis_reference()
 
+    def _axis_reference_frames(self):
+        p = self.ctx.params
+        axis_frames = getattr(p, "axis_frames", None)
+        if (
+            axis_frames is None
+            or axis_frames.shape != p.frames.shape
+            or not np.any(axis_frames)
+        ):
+            return p.frames
+        return axis_frames
+
     def _map_active_strands(self):
         ctx = self.ctx
         nux = ctx.n_levels
@@ -708,7 +719,7 @@ class HelicalOptimizer:
     def run(self, mini = True):
         """Fortran-compatible implementation."""
         self._prepare_before_analy()
-        self.initial_origins = self.ctx.params.frames[0, :, 3].copy()
+        self.initial_origins = self._axis_reference_frames()[0, :, 3].copy()
         #print(self.ctx.params.helical)
         #first_sum = self._calc_physics_logic()
         #self._compute_derivs() 
@@ -771,13 +782,19 @@ class HelicalOptimizer:
 
     def _store_end_frame(self, strand, level, origin, x_axis, y_axis, z_axis):
         p = self.ctx.params
-        y_axis = self._normalize_vector(y_axis, fallback=p.frames[strand, max(1, min(self.n, level)), 1])
-        z_axis = self._normalize_vector(z_axis, fallback=p.frames[strand, max(1, min(self.n, level)), 2])
+        reference_frames = self._axis_reference_frames()
+        y_axis = self._normalize_vector(y_axis, fallback=reference_frames[strand, max(1, min(self.n, level)), 1])
+        z_axis = self._normalize_vector(z_axis, fallback=reference_frames[strand, max(1, min(self.n, level)), 2])
         x_axis = self._normalize_vector(x_axis, fallback=np.cross(y_axis, z_axis))
         p.frames[strand, level, 0, :] = x_axis
         p.frames[strand, level, 1, :] = y_axis
         p.frames[strand, level, 2, :] = z_axis
         p.frames[strand, level, 3, :] = origin
+        if hasattr(p, "axis_frames"):
+            p.axis_frames[strand, level, 0, :] = x_axis
+            p.axis_frames[strand, level, 1, :] = y_axis
+            p.axis_frames[strand, level, 2, :] = z_axis
+            p.axis_frames[strand, level, 3, :] = origin
 
     def _axis_at(self, level, strand):
         if not self.ctx.cfg.comb and getattr(self, "_axis_ux_by_strand", None) is not None:
@@ -791,6 +808,7 @@ class HelicalOptimizer:
             return
 
         p = ctx.params
+        reference_frames = self._axis_reference_frames()
         nux = ctx.n_levels
         work_strands = [0] if ctx.cfg.comb else list(range(ctx.nst))
 
@@ -802,7 +820,7 @@ class HelicalOptimizer:
                 xdi, ydi, rise, cln, tip, twis = map(float, end_values)
                 is_sign = int(ctx.idr[nl]) if id_step == 1 else -int(ctx.idr[nl])
 
-                axis = self._normalize_vector(self._axis_at(adjacent, nl), fallback=p.frames[nl, adjacent, 2])
+                axis = self._normalize_vector(self._axis_at(adjacent, nl), fallback=reference_frames[nl, adjacent, 2])
                 point = self.hho[adjacent, :, nl] - axis * rise * is_sign
 
                 strands_to_mark = range(ctx.nst) if ctx.cfg.comb else [nl]
@@ -813,11 +831,11 @@ class HelicalOptimizer:
                     p.ux[level, :] = axis
                     p.ox[level, :] = point
 
-                adjacent_y = p.frames[nl, adjacent, 1, :]
+                adjacent_y = reference_frames[nl, adjacent, 1, :]
                 wx0 = adjacent_y - axis * np.dot(axis, adjacent_y)
-                wx0 = self._normalize_vector(wx0, fallback=p.frames[nl, adjacent, 0, :])
+                wx0 = self._normalize_vector(wx0, fallback=reference_frames[nl, adjacent, 0, :])
                 wx = self._normalize_vector(self._rotate_axis_angle(wx0, axis, -is_sign * twis), fallback=wx0)
-                vx = self._normalize_vector(np.cross(wx, axis), fallback=p.frames[nl, adjacent, 0, :])
+                vx = self._normalize_vector(np.cross(wx, axis), fallback=reference_frames[nl, adjacent, 0, :])
 
                 origin = point + vx * xdi + wx * ydi
                 y_axis = self._normalize_vector(self._rotate_axis_angle(wx, vx, cln), fallback=wx)

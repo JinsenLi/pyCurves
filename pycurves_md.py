@@ -108,7 +108,7 @@ class MDTrajectoryAnalyzer:
                 prev_opt_helical=prev_helical if warm_start else None,
                 axis_sign_reference=axis_sign_reference if axis_continuity else None,
             )
-            
+
             if warm_start and mini and hasattr(runner, 'ctx') and hasattr(runner.ctx, 'params') and hasattr(runner.ctx.params, 'helical'):
                 prev_helical = runner.ctx.params.helical.copy()
             axis_direction_signs = []
@@ -116,7 +116,7 @@ class MDTrajectoryAnalyzer:
                 axis_direction_signs = [int(v) for v in np.asarray(runner.calc.axis_direction_sign[:runner.ctx.nst]).tolist()]
                 if axis_continuity and axis_sign_reference is None:
                     axis_sign_reference = np.asarray(axis_direction_signs, dtype=int)
-            
+
             formatter = CurvesOutputFormatter(runner, annotations=self.include_annotations)
             dataframes = formatter._build_dataframes()
 
@@ -463,4 +463,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

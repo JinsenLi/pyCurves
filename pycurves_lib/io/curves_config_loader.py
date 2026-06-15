@@ -33,7 +33,7 @@ class ConfigLoader:
 
         strand_directions = [1 if value >= 0 else -1 for value in signed_strand_lengths]  # Fortran idr
 
-        expanded_maps, current_idx = ConfigLoader._parse_strand_maps(
+        expanded_maps, current_idx, hoogsteen_markers = ConfigLoader._parse_strand_maps(
             data_lines,
             strand_count,
             signed_strand_lengths,
@@ -78,6 +78,7 @@ class ConfigLoader:
             "nr": active_end_levels,
             "li_map": initial_level_status,
             "ni_map": subunit_map,
+            "hoogsteen_markers": hoogsteen_markers,
             "config": cfg,
         }
 
@@ -178,18 +179,36 @@ class ConfigLoader:
 
     @staticmethod
     def _expand_mapping_token(token: str):
-        if ":" not in token:
-            return [int(token)]
-        start_text, stop_text = token.split(":", 1)
+        core, _ = ConfigLoader._split_mapping_token(token)
+        if ":" not in core:
+            return [int(core)]
+        start_text, stop_text = core.split(":", 1)
         start = int(start_text)
         stop = int(stop_text)
         step = 1 if stop >= start else -1
         return list(range(start, stop + step, step))
 
     @staticmethod
+    def _split_mapping_token(token: str):
+        match = re.fullmatch(r"\s*([+-]?\d+(?::[+-]?\d+)?)(?:\[([^\]]+)\])?\s*", token)
+        if not match:
+            raise ValueError(f"Invalid Curves topology token {token!r}.")
+        tag = match.group(2)
+        if tag is None:
+            return match.group(1), False
+        normalized = tag.strip().lower().replace("_", "").replace("-", "")
+        if normalized not in {"h", "hoog", "hoogsteen"}:
+            raise ValueError(
+                f"Unknown Curves topology tag [{tag}] in token {token!r}; "
+                "supported Hoogsteen tags are [Hoog] and [Hoogsteen]."
+            )
+        return match.group(1), True
+
+    @staticmethod
     def _parse_strand_maps(data_lines, strand_count, signed_strand_lengths, file_path):
         """Support both explicit unit maps and Curves shorthand ranges like 1:12."""
         maps = []
+        hoogsteen_markers = set()
         current_idx = 1
         range_style = any(":" in line for line in data_lines[1:1 + strand_count])
 
@@ -199,10 +218,14 @@ class ConfigLoader:
                     raise ValueError(f"Missing mapping row for strand {strand + 1} in {file_path!r}")
                 mapping = []
                 for token in data_lines[current_idx].split():
-                    mapping.extend(ConfigLoader._expand_mapping_token(token))
+                    core, is_hoogsteen = ConfigLoader._split_mapping_token(token)
+                    for mapped_unit in ConfigLoader._expand_mapping_token(core):
+                        mapping.append(mapped_unit)
+                        if is_hoogsteen and mapped_unit != 0:
+                            hoogsteen_markers.add((strand + 1, len(mapping)))
                 maps.append(mapping)
                 current_idx += 1
-            return maps, current_idx
+            return maps, current_idx, hoogsteen_markers
 
         level_count = max(abs(value) for value in signed_strand_lengths)
         for strand in range(strand_count):
@@ -211,10 +234,16 @@ class ConfigLoader:
                 if current_idx >= len(data_lines):
                     raise ValueError(f"Missing mapping values for strand {strand + 1} in {file_path!r}")
                 for token in data_lines[current_idx].split():
-                    mapping.extend(ConfigLoader._expand_mapping_token(token))
+                    core, is_hoogsteen = ConfigLoader._split_mapping_token(token)
+                    for mapped_unit in ConfigLoader._expand_mapping_token(core):
+                        if len(mapping) >= level_count:
+                            break
+                        mapping.append(mapped_unit)
+                        if is_hoogsteen and mapped_unit != 0:
+                            hoogsteen_markers.add((strand + 1, len(mapping)))
                 current_idx += 1
             maps.append(mapping[:level_count])
-        return maps, current_idx
+        return maps, current_idx, hoogsteen_markers
 
     @staticmethod
     def _initialize_helical_input_defaults(
