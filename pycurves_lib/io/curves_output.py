@@ -11,7 +11,12 @@ from typing import Any, Dict, List
 import numpy as np
 
 from pycurves_lib.data.modified_bases import parent_base_name
-from pycurves_lib.topology.base_annotations import annotate_context, render_section_m
+from pycurves_lib.topology.base_annotations import (
+    annotate_context,
+    base_pair_geometry_annotation,
+    base_pair_geometry_tag,
+    render_section_m,
+)
 from pycurves_lib.io.curves_visualization_payload import VisualizationPayloadMixin
 
 
@@ -468,6 +473,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
         if self.include_annotations:
             records["annotations"] = self._slim_annotation_records(annotations)
+            records["noncanonical_base_pairs"] = self._noncanonical_base_pair_records(annotations)
 
         return records
 
@@ -588,13 +594,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
     def _slim_annotation_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         for row in annotations.get("base_pair_annotations", []):
-            if not (
-                row.get("is_hoogsteen")
-                or row.get("is_mismatch")
-                or row.get("has_modified_base")
-                or row.get("pair_family") not in {"watson_crick", ""}
-                or row.get("geometry_flag")
-            ):
+            if not self._is_reportable_base_pair_annotation(row):
                 continue
             rows.append({
                 "annotation_type": "base_pair",
@@ -603,10 +603,18 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "location": f"level {row.get('level')}",
                 "code": row.get("pair_family", ""),
                 "message": row.get("pair_subtype", ""),
+                "geometry_annotation": base_pair_geometry_annotation(row),
+                "leontis_westhof": base_pair_geometry_tag(row),
                 "residue_1": row.get("residue_1"),
                 "residue_2": row.get("residue_2"),
                 "base_1": row.get("base_1"),
                 "base_2": row.get("base_2"),
+                "edge_pair": row.get("edge_pair", ""),
+                "glycosidic_orientation": row.get("glycosidic_orientation", ""),
+                "strand_direction": row.get("strand_direction", ""),
+                "frame_mode": row.get("frame_mode", ""),
+                "contact_confidence": row.get("contact_confidence", ""),
+                "contact_count": self._contact_count(row),
                 "shape_parameters_supported": row.get("shape_parameters_supported", True),
                 "shape_skip_reason": row.get("shape_skip_reason", ""),
             })
@@ -622,6 +630,70 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "parent_base": row.get("parent_base"),
             })
         return rows
+
+    def _noncanonical_base_pair_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for row in annotations.get("base_pair_annotations", []):
+            if not self._is_noncanonical_base_pair(row):
+                continue
+            rows.append({
+                "level": row.get("level"),
+                "strand_1": row.get("strand_1"),
+                "strand_2": row.get("strand_2"),
+                "residue_1": row.get("residue_1"),
+                "residue_2": row.get("residue_2"),
+                "base_1": row.get("base_1"),
+                "base_2": row.get("base_2"),
+                "pair_family": row.get("pair_family", ""),
+                "pair_subtype": row.get("pair_subtype", ""),
+                "geometry_annotation": base_pair_geometry_annotation(row),
+                "leontis_westhof": base_pair_geometry_tag(row),
+                "edge_pair": row.get("edge_pair", ""),
+                "edge_1": row.get("edge_1", ""),
+                "edge_2": row.get("edge_2", ""),
+                "glycosidic_orientation": row.get("glycosidic_orientation", ""),
+                "strand_direction": row.get("strand_direction", ""),
+                "frame_mode": row.get("frame_mode", ""),
+                "contact_confidence": row.get("contact_confidence", ""),
+                "contact_count": self._contact_count(row),
+                "source_pair_number": row.get("source_pair_number"),
+                "geometry_flag": row.get("geometry_flag", ""),
+                "manual_geometry_tag": row.get("manual_geometry_tag", ""),
+                "shape_parameters_supported": row.get("shape_parameters_supported", True),
+                "shape_skip_reason": row.get("shape_skip_reason", ""),
+            })
+        return rows
+
+    @staticmethod
+    def _is_reportable_base_pair_annotation(row: Dict[str, Any]) -> bool:
+        return bool(
+            row.get("is_hoogsteen")
+            or row.get("is_mismatch")
+            or row.get("has_modified_base")
+            or row.get("pair_family") not in {"watson_crick", ""}
+            or row.get("geometry_flag")
+            or row.get("frame_mode") == "contact_geometry"
+        )
+
+    @staticmethod
+    def _is_noncanonical_base_pair(row: Dict[str, Any]) -> bool:
+        return bool(
+            row.get("is_hoogsteen")
+            or row.get("is_mismatch")
+            or row.get("pair_family") not in {"watson_crick", ""}
+            or row.get("geometry_flag")
+            or row.get("frame_mode") == "contact_geometry"
+        )
+
+    @staticmethod
+    def _contact_count(row: Dict[str, Any]) -> int:
+        count = row.get("contact_count")
+        if count is not None:
+            try:
+                return int(count)
+            except (TypeError, ValueError):
+                pass
+        return len(row.get("contact_atom_pairs") or [])
 
     def _groove_records(self, groove_params: Dict[str, Any]) -> Dict[str, Any]:
         groove = _to_jsonable(groove_params)

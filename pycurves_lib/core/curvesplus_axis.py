@@ -20,9 +20,9 @@ class CurvesPlusAxisMixin:
 
         Curves+ first forms base-pair mean frames (``upm``) from standard
         reference frames, then derives and smooths a curvilinear helical axis
-        (``uvw``) from adjacent base screw axes.  Hoogsteen-aware runs use the
-        same axis reference frames as the legacy optimizer so syn/Hoogsteen
-        discontinuities do not bend the smooth path.
+        (``uvw``) from adjacent base screw axes.  Noncanonical contact-frame
+        runs use the same sign-continuous reference frames as the legacy
+        optimizer so local frame discontinuities do not bend the smooth path.
         """
         if not (self.ctx.cfg.comb and self.ctx.nst > 1):
             return
@@ -128,7 +128,7 @@ class CurvesPlusAxisMixin:
         upm = np.full((nux + 1, 4, 3), np.nan, dtype=float)
         for level in range(1, nux + 1):
             if self._has_level(0, level) and self._has_level(1, level):
-                if self.parameter_convention._is_hoogsteen_pair(self, 1, level):
+                if self.parameter_convention._uses_contact_geometry_pair(self, 1, level):
                     pair_frame = self.parameter_convention._base_pair_frame(self, 1, level)
                     if pair_frame is None:
                         continue

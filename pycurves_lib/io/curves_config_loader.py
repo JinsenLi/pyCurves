@@ -4,6 +4,8 @@ import numpy as np
 
 from pycurves_lib.core.curves_dataclasses import HelicalConfig
 
+LW_EDGES = {"W", "H", "S"}
+
 
 class ConfigLoader:
     @staticmethod
@@ -33,7 +35,7 @@ class ConfigLoader:
 
         strand_directions = [1 if value >= 0 else -1 for value in signed_strand_lengths]  # Fortran idr
 
-        expanded_maps, current_idx, hoogsteen_markers = ConfigLoader._parse_strand_maps(
+        expanded_maps, current_idx, hoogsteen_markers, pair_geometry_markers = ConfigLoader._parse_strand_maps(
             data_lines,
             strand_count,
             signed_strand_lengths,
@@ -79,6 +81,7 @@ class ConfigLoader:
             "li_map": initial_level_status,
             "ni_map": subunit_map,
             "hoogsteen_markers": hoogsteen_markers,
+            "pair_geometry_markers": pair_geometry_markers,
             "config": cfg,
         }
 
@@ -195,20 +198,72 @@ class ConfigLoader:
             raise ValueError(f"Invalid Curves topology token {token!r}.")
         tag = match.group(2)
         if tag is None:
-            return match.group(1), False
+            return match.group(1), None
         normalized = tag.strip().lower().replace("_", "").replace("-", "")
-        if normalized not in {"h", "hoog", "hoogsteen"}:
+        if normalized in {"h", "hoog", "hoogsteen"}:
+            return match.group(1), {"kind": "hoogsteen", "tag": "Hoog"}
+        lw_tag = ConfigLoader._parse_lw_geometry_tag(normalized)
+        if lw_tag is None:
             raise ValueError(
                 f"Unknown Curves topology tag [{tag}] in token {token!r}; "
-                "supported Hoogsteen tags are [Hoog] and [Hoogsteen]."
+                "supported tags are [Hoog] and Leontis-Westhof-style geometry tags like [cWW], [tWH:ap], and [cSS:p]."
             )
-        return match.group(1), True
+        return match.group(1), lw_tag
+
+    @staticmethod
+    def _parse_lw_geometry_tag(normalized: str):
+        parts = normalized.split(":", 1)
+        lw_text = parts[0]
+        direction_text = parts[1] if len(parts) == 2 else ""
+        if len(lw_text) != 3:
+            return None
+        orientation = lw_text[0]
+        if orientation not in {"c", "t"}:
+            return None
+        edge_1 = lw_text[1].upper()
+        edge_2 = lw_text[2].upper()
+        if edge_1 not in LW_EDGES or edge_2 not in LW_EDGES:
+            return None
+        explicit_strand_direction = ConfigLoader._parse_lw_strand_direction(direction_text)
+        if direction_text and explicit_strand_direction is None:
+            return None
+        tag = f"{orientation}{edge_1}{edge_2}"
+        return {
+            "kind": "lw",
+            "tag": tag,
+            "orientation": orientation,
+            "glycosidic_orientation": "cis" if orientation == "c" else "trans",
+            "edge_1": edge_1,
+            "edge_2": edge_2,
+            "strand_direction": explicit_strand_direction or ConfigLoader._lw_strand_direction(orientation, edge_1, edge_2),
+            "strand_direction_source": "explicit" if explicit_strand_direction else "inferred_from_lw_tag",
+        }
+
+    @staticmethod
+    def _parse_lw_strand_direction(direction_text: str):
+        if not direction_text:
+            return None
+        normalized = direction_text.strip().lower()
+        if normalized in {"p", "par", "para", "parallel"}:
+            return "parallel"
+        if normalized in {"a", "ap", "anti", "antiparallel"}:
+            return "antiparallel"
+        return None
+
+    @staticmethod
+    def _lw_strand_direction(orientation: str, edge_1: str, edge_2: str) -> str:
+        one_hoogsteen_edge = (edge_1 == "H") ^ (edge_2 == "H")
+        cis_direction = "parallel" if one_hoogsteen_edge else "antiparallel"
+        if orientation == "c":
+            return cis_direction
+        return "antiparallel" if cis_direction == "parallel" else "parallel"
 
     @staticmethod
     def _parse_strand_maps(data_lines, strand_count, signed_strand_lengths, file_path):
         """Support both explicit unit maps and Curves shorthand ranges like 1:12."""
         maps = []
         hoogsteen_markers = set()
+        pair_geometry_markers = {}
         current_idx = 1
         range_style = any(":" in line for line in data_lines[1:1 + strand_count])
 
@@ -218,14 +273,20 @@ class ConfigLoader:
                     raise ValueError(f"Missing mapping row for strand {strand + 1} in {file_path!r}")
                 mapping = []
                 for token in data_lines[current_idx].split():
-                    core, is_hoogsteen = ConfigLoader._split_mapping_token(token)
+                    core, tag_info = ConfigLoader._split_mapping_token(token)
                     for mapped_unit in ConfigLoader._expand_mapping_token(core):
                         mapping.append(mapped_unit)
-                        if is_hoogsteen and mapped_unit != 0:
-                            hoogsteen_markers.add((strand + 1, len(mapping)))
+                        ConfigLoader._record_mapping_tag(
+                            tag_info,
+                            strand + 1,
+                            len(mapping),
+                            mapped_unit,
+                            hoogsteen_markers,
+                            pair_geometry_markers,
+                        )
                 maps.append(mapping)
                 current_idx += 1
-            return maps, current_idx, hoogsteen_markers
+            return maps, current_idx, hoogsteen_markers, pair_geometry_markers
 
         level_count = max(abs(value) for value in signed_strand_lengths)
         for strand in range(strand_count):
@@ -234,16 +295,42 @@ class ConfigLoader:
                 if current_idx >= len(data_lines):
                     raise ValueError(f"Missing mapping values for strand {strand + 1} in {file_path!r}")
                 for token in data_lines[current_idx].split():
-                    core, is_hoogsteen = ConfigLoader._split_mapping_token(token)
+                    core, tag_info = ConfigLoader._split_mapping_token(token)
                     for mapped_unit in ConfigLoader._expand_mapping_token(core):
                         if len(mapping) >= level_count:
                             break
                         mapping.append(mapped_unit)
-                        if is_hoogsteen and mapped_unit != 0:
-                            hoogsteen_markers.add((strand + 1, len(mapping)))
+                        ConfigLoader._record_mapping_tag(
+                            tag_info,
+                            strand + 1,
+                            len(mapping),
+                            mapped_unit,
+                            hoogsteen_markers,
+                            pair_geometry_markers,
+                        )
                 current_idx += 1
             maps.append(mapping[:level_count])
-        return maps, current_idx, hoogsteen_markers
+        return maps, current_idx, hoogsteen_markers, pair_geometry_markers
+
+    @staticmethod
+    def _record_mapping_tag(
+        tag_info,
+        strand: int,
+        level: int,
+        mapped_unit: int,
+        hoogsteen_markers: set,
+        pair_geometry_markers: dict,
+    ) -> None:
+        if tag_info is None or mapped_unit == 0:
+            return
+        if tag_info.get("kind") == "hoogsteen":
+            hoogsteen_markers.add((strand, level))
+            return
+        if tag_info.get("kind") == "lw":
+            marker = dict(tag_info)
+            marker["annotated_strand"] = strand
+            marker["level"] = level
+            pair_geometry_markers[(strand, level)] = marker
 
     @staticmethod
     def _initialize_helical_input_defaults(

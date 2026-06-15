@@ -127,7 +127,7 @@ class GrooveAnalysisMixin:
     @staticmethod
     def _unit(v):
         n = np.linalg.norm(v)
-        if n == 0.0:
+        if not np.isfinite(n) or n == 0.0:
             return v * 0.0
         return v / n
 
@@ -174,6 +174,25 @@ class GrooveAnalysisMixin:
             u0 = uxb[i, 0]
             u1 = uxb[i + 1, 0]
             gl = np.linalg.norm(p1 - p0)
+            if (
+                not np.isfinite(gl)
+                or gl <= 1.0e-8
+                or not np.all(np.isfinite(p0))
+                or not np.all(np.isfinite(p1))
+                or not np.all(np.isfinite(u0))
+                or not np.all(np.isfinite(u1))
+            ):
+                nma[i] = 1
+                ind[i, 0] = kpt
+                if np.all(np.isfinite(p0)):
+                    cor[kpt] = p0
+                elif np.all(np.isfinite(p1)):
+                    cor[kpt] = p1
+                else:
+                    cor[kpt] = 0.0
+                kpt += 1
+                continue
+
             g1 = p0
             g2 = u0
             g3 = 3.0 * (p1 - p0) / gl**2 - (u1 + 2.0 * u0) / gl
@@ -188,6 +207,8 @@ class GrooveAnalysisMixin:
             elif valid_2:
                 rise = p.helical[1, i + 1, 2]
             else:
+                rise = gl
+            if not np.isfinite(rise):
                 rise = gl
                 
             nmi = int(abs(rise) * (nlevel + 1) / 3.4 + 0.5)

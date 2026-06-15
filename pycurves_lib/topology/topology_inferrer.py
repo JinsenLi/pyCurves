@@ -6,6 +6,7 @@ import networkx as nx
 import numpy as np
 
 from pycurves_lib.core.curves_dataclasses import MolecularStructure
+from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS
 from pycurves_lib.data.modified_bases import parent_base_name
 
 
@@ -19,16 +20,29 @@ BASE_ATOMS = {
     "U": {"N1", "C2", "O2", "N3", "C4", "O4", "C5", "C6"},
 }
 HBOND_ATOMS = {
-    "A": {"N1", "N6", "N7"},
-    "G": {"N1", "N2", "O6", "N7"},
-    "C": {"N3", "N4", "O2"},
-    "T": {"N3", "O4", "O2"},
-    "U": {"N3", "O4", "O2"},
-    "I": {"N1", "O6", "N7"},
+    "A": {"N1", "N6", "N7", "N3", "C2", "C8"},
+    "G": {"N1", "N2", "O6", "N7", "N3", "C2", "C8"},
+    "C": {"N3", "N4", "O2", "C5", "C6"},
+    "T": {"N3", "O4", "O2", "C5", "C6", "C7"},
+    "U": {"N3", "O4", "O2", "C5", "C6"},
+    "I": {"N1", "O6", "N7", "N3", "C2", "C8"},
 }
+GLYCOSIDIC_ATOMS = {
+    "A": "N9",
+    "G": "N9",
+    "I": "N9",
+    "P": "N9",
+    "R": "N9",
+    "C": "N1",
+    "T": "N1",
+    "U": "N1",
+    "Y": "N1",
+}
+SUGAR_C1_ATOMS = ("C1'", "C1*")
 
 HBOND_DISTANCE_CUTOFF = 3.8
 HBOND_PREFILTER_DISTANCE = 11.0
+GLYCOSIDIC_SIDE_EPSILON = 0.25
 SUSPICIOUS_BACKBONE_GAP_DISTANCE = 8.5
 REGISTER_GAP_CENTER_CUTOFF = 7.8
 REGISTER_GAP_HBOND_CENTER_CUTOFF = 6.2
@@ -55,8 +69,10 @@ BASE_PAIR_HBONDS = {
     ("G", "C"): (("N1", "N3"), ("N2", "O2"), ("O6", "N4")),
     ("G", "U"): (("N1", "O2"), ("O6", "N3")),
     ("I", "C"): (("N1", "N3"), ("O6", "N4")),
+    ("I", "U"): (("N1", "O2"), ("O6", "N3")),
+    ("I", "A"): (("N1", "N6"), ("O6", "N1")),
     # Hoogsteen-like contacts are accepted for topology construction and are
-    # marked in generated inp files so Hoogsteen-aware fitted frames are used.
+    # marked in generated inp files so contact-geometry frames can be used.
     ("A", "T", "hoogsteen"): (("N7", "N3"), ("N6", "O4")),
     ("A", "U", "hoogsteen"): (("N7", "N3"), ("N6", "O4")),
     ("G", "C", "hoogsteen"): (("N7", "N3"), ("O6", "N4")),
@@ -105,6 +121,7 @@ class InferredTopology:
     grv: bool = True
     ends: bool = False
     hoogsteen_markers: set = field(default_factory=set)
+    pair_geometry_markers: Dict[Tuple[int, int], str] = field(default_factory=dict)
 
     @property
     def n_strands(self) -> int:
@@ -132,7 +149,10 @@ class InferredTopology:
             tokens = []
             for level, value in enumerate(row, start=1):
                 token = str(int(value))
-                if int(value) != 0 and (
+                geometry_tag = self.pair_geometry_markers.get((strand, level)) if int(value) != 0 else None
+                if geometry_tag:
+                    token = f"{token}[{geometry_tag}]"
+                elif int(value) != 0 and (
                     (strand, level) in self.hoogsteen_markers
                     or level in self.hoogsteen_markers
                 ):
@@ -522,7 +542,7 @@ class RobustTopologyInferrer:
                 if distance <= HBOND_DISTANCE_CUTOFF:
                     close_contacts.append((atom_1, atom_2, distance))
 
-        close_contacts.sort(key=lambda item: item[2])
+        close_contacts.sort(key=lambda item: (item[0].startswith("C") or item[1].startswith("C"), item[2]))
         used_1 = set()
         used_2 = set()
         matches = []
@@ -675,17 +695,27 @@ class RobustTopologyInferrer:
                 level_by_subunit[subunit] = level
                 strand_by_subunit[subunit] = 2
         hoogsteen_markers = set()
+        pair_geometry_markers = {}
         for candidate in selected_pairs:
-            if not candidate.is_hoogsteen:
-                continue
             if candidate.first not in level_by_subunit or candidate.second not in level_by_subunit:
                 continue
             if level_by_subunit[candidate.first] != level_by_subunit[candidate.second]:
                 continue
-            marker_subunit = self._hoogsteen_marker_subunit(candidate)
-            if marker_subunit not in level_by_subunit:
+            geometry_marker = self._pair_geometry_marker(
+                candidate,
+                strand_by_subunit,
+                level_by_subunit,
+                strand_direction="parallel" if partner_direction > 0 else "antiparallel",
+            )
+            if geometry_marker is not None:
+                strand_id, level, tag = geometry_marker
+                pair_geometry_markers[(strand_id, level)] = tag
                 continue
-            hoogsteen_markers.add((strand_by_subunit[marker_subunit], level_by_subunit[marker_subunit]))
+            if candidate.is_hoogsteen:
+                marker_subunit = self._hoogsteen_marker_subunit(candidate)
+                if marker_subunit not in level_by_subunit:
+                    continue
+                hoogsteen_markers.add((strand_by_subunit[marker_subunit], level_by_subunit[marker_subunit]))
 
         return InferredTopology(
             pdbfile=self.pdbfile,
@@ -699,6 +729,7 @@ class RobustTopologyInferrer:
             fit=True,
             grv=paired_count >= 4,
             hoogsteen_markers=hoogsteen_markers,
+            pair_geometry_markers=pair_geometry_markers,
         )
 
     def _hoogsteen_marker_subunit(self, candidate: BasePairCandidate) -> int:
@@ -711,6 +742,163 @@ class RobustTopologyInferrer:
         if second_is_purine and not first_is_purine:
             return candidate.second
         return candidate.first
+
+    def _pair_geometry_marker(
+        self,
+        candidate: BasePairCandidate,
+        strand_by_subunit: Dict[int, int],
+        level_by_subunit: Dict[int, int],
+        strand_direction: str,
+    ) -> Optional[Tuple[int, int, str]]:
+        residue_1 = self.residues[candidate.first]
+        residue_2 = self.residues[candidate.second]
+        should_write = (
+            candidate.is_hoogsteen
+            or candidate.pair_family == "hbonded_noncanonical"
+            or not self._is_complementary(residue_1.base, residue_2.base)
+        )
+        if not should_write:
+            return None
+
+        atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
+        if not atom_pairs:
+            return None
+
+        edge_1 = self._dominant_edge_for_atoms(
+            residue_1.base,
+            [atom_1 for atom_1, _, _ in atom_pairs],
+        )
+        edge_2 = self._dominant_edge_for_atoms(
+            residue_2.base,
+            [atom_2 for _, atom_2, _ in atom_pairs],
+        )
+        if not edge_1 or not edge_2:
+            return None
+
+        orientation = (
+            self._measured_glycosidic_orientation(candidate, atom_pairs)
+            or self._lw_orientation_from_edges(edge_1, edge_2, strand_direction)
+        )
+        tag = self._lw_tag_for_edges(edge_1, edge_2, orientation, strand_direction)
+        strand_id = strand_by_subunit.get(candidate.first)
+        level = level_by_subunit.get(candidate.first)
+        if strand_id is None or level is None:
+            return None
+        return strand_id, level, tag
+
+    def _marker_atom_pairs(self, candidate: BasePairCandidate) -> Tuple[Tuple[str, str, float], ...]:
+        residue_1 = self.residues[candidate.first]
+        residue_2 = self.residues[candidate.second]
+        atom_map_1 = self._atom_map(residue_1)
+        atom_map_2 = self._atom_map(residue_2)
+
+        pattern_matches, _ = self._pattern_hbond_matches(residue_1.base, residue_2.base, atom_map_1, atom_map_2)
+        generic_matches = self._generic_hbond_matches(residue_1, residue_2, atom_map_1, atom_map_2)
+        matches = pattern_matches if len(pattern_matches) >= len(generic_matches) else generic_matches
+        return tuple(matches)
+
+    @staticmethod
+    def _dominant_edge_for_atoms(base: str, atom_names: Sequence[str]) -> str:
+        scores = []
+        for edge, edge_atoms in BASE_EDGE_ATOMS.get(base, {}).items():
+            matched = [atom for atom in atom_names if atom in edge_atoms]
+            if not matched:
+                continue
+            unique = [
+                atom for atom in matched
+                if sum(atom in atoms for atoms in BASE_EDGE_ATOMS.get(base, {}).values()) == 1
+            ]
+            score = float(len(matched)) + 0.35 * float(len(unique))
+            scores.append((score, edge))
+        if not scores:
+            return ""
+        scores.sort(reverse=True)
+        return scores[0][1]
+
+    @staticmethod
+    def _lw_orientation_from_edges(edge_1: str, edge_2: str, strand_direction: str) -> str:
+        one_hoogsteen_edge = (edge_1 == "H") ^ (edge_2 == "H")
+        cis_direction = "parallel" if one_hoogsteen_edge else "antiparallel"
+        return "c" if strand_direction == cis_direction else "t"
+
+    @staticmethod
+    def _lw_tag_for_edges(edge_1: str, edge_2: str, orientation: str, strand_direction: str) -> str:
+        suffix = {"parallel": "p", "antiparallel": "ap"}.get(strand_direction)
+        tag = f"{orientation}{edge_1}{edge_2}"
+        return f"{tag}:{suffix}" if suffix else tag
+
+    def _measured_glycosidic_orientation(
+        self,
+        candidate: BasePairCandidate,
+        atom_pairs: Sequence[Tuple[str, str, float]],
+    ) -> str:
+        residue_1 = self.residues[candidate.first]
+        residue_2 = self.residues[candidate.second]
+        atom_map_1 = self._atom_map(residue_1)
+        atom_map_2 = self._atom_map(residue_2)
+
+        gly_1 = self._glycosidic_atom_point(residue_1.base, atom_map_1)
+        gly_2 = self._glycosidic_atom_point(residue_2.base, atom_map_2)
+        sugar_1 = self._sugar_c1_point(atom_map_1)
+        sugar_2 = self._sugar_c1_point(atom_map_2)
+        if gly_1 is None or gly_2 is None or sugar_1 is None or sugar_2 is None:
+            return ""
+
+        contact_points_1 = [atom_map_1[atom_1] for atom_1, _, _ in atom_pairs if atom_1 in atom_map_1]
+        contact_points_2 = [atom_map_2[atom_2] for _, atom_2, _ in atom_pairs if atom_2 in atom_map_2]
+        if contact_points_1 and contact_points_2:
+            axis_start = np.mean(contact_points_1, axis=0)
+            axis_stop = np.mean(contact_points_2, axis=0)
+        else:
+            axis_start = residue_1.hbond_center
+            axis_stop = residue_2.hbond_center
+
+        contact_axis = self._unit_vector(axis_stop - axis_start)
+        if contact_axis is None:
+            return ""
+
+        normal_1 = self._base_normal(residue_1)
+        normal_2 = self._base_normal(residue_2)
+        if np.dot(normal_1, normal_2) < 0.0:
+            normal_2 = -normal_2
+        pair_normal = self._unit_vector(normal_1 + normal_2)
+        if pair_normal is None:
+            pair_normal = self._unit_vector(normal_1)
+        if pair_normal is None:
+            return ""
+
+        side_axis = self._unit_vector(np.cross(pair_normal, contact_axis))
+        if side_axis is None:
+            return ""
+
+        axis_midpoint = 0.5 * (axis_start + axis_stop)
+        bond_midpoint_1 = 0.5 * (gly_1 + sugar_1)
+        bond_midpoint_2 = 0.5 * (gly_2 + sugar_2)
+        side_1 = float(np.dot(bond_midpoint_1 - axis_midpoint, side_axis))
+        side_2 = float(np.dot(bond_midpoint_2 - axis_midpoint, side_axis))
+        if abs(side_1) < GLYCOSIDIC_SIDE_EPSILON or abs(side_2) < GLYCOSIDIC_SIDE_EPSILON:
+            return ""
+        return "c" if side_1 * side_2 > 0.0 else "t"
+
+    @staticmethod
+    def _glycosidic_atom_point(base: str, atom_map: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
+        atom_name = GLYCOSIDIC_ATOMS.get(base)
+        return atom_map.get(atom_name) if atom_name else None
+
+    @staticmethod
+    def _sugar_c1_point(atom_map: Dict[str, np.ndarray]) -> Optional[np.ndarray]:
+        for atom_name in SUGAR_C1_ATOMS:
+            point = atom_map.get(atom_name)
+            if point is not None:
+                return point
+        return None
+
+    @staticmethod
+    def _unit_vector(vector: np.ndarray) -> Optional[np.ndarray]:
+        norm = float(np.linalg.norm(vector))
+        if not np.isfinite(norm) or norm <= 1.0e-10:
+            return None
+        return np.asarray(vector, dtype=float) / norm
 
     def _drop_isolated_register_outliers(
         self,
@@ -1664,17 +1852,6 @@ class RobustTopologyInferrer:
         plane_penalty = 10.0 if plane_dist > 2.0 else 0.0
         complement_bonus = -2.0 if self._is_complementary(residue_1.base, residue_2.base) else 0.0
         return distance + complement_bonus + plane_penalty
-
-    def _orientation_score(self, ref: Sequence[int], strand: Sequence[int]) -> bool:
-        forward = self._alignment_distance(ref, strand)
-        reverse = self._alignment_distance(ref, list(reversed(strand)))
-        return forward <= reverse
-
-    def _alignment_distance(self, ref: Sequence[int], strand: Sequence[int]) -> float:
-        n = min(len(ref), len(strand))
-        if n == 0:
-            return float("inf")
-        return float(sum(np.linalg.norm(self.residues[ref[i]].hbond_center - self.residues[strand[i]].hbond_center) for i in range(n)) / n)
 
     def _align_to_reference(self, ref: Sequence[int], strand: Sequence[int]) -> Tuple[List[int], float]:
         n, m = len(ref), len(strand)

@@ -6,11 +6,7 @@ from typing import Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-HOOGSTEEN_HBOND_ATOMS = {
-    ("A", "T"): (("N7", "N3"), ("N6", "O4")),
-    ("A", "U"): (("N7", "N3"), ("N6", "O4")),
-    ("G", "C"): (("N7", "N3"), ("O6", "N4")),
-}
+from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS
 
 EQUIVALENT_AXIS_SIGN_FLIPS = (
     np.diag([1.0, 1.0, 1.0]),
@@ -20,17 +16,17 @@ EQUIVALENT_AXIS_SIGN_FLIPS = (
 )
 
 
-def build_hoogsteen_reference_frames(ctx):
-    """Build Hoogsteen-aware fitted frames for shape calculations.
+def build_interaction_reference_frames(ctx):
+    """Build contact-geometry frames for noncanonical shape calculations.
 
     The fitted base frames remain available as ``params.frames``.  For a
-    Hoogsteen pair, ``params.shape_frames`` replaces both paired base frames
-    with per-base Hoogsteen reference frames:
+    noncanonical pair with reliable edge contacts, ``params.shape_frames``
+    replaces both paired base frames with per-base interaction frames:
 
-    * X follows that base's observed H-bond edge.
-    * Y points from strand 1 toward the partner.
+    * X follows that base's observed interacting edge.
+    * Y is oriented consistently along the strand-1 to partner contact axis.
     * Z is that base's already-fitted normal from the active base convention.
-    * Origins are the centroids of the atoms defining the observed H-bond edge.
+    * Origins are the centroids of the atoms defining the observed edge.
 
     The two bases do not share averaged axes; downstream shape math still
     compares two independent fitted frames, so buckle/propeller/opening remain
@@ -39,53 +35,51 @@ def build_hoogsteen_reference_frames(ctx):
     p = ctx.params
     raw_frames = np.asarray(p.frames, dtype=float)
     shape_frames = raw_frames.copy()
-    pairs = _hoogsteen_pairs(ctx)
+    pairs = _interaction_frame_pairs(ctx)
     if not pairs:
         p.shape_frames = shape_frames
-        ctx.hoogsteen_reference_frames = []
+        ctx.contact_geometry_frame_keys = set()
         return shape_frames
 
-    reference_rows = []
-    for partner_strand, level in pairs:
+    frame_keys = set()
+    for partner_strand, level, geometry in pairs:
         if not (
             _has_level(ctx, 0, level)
             and _has_level(ctx, partner_strand, level)
         ):
             continue
-        pair_frames = _hoogsteen_pair_reference_frames(ctx, 0, partner_strand, level, raw_frames)
+        pair_frames = _interaction_pair_reference_frames(ctx, 0, partner_strand, level, raw_frames, geometry)
         if pair_frames is None:
             continue
-        first_frame, partner_frame, pattern = pair_frames
+        first_frame, partner_frame = pair_frames
         shape_frames[0, level] = first_frame
         shape_frames[partner_strand, level] = partner_frame
-        reference_rows.append({
-            "level": level,
-            "partner_strand": partner_strand + 1,
-            "atom_pairs": pattern,
-        })
+        frame_keys.add((0, partner_strand, level))
+        frame_keys.add((partner_strand, 0, level))
 
     p.shape_frames = shape_frames
-    ctx.hoogsteen_reference_frames = reference_rows
+    ctx.contact_geometry_frame_keys = frame_keys
     return shape_frames
 
 
 def build_axis_reference_frames(ctx):
     """Build the frame view consumed by the legacy global-axis optimizer.
 
-    A Hoogsteen/syn base can be fit on a discontinuous in-plane branch.  Build
-    the Hoogsteen fitted frames first, then choose determinant-preserving sign
-    equivalents so the legacy global-axis optimizer sees continuous reference
-    frames.
+    Noncanonical edge frames can be fit on a discontinuous in-plane branch.
+    Choose determinant-preserving sign equivalents so the legacy global-axis
+    optimizer sees continuous reference frames.
     """
     p = ctx.params
-    shape_frames = build_hoogsteen_reference_frames(ctx)
+    shape_frames = build_interaction_reference_frames(ctx)
     axis_frames = shape_frames.copy()
 
     markers = getattr(ctx, "hoogsteen_markers", set()) or set()
     annotations = getattr(ctx, "annotations", {}).get("base_pair_annotations", [])
+    has_contact_geometry = bool(getattr(ctx, "contact_geometry_frame_keys", set()))
     has_hoogsteen = bool(markers) or any(bp.get("is_hoogsteen") for bp in annotations)
-    ctx.axis_reference_uses_continuity = bool(has_hoogsteen)
-    if not has_hoogsteen:
+    needs_continuity = has_contact_geometry or has_hoogsteen
+    ctx.axis_reference_uses_continuity = bool(needs_continuity)
+    if not needs_continuity:
         p.axis_frames = axis_frames
         ctx.axis_frame_adjustments = []
         return axis_frames
@@ -123,98 +117,133 @@ def _has_level(ctx, strand: int, level: int) -> bool:
     return 0 <= strand < ctx.nst and 1 <= level <= ctx.nux and ctx.li[level, strand] >= 0
 
 
-def _hoogsteen_pairs(ctx):
-    pairs = set()
+def _interaction_frame_pairs(ctx):
+    pairs = []
     annotations = getattr(ctx, "annotations", {}).get("base_pair_annotations", [])
     for row in annotations:
-        if row.get("is_hoogsteen") and row.get("level") is not None:
-            strands = {int(row.get("strand_1", 0)), int(row.get("strand_2", 0))}
-            if 1 in strands and len(strands) == 2:
-                partner = next(strand for strand in strands if strand != 1)
-                pairs.add((partner - 1, int(row["level"])))
-
-    markers = getattr(ctx, "hoogsteen_markers", set()) or set()
-    for marker in markers:
-        level = None
-        if isinstance(marker, tuple) and len(marker) >= 2:
-            level = int(marker[-1])
-        elif isinstance(marker, (int, np.integer)):
-            level = int(marker)
+        geometry = row.get("contact_geometry") or {}
+        if row.get("frame_mode") != "contact_geometry":
+            continue
+        level = row.get("level")
         if level is None:
             continue
-        for partner_strand in range(1, ctx.nst):
-            if _has_level(ctx, 0, level) and _has_level(ctx, partner_strand, level):
-                pairs.add((partner_strand, level))
-
+        strands = {int(row.get("strand_1", 0)), int(row.get("strand_2", 0))}
+        if 1 not in strands or len(strands) != 2:
+            continue
+        partner = next(strand for strand in strands if strand != 1)
+        pairs.append((partner - 1, int(level), geometry))
     return sorted(pairs, key=lambda item: (item[1], item[0]))
 
 
-def _hoogsteen_pair_reference_frames(
+def _interaction_pair_reference_frames(
     ctx,
     first_strand: int,
     partner_strand: int,
     level: int,
     raw_frames: np.ndarray,
+    geometry: dict,
 ):
     first_base, first_atoms = _base_atom_map(ctx, first_strand, level)
     partner_base, partner_atoms = _base_atom_map(ctx, partner_strand, level)
-    atom_pairs = _hoogsteen_atom_pairs(first_base, partner_base)
-    if not atom_pairs:
-        return None
+    first_id = first_strand + 1
+    geometry_first_id = int(geometry.get("strand_1", first_id))
 
-    first_points = []
-    partner_points = []
-    used_pairs = []
-    for first_atom, partner_atom in atom_pairs:
+    if geometry_first_id == first_id:
+        first_edge = geometry.get("edge_1", "")
+        partner_edge = geometry.get("edge_2", "")
+        first_key = "atom_1"
+        partner_key = "atom_2"
+    else:
+        first_edge = geometry.get("edge_2", "")
+        partner_edge = geometry.get("edge_1", "")
+        first_key = "atom_2"
+        partner_key = "atom_1"
+
+    contact_pairs = list(geometry.get("contact_atom_pairs", []) or [])
+    first_contact_atoms = []
+    partner_contact_atoms = []
+    first_contact_points = []
+    partner_contact_points = []
+    for pair in contact_pairs:
+        first_atom = str(pair.get(first_key, "")).strip().upper()
+        partner_atom = str(pair.get(partner_key, "")).strip().upper()
         first_point = first_atoms.get(first_atom)
         partner_point = partner_atoms.get(partner_atom)
         if first_point is None or partner_point is None:
             continue
-        first_points.append(first_point)
-        partner_points.append(partner_point)
-        used_pairs.append((first_atom, partner_atom))
+        first_contact_atoms.append(first_atom)
+        partner_contact_atoms.append(partner_atom)
+        first_contact_points.append(first_point)
+        partner_contact_points.append(partner_point)
 
-    if len(first_points) < 2:
+    first_points = _edge_points_for_frame(first_base, first_edge, first_atoms, first_contact_atoms)
+    partner_points = _edge_points_for_frame(partner_base, partner_edge, partner_atoms, partner_contact_atoms)
+    if len(first_points) < 2 or len(partner_points) < 2:
         return None
 
-    first_points = np.asarray(first_points, dtype=float)
-    partner_points = np.asarray(partner_points, dtype=float)
-
-    hbond_axis = _unit(np.mean(partner_points - first_points, axis=0), raw_frames[first_strand, level, 1, :])
-    first_frame = _hoogsteen_member_reference_frame(
+    if first_contact_points:
+        first_contact_points = np.asarray(first_contact_points, dtype=float)
+        partner_contact_points = np.asarray(partner_contact_points, dtype=float)
+        hbond_axis_seed = np.mean(partner_contact_points - first_contact_points, axis=0)
+    else:
+        hbond_axis_seed = np.mean(partner_points, axis=0) - np.mean(first_points, axis=0)
+    hbond_axis = _unit(hbond_axis_seed, raw_frames[first_strand, level, 1, :])
+    first_frame = _interaction_member_reference_frame(
         raw_frames[first_strand, level],
         first_points,
         hbond_axis,
     )
-    partner_frame = _hoogsteen_member_reference_frame(
+    partner_frame = _interaction_member_reference_frame(
         raw_frames[partner_strand, level],
         partner_points,
         hbond_axis,
     )
-    return first_frame, partner_frame, tuple(used_pairs)
+    return first_frame, partner_frame
 
 
-def _hoogsteen_member_reference_frame(raw_frame: np.ndarray, edge_points: np.ndarray, hbond_axis: np.ndarray) -> np.ndarray:
-    """Return one base's Hoogsteen fitted frame.
+def _edge_points_for_frame(base: str, edge: str, atom_map: dict, contact_atoms) -> np.ndarray:
+    names = []
+    for atom_name in contact_atoms:
+        if atom_name in atom_map and atom_name not in names:
+            names.append(atom_name)
+    if len(names) < 2:
+        for atom_name in sorted(BASE_EDGE_ATOMS.get(base, {}).get(edge, set())):
+            if atom_name in atom_map and atom_name not in names:
+                names.append(atom_name)
+    return np.asarray([atom_map[name] for name in names if name in atom_map], dtype=float)
 
-    The base normal comes from the already-fitted base frame.  The in-plane
-    orientation and origin are rebuilt from that base's Hoogsteen H-bond edge.
-    """
+
+def _interaction_member_reference_frame(raw_frame: np.ndarray, edge_points: np.ndarray, hbond_axis: np.ndarray) -> np.ndarray:
+    """Return one base's observed-edge interaction frame."""
     edge_points = np.asarray(edge_points, dtype=float)
     z_axis = _unit(raw_frame[2], np.array([0.0, 0.0, 1.0]))
-    x_axis = edge_points[-1] - edge_points[0]
-    x_axis = x_axis - z_axis * np.dot(x_axis, z_axis)
+    center = np.mean(edge_points, axis=0)
+    centered = edge_points - center
+    centered = centered - np.outer(centered @ z_axis, z_axis)
+
+    x_axis = None
+    if len(centered) >= 2 and np.linalg.norm(centered) > 1e-10:
+        try:
+            _, _, vh = np.linalg.svd(centered, full_matrices=False)
+            x_axis = vh[0]
+        except np.linalg.LinAlgError:
+            x_axis = None
+    if x_axis is None or np.linalg.norm(x_axis) <= 1e-12:
+        x_axis = edge_points[-1] - edge_points[0]
+        x_axis = x_axis - z_axis * np.dot(x_axis, z_axis)
     x_axis = _unit(x_axis, raw_frame[0])
+    if np.dot(x_axis, raw_frame[0]) < 0.0:
+        x_axis *= -1.0
+
     y_axis = _unit(np.cross(z_axis, x_axis), raw_frame[1])
     x_axis = _unit(np.cross(y_axis, z_axis), x_axis)
-
     if np.dot(y_axis, hbond_axis) < 0.0:
         x_axis *= -1.0
         y_axis *= -1.0
 
     frame = np.asarray(raw_frame, dtype=float).copy()
     frame[:3, :] = _orthonormalize_axes(np.asarray([x_axis, y_axis, z_axis], dtype=float))
-    frame[3, :] = np.mean(edge_points, axis=0)
+    frame[3, :] = center
     return frame
 
 
@@ -230,16 +259,6 @@ def _base_atom_map(ctx, strand: int, level: int):
         atom_name = str(ctx.molecule.atom_names[atom_idx]).strip().upper()
         atom_map.setdefault(atom_name, np.asarray(ctx.molecule.coordinates[atom_idx], dtype=float))
     return base, atom_map
-
-
-def _hoogsteen_atom_pairs(first_base: str, partner_base: str):
-    direct = HOOGSTEEN_HBOND_ATOMS.get((first_base, partner_base))
-    if direct is not None:
-        return direct
-    reversed_pairs = HOOGSTEEN_HBOND_ATOMS.get((partner_base, first_base))
-    if reversed_pairs is None:
-        return ()
-    return tuple((partner_atom, first_atom) for first_atom, partner_atom in reversed_pairs)
 
 
 def _base_symbol(ctx, strand: int, level: int) -> str:
@@ -319,8 +338,13 @@ class LegacyParameterConvention(BaseParameterConvention):
     name = "legacy"
 
     def local_base_base_values(self, calc, partner_strand: int, level: int):
-        if StandardParameterConvention()._is_hoogsteen_pair(calc, partner_strand, level):
-            return StandardParameterConvention().local_base_base_values(calc, partner_strand, level)
+        standard = StandardParameterConvention()
+        if (
+            standard._uses_contact_geometry_pair(calc, partner_strand, level)
+            or standard._is_hoogsteen_pair(calc, partner_strand, level)
+            or standard._uses_noncanonical_watson_pair(calc, partner_strand, level)
+        ):
+            return standard.local_base_base_values(calc, partner_strand, level)
 
         if not (calc._has_level(0, level) and calc._has_level(partner_strand, level)):
             return None
@@ -444,7 +468,7 @@ class LegacyParameterConvention(BaseParameterConvention):
                     h_twist -= np.copysign(360.0, h_twist)
                 calc.pab[i, 5, k] = h_twist
 
-        self._fill_hoogsteen_base_pair_steps(calc)
+        self._fill_contact_geometry_base_pair_steps(calc)
 
     def fill_local_strand_steps(self, calc) -> None:
         standard = StandardParameterConvention()
@@ -464,7 +488,9 @@ class LegacyParameterConvention(BaseParameterConvention):
 
             for level in range(iste + 1, iene + 1):
                 if not (
-                    standard._is_hoogsteen_level(calc, strand, level - 1)
+                    standard._uses_contact_geometry_level(calc, strand, level - 1)
+                    or standard._uses_contact_geometry_level(calc, strand, level)
+                    or standard._is_hoogsteen_level(calc, strand, level - 1)
                     or standard._is_hoogsteen_level(calc, strand, level)
                 ):
                     continue
@@ -482,12 +508,14 @@ class LegacyParameterConvention(BaseParameterConvention):
                 values[3:] = [standard._wrap_180(value) for value in values[3:]]
                 calc.pal[level, :, strand] = values
 
-    def _fill_hoogsteen_base_pair_steps(self, calc) -> None:
+    def _fill_contact_geometry_base_pair_steps(self, calc) -> None:
         standard = StandardParameterConvention()
         for partner_strand in range(1, calc.ctx.nst):
             for level in range(calc.optimizer.iste + 1, calc.optimizer.iene + 1):
                 if not (
-                    standard._is_hoogsteen_pair(calc, partner_strand, level - 1)
+                    standard._uses_contact_geometry_pair(calc, partner_strand, level - 1)
+                    or standard._uses_contact_geometry_pair(calc, partner_strand, level)
+                    or standard._is_hoogsteen_pair(calc, partner_strand, level - 1)
                     or standard._is_hoogsteen_pair(calc, partner_strand, level)
                 ):
                     continue
@@ -673,26 +701,78 @@ class StandardParameterConvention(LegacyParameterConvention):
             yield ParameterFrame(origin=frame.origin.copy(), axes=sign_flip @ frame.axes)
 
     def _base_pair_member_frames(self, calc, partner_strand: int, level: int):
-        is_hoogsteen = self._is_hoogsteen_pair(calc, partner_strand, level)
-        first = self._interaction_base_frame(calc, 0, level)
-        other = self._interaction_base_frame(calc, partner_strand, level)
+        contact_geometry = self._contact_geometry_for_pair(calc, partner_strand, level)
+        annotation = self._base_pair_annotation(calc, partner_strand, level)
+        annotated_geometry = (annotation or {}).get("contact_geometry") or {}
+        if contact_geometry is not None:
+            glycosidic_orientation = str(contact_geometry.get("glycosidic_orientation", "")).lower()
+            if glycosidic_orientation in {"cis", "c"}:
+                prefer_parallel = True
+            elif glycosidic_orientation in {"trans", "t"}:
+                prefer_parallel = False
+            else:
+                prefer_parallel = contact_geometry.get("strand_direction") == "parallel"
+        else:
+            prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)
+        first = self._base_frame(calc, 0, level)
+        other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        other = self._aligned_partner_frame(first, other, prefer_parallel=is_hoogsteen)
+        if self._is_noncanonical_watson_pair(annotation, annotated_geometry):
+            other = self._closest_partner_frame(first, other)
+        else:
+            other = self._aligned_partner_frame(first, other, prefer_parallel=prefer_parallel)
         return first, other
 
-    def _interaction_base_frame(
-        self,
-        calc,
-        strand: int,
-        level: int,
-    ) -> Optional[ParameterFrame]:
-        frame = self._base_frame(calc, strand, level)
-        if frame is None:
+    def _uses_noncanonical_watson_pair(self, calc, partner_strand: int, level: int) -> bool:
+        annotation = self._base_pair_annotation(calc, partner_strand, level)
+        if not annotation:
+            return False
+        geometry = annotation.get("contact_geometry") or {}
+        return self._is_noncanonical_watson_pair(annotation, geometry)
+
+    def _base_pair_annotation(self, calc, partner_strand: int, level: int):
+        base_pairs = getattr(calc.ctx, "annotations", {}).get("base_pair_annotations", [])
+        strands = {1, partner_strand + 1}
+        for row in base_pairs:
+            if row.get("level") != level:
+                continue
+            annotated = {int(row.get("strand_1", 0)), int(row.get("strand_2", 0))}
+            if annotated == strands:
+                return row
+        return None
+
+    @staticmethod
+    def _is_noncanonical_watson_pair(annotation, geometry: dict) -> bool:
+        if not annotation:
+            return False
+        edge_1 = str((geometry or {}).get("edge_1") or annotation.get("edge_1") or "").upper()
+        edge_2 = str((geometry or {}).get("edge_2") or annotation.get("edge_2") or "").upper()
+        if edge_1 != "W" or edge_2 != "W":
+            return False
+        return bool(
+            annotation.get("is_mismatch")
+            or annotation.get("is_hoogsteen")
+            or annotation.get("pair_family") not in {"watson_crick", ""}
+            or annotation.get("geometry_flag")
+        )
+
+    def _uses_contact_geometry_pair(self, calc, partner_strand: int, level: int) -> bool:
+        keys = getattr(calc.ctx, "contact_geometry_frame_keys", set()) or set()
+        return (0, partner_strand, level) in keys or (partner_strand, 0, level) in keys
+
+    def _uses_contact_geometry_level(self, calc, strand: int, level: int) -> bool:
+        keys = getattr(calc.ctx, "contact_geometry_frame_keys", set()) or set()
+        return any(key_strand == strand and key_level == level for key_strand, _, key_level in keys)
+
+    def _contact_geometry_for_pair(self, calc, partner_strand: int, level: int):
+        if not self._uses_contact_geometry_pair(calc, partner_strand, level):
             return None
-        # Hoogsteen-aware shape frames are installed once in params.shape_frames;
-        # downstream parameter math should compare those fitted frames directly.
-        return frame
+        geometries = getattr(calc.ctx, "pair_contact_geometries", {}) or {}
+        return (
+            geometries.get((0, partner_strand, level))
+            or geometries.get((partner_strand, 0, level))
+        )
 
     def _is_hoogsteen_pair(self, calc, partner_strand: int, level: int) -> bool:
         if self._hoogsteen_marker_matches(calc, 0, partner_strand, level):
@@ -768,6 +848,13 @@ class StandardParameterConvention(LegacyParameterConvention):
         if inverted_score > direct_score + 1e-9:
             return inverted
         return ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
+
+    def _closest_partner_frame(self, first: ParameterFrame, other: ParameterFrame) -> ParameterFrame:
+        direct = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
+        inverted = self._inverted_partner_frame(other)
+        direct_score = float(np.trace(first.axes @ direct.axes.T))
+        inverted_score = float(np.trace(first.axes @ inverted.axes.T))
+        return inverted if inverted_score > direct_score + 1e-9 else direct
 
     @staticmethod
     def _inverted_partner_frame(frame: ParameterFrame) -> ParameterFrame:
