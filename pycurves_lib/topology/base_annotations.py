@@ -172,7 +172,7 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
 
     source_unusual = [
         row for row in source_base_pairs
-        if row.get("is_hoogsteen") and row.get("mapped_level") is None
+        if _should_report_unmapped_source_pair(row)
     ]
     if source_unusual:
         lines.extend([
@@ -904,6 +904,7 @@ def _source_base_pair_annotations(ctx) -> List[Dict[str, Any]]:
         seen_pairs.add(unordered_key)
         i_locations = residue_locations.get(i_key, [])
         j_locations = residue_locations.get(j_key, [])
+        in_current_topology = bool(i_locations or j_locations)
         mapped_level = None
         mapped_strands = None
         for left in i_locations:
@@ -942,9 +943,9 @@ def _source_base_pair_annotations(ctx) -> List[Dict[str, Any]]:
             "mapped_level": mapped_level,
             "mapped_strand_1": mapped_strands[0] if mapped_strands else None,
             "mapped_strand_2": mapped_strands[1] if mapped_strands else None,
-            "topology_status": "mapped_to_curves_level" if mapped_level is not None else "source_pair_not_in_current_inp_topology",
+            "topology_status": _source_pair_topology_status(mapped_level, in_current_topology),
             "shape_parameters_supported": mapped_level is not None,
-            "shape_skip_reason": "" if mapped_level is not None else "source_pair_not_in_current_inp_topology",
+            "shape_skip_reason": "" if mapped_level is not None else _source_pair_topology_status(mapped_level, in_current_topology),
         }
         annotations.append(annotation)
     return annotations
@@ -979,7 +980,7 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs) -> L
         if row.get("is_modified"):
             warnings.append(_warning("info", "parent_template_fit", location, f"{residue} fitted with {row.get('parent_base', '?')} parent-base template."))
     for row in source_base_pairs:
-        if row.get("is_hoogsteen") and row.get("mapped_level") is None:
+        if _should_report_unmapped_source_pair(row):
             warnings.append(_warning(
                 "warn",
                 "hoogsteen_source_pair",
@@ -987,6 +988,22 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs) -> L
                 f"{row.get('residue_1')} paired with {row.get('residue_2')} is Hoogsteen in the mmCIF table but is not represented as a Curves paired level.",
             ))
     return warnings
+
+
+def _source_pair_topology_status(mapped_level, in_current_topology: bool) -> str:
+    if mapped_level is not None:
+        return "mapped_to_curves_level"
+    if in_current_topology:
+        return "source_pair_not_in_current_inp_topology"
+    return "source_pair_outside_current_inp_topology"
+
+
+def _should_report_unmapped_source_pair(row: Dict[str, Any]) -> bool:
+    return bool(
+        row.get("is_hoogsteen")
+        and row.get("mapped_level") is None
+        and row.get("topology_status") != "source_pair_outside_current_inp_topology"
+    )
 
 
 def _warning(severity: str, code: str, location: str, message: str) -> Dict[str, str]:
