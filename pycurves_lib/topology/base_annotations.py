@@ -730,10 +730,7 @@ def _is_hoogsteen_edge_pair(contact_geometry: Dict[str, Any]) -> bool:
     if {edge_1, edge_2} != {"H", "W"}:
         return False
     bases = {contact_geometry.get("base_1"), contact_geometry.get("base_2")}
-    return (
-        (bases <= {"A", "T", "U"} and "A" in bases)
-        or bases == {"G", "C"}
-    )
+    return bases in ({"A", "T"}, {"A", "U"}, {"G", "C"})
 
 
 def _pair_geometry_marker(ctx, level: int, strand_1: int, strand_2: int) -> Optional[Dict[str, Any]]:
@@ -775,10 +772,11 @@ def _pair_contact_geometry_index(base_pairs: List[Dict[str, Any]]) -> Dict[Tuple
 def _has_hoogsteen_heavy_atom_contacts(ctx, residue_1: Dict[str, Any], residue_2: Dict[str, Any]) -> bool:
     base_1 = parent_base_name(residue_1["residue_name"])
     base_2 = parent_base_name(residue_2["residue_name"])
+    bases = {base_1, base_2}
     atom_map_1 = _atom_map_for_residue(ctx, int(residue_1["subunit"]))
     atom_map_2 = _atom_map_for_residue(ctx, int(residue_2["subunit"]))
 
-    if {base_1, base_2} <= {"A", "T", "U"} and "A" in {base_1, base_2}:
+    if bases in ({"A", "T"}, {"A", "U"}):
         adenine_atoms = atom_map_1 if base_1 == "A" else atom_map_2
         pyrimidine_atoms = atom_map_2 if base_1 == "A" else atom_map_1
         n7_n3 = _atom_distance(adenine_atoms, "N7", pyrimidine_atoms, "N3")
@@ -786,7 +784,7 @@ def _has_hoogsteen_heavy_atom_contacts(ctx, residue_1: Dict[str, Any], residue_2
         n1_n3 = _atom_distance(adenine_atoms, "N1", pyrimidine_atoms, "N3")
         return _is_hoogsteen_contact_pair(n7_n3, n6_o4, n1_n3)
 
-    if {base_1, base_2} == {"G", "C"}:
+    if bases == {"G", "C"}:
         guanine_atoms = atom_map_1 if base_1 == "G" else atom_map_2
         cytosine_atoms = atom_map_2 if base_1 == "G" else atom_map_1
         n7_n3 = _atom_distance(guanine_atoms, "N7", cytosine_atoms, "N3")
@@ -955,6 +953,7 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs) -> L
     warnings = []
     for row in base_pairs:
         location = f"level {row.get('level')}"
+        mismatch_reported = False
         if row.get("pair_family") == "ambiguous_topology":
             warnings.append(_warning("warn", "ambiguous_topology", location, row.get("pair_subtype", "")))
         elif row.get("is_hoogsteen"):
@@ -964,9 +963,12 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs) -> L
             geometry = base_pair_geometry_annotation(row) or row.get("edge_pair") or "unknown edges"
             warnings.append(_warning("info", "contact_geometry_pair", location, f"{row['residue_1']} paired with {row['residue_2']} uses {geometry} contact-geometry frames for local shape parameters."))
         elif row.get("is_mismatch"):
-            warnings.append(_warning("warn", "mismatch_pair", location, f"{row['residue_1']} paired with {row['residue_2']} is not Watson-Crick/wobble by identity."))
+            warnings.append(_mismatch_warning(row, location))
+            mismatch_reported = True
         elif row.get("pair_family") == "wobble":
             warnings.append(_warning("info", "wobble_pair", location, f"{row['residue_1']} paired with {row['residue_2']} is recognized as wobble/noncanonical."))
+        if row.get("is_mismatch") and not mismatch_reported:
+            warnings.append(_mismatch_warning(row, location))
         if row.get("has_modified_base"):
             warnings.append(_warning("info", "modified_base_pair", location, f"{row['residue_1']} / {row['residue_2']} contains modified or nonstandard residue names."))
 
@@ -988,6 +990,17 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs) -> L
                 f"{row.get('residue_1')} paired with {row.get('residue_2')} is Hoogsteen in the mmCIF table but is not represented as a Curves paired level.",
             ))
     return warnings
+
+
+def _mismatch_warning(row: Dict[str, Any], location: str) -> Dict[str, str]:
+    geometry = base_pair_geometry_annotation(row)
+    suffix = f" Observed geometry: {geometry}." if geometry else ""
+    return _warning(
+        "warn",
+        "mismatch_pair",
+        location,
+        f"{row['residue_1']} paired with {row['residue_2']} is not Watson-Crick/wobble by identity.{suffix}",
+    )
 
 
 def _source_pair_topology_status(mapped_level, in_current_topology: bool) -> str:
