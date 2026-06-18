@@ -41,6 +41,7 @@ class CurvesWrapper:
         mini_override: Optional[bool] = None,
         comb_override: Optional[bool] = None,
         ends_override: Optional[bool] = None,
+        auto_generate_inp: bool = True,
     ):
         if pdbfile is None and inpfile is None:
             raise ValueError("Provide at least a PDB file or an input file.")
@@ -67,7 +68,7 @@ class CurvesWrapper:
         self._parsed_config_cache_key = None
         self._reference_library_cache = {}
 
-        if self.inpfile is None:
+        if self.inpfile is None and auto_generate_inp:
             self.generated_inpfiles = self.generate_inp(pdbfile=self.pdbfile, output_dir=output_dir, continuous_strands=continuous_strands)
             if not self.generated_inpfiles:
                 raise ValueError(f"Could not infer a Curves input file from {self.pdbfile!r}.")
