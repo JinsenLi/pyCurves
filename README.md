@@ -4,7 +4,10 @@ pyCurves is a Python implementation and extension of Curves-style nucleic acid
 helical analysis. It reads PDB/mmCIF structures, infers DNA/RNA topology,
 calculates helical axes, base/base-pair parameters, groove widths, backbone
 torsions, curvature summaries, and exports the results as Curves-style text,
-slim JSON, or CSV tables.
+slim JSON, or CSV tables. The topology and annotation layer is designed to
+keep downstream geometry correct for real-world structures, including
+disconnected helices, mismatches, Hoogsteen/reverse-Hoogsteen contacts, and
+other non-canonical base-pair geometries.
 
 The default mode keeps the legacy Curves 5.3 curvilinear-axis minimization, but
 pyCurves also supports standard Curves+/3DNA-compatible local reference frames
@@ -50,6 +53,15 @@ Generate CSV tables:
 pycurves test_data/1A1F_b_c.pdb --format csv --output-file 1a1f_tables
 ```
 
+Generate inferred Curves `.inp` files only, without running any analysis:
+
+```bash
+pycurves --generate-inp-only test_data/1OH6.cif test_data/1QNB.cif \
+  --output-dir inferred_inputs
+
+pycurves --inp-only "test_data/*.cif" --output-dir inferred_inputs
+```
+
 Use standard Curves+/3DNA-style local frames:
 
 ```bash
@@ -80,13 +92,23 @@ pycurves your_input.inp --pdb your_structure.pdb
 ## What pyCurves Adds
 
 * Automatic topology inference for PDB/mmCIF files, including split chains,
-  modified bases, mismatches, gaps, and non-canonical pairing annotations.
+  modified bases, mismatches, gaps, disconnected helical regions, and
+  non-canonical pairing annotations.
 * Legacy Curves 5.3 global curvilinear-axis minimization in Python/JAX.
 * Standard Curves+/3DNA-compatible local base and base-step parameter mode.
+* Non-canonical-aware frame selection: canonical pairs keep legacy/standard
+  canonical frames, while reliable non-canonical contacts can use observed
+  edge geometry so downstream shape parameters are not dominated by frame
+  misassignment.
+* Editable Leontis-Westhof-style geometry markers in generated `.inp` files,
+  for example `[cWW]`, `[tWH]`, or `[tSS]`, with strand-direction information
+  for sign handling.
 * Local and global shape tables for base-base and inter-base-pair parameters.
 * Groove widths, backbone torsions, sugar pucker, curvature, and bending
   summaries in text, JSON, or CSV output.
 * Batch trajectory analysis for MD simulations.
+* High-throughput `.inp` generation mode for precomputing topology files before
+  running large analysis batches.
 * Optional HTML/WebGL visualization of the molecular structure, helical axis,
   backbone splines, base blocks, local frames, and parameter locations.
 
@@ -135,6 +157,7 @@ python install_pycurves.py uninstall --yes
 
 ```bash
 pycurves [input.pdb|input.cif|input.inp] [options]
+pycurves --generate-inp-only [structure ...] [options]
 ```
 
 Common options:
@@ -148,6 +171,9 @@ Common options:
 * `--axis-convention legacy|curvesplus`: choose the global-axis construction.
   `legacy` runs the pyCurves/JAX minimizer. `curvesplus` reproduces the Curves+
   smooth-axis path and skips pyCurves-only global-axis tables.
+* `--generate-inp-only` / `--inp-only`: infer and write Curves `.inp` files
+  for one or more PDB/mmCIF structures, globs, or directories, then exit before
+  any fitting, minimization, or parameter calculation.
 * `--continuous-strands`: treat connected multi-chain helices as one biological
   helix when topology inference would otherwise split them.
 * `--fit` / `--no-fit`, `--grooves` / `--no-grooves`, `--mini` / `--no-mini`,
@@ -177,6 +203,42 @@ not included in the standard JSON.
 
 CSV output writes one file per dataframe using the `--output-file` value as the
 filename prefix.
+
+## Non-Canonical Pairing
+
+pyCurves is not intended to replace dedicated base-pair annotation tools such
+as X3DNA/DSSR. Its non-canonical layer is geometry-first: detected pairing
+edges and cis/trans orientation are used to choose robust local frames and
+strand-direction signs for downstream helical and shape calculations.
+
+Generated `.inp` files can include editable geometry tags such as `[cWW]`,
+`[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are reported as
+mismatches even when they use a Watson-Crick, Hoogsteen, sugar, or C-H edge
+contact geometry. Canonical Watson-Crick pairs continue to use the canonical
+legacy or standard frames; contact-geometry frames are used only when a
+non-canonical pair has reliable edge/contact evidence.
+
+The annotation report and JSON/CSV tables expose these records for auditing:
+
+* canonical, wobble, mismatch, Hoogsteen, reverse-Hoogsteen, and other
+  hydrogen-bonded non-canonical pair classifications;
+* observed edge/orientation annotations such as `[cWW:ap]` or `[tWH:ap]`;
+* source mmCIF base-pair records when available;
+* warnings when a source pair is outside the current generated `.inp` topology.
+
+## INP-Only Batch Generation
+
+For high-throughput workflows, pre-generate input files without analysis:
+
+```bash
+pycurves --generate-inp-only structures/*.cif --output-dir inp_batch
+```
+
+The mode accepts multiple structure files, shell globs, and directories. It
+uses the same topology inference as normal analysis, writes every inferred
+helical region as an editable `.inp` file, prints the generated paths, and
+exits before running base fitting, JAX minimization, groove analysis, or report
+generation.
 
 ## MD Trajectory Analysis
 
@@ -271,6 +333,19 @@ runner = CurvesWrapper.from_file(
 )
 runner.analyze()
 json_text = runner.output(fmt="json")
+```
+
+Generate `.inp` files programmatically without running analysis:
+
+```python
+from pycurves_lib.curves_wrapper import CurvesWrapper
+
+runner = CurvesWrapper(
+    pdbfile="test_data/1QNB.cif",
+    output_dir="inferred_inputs",
+    auto_generate_inp=False,
+)
+inp_files = runner.generate_inp(prefix="1QNB_auto")
 ```
 
 
