@@ -1,126 +1,75 @@
 # pyCurves
 
 pyCurves is a Python implementation and extension of Curves-style nucleic acid
-helical analysis. It reads PDB/mmCIF structures, infers DNA/RNA topology,
-calculates helical axes, base/base-pair parameters, groove widths, backbone
-torsions, curvature summaries, and exports the results as Curves-style text,
-slim JSON, or CSV tables. The topology and annotation layer is designed to
-keep downstream geometry correct for real-world structures, including
-disconnected helices, mismatches, Hoogsteen/reverse-Hoogsteen contacts, and
-other non-canonical base-pair geometries.
+helical analysis. It reads PDB/mmCIF structures, infers DNA/RNA topology, and
+calculates helical axes, base/base-pair parameters, groove measurements,
+backbone torsions, curvature summaries, and machine-readable tables.
 
-The default mode keeps the legacy Curves 5.3 curvilinear-axis minimization, but
-pyCurves also supports standard Curves+/3DNA-compatible local reference frames
-for reproducibility and downstream comparison.
+This project is under active development. Interfaces and output details may
+change before publication. If you use it before publication, please cite this
+GitHub repository.
 
-This project is being developed and will be updated periodically. Functions are subject to change 
-without prior notice.
-If you use this work before publication, please cite this github page. 
+## Install
 
-## Quick Start
-
-(Optional) It is highly recommended to use a standalone environment to install pyCurves.
-
-```
-conda create -n pycurves python=3.12
-conda activate pycurves
-```
-
-Install from the source tree:
+Use Python 3.10 or newer. Python 3.12 is recommended.
 
 ```bash
+conda create -n pycurves python=3.12
+conda activate pycurves
+
 git clone https://github.com/JinsenLi/pyCurves
 cd pyCurves
 pip install .
 ```
 
-Run a structure directly from PDB or mmCIF:
+That is enough for static PDB/mmCIF analysis and `.inp` generation.
+
+For trajectory readers, plotting, the experimental batch MD path, and legacy
+compatibility helpers, install the single full optional set:
+
+```bash
+pip install ".[all]"
+```
+
+CPU JAX is installed by default. On GPU clusters, install the matching JAX build
+for your CUDA environment before installing pyCurves.
+
+## Quick Examples
+
+Run a structure directly:
 
 ```bash
 pycurves test_data/1A1F_b_c.pdb
 pycurves test_data/1A6Y.cif
 ```
 
-Save a machine-readable result:
+Write JSON or CSV tables:
 
 ```bash
 pycurves test_data/1A1F_b_c.pdb --format json --output-file 1a1f.json
-```
-
-Generate CSV tables:
-
-```bash
 pycurves test_data/1A1F_b_c.pdb --format csv --output-file 1a1f_tables
 ```
 
-Generate inferred Curves `.inp` files only, without running any analysis:
+Generate inferred Curves `.inp` files without running analysis:
 
 ```bash
-pycurves --generate-inp-only test_data/1OH6.cif test_data/1QNB.cif \
-  --output-dir inferred_inputs
-
-pycurves --inp-only "test_data/*.cif" --output-dir inferred_inputs
+pycurves --generate-inp-only test_data/1OH6.cif test_data/1QNB.cif --output-dir inp
+pycurves --inp-only "test_data/*.cif" --output-dir inp
 ```
 
-Use standard Curves+/3DNA-style local frames:
-
-```bash
-pycurves test_data/1A1F_b_c.pdb \
-  --frame-convention standard \
-  --format json \
-  --output-file 1a1f_standard.json
-```
-
-Create an interactive HTML viewer:
-
-```bash
-pycurves test_data/1BNK_b_c.pdb \
-  --format json \
-  --visualization \
-  --output-file 1bnk_viewer_payload.json
-
-pycurves-viewer 1bnk_viewer_payload.json --output 1bnk_viewer.html
-```
-
-If you already have a legacy Curves `.inp` file, pass it directly. Add `--pdb`
-when the coordinate file is not specified inside the input file:
+Analyze an existing Curves `.inp` file:
 
 ```bash
 pycurves your_input.inp --pdb your_structure.pdb
 ```
 
-## What pyCurves Adds
-
-* Automatic topology inference for PDB/mmCIF files, including split chains,
-  modified bases, mismatches, gaps, disconnected helical regions, and
-  non-canonical pairing annotations.
-* Legacy Curves 5.3 global curvilinear-axis minimization in Python/JAX.
-* Standard Curves+/3DNA-compatible local base and base-step parameter mode.
-* Non-canonical-aware frame selection: canonical pairs keep legacy/standard
-  canonical frames, while reliable non-canonical contacts can use observed
-  edge geometry so downstream shape parameters are not dominated by frame
-  misassignment.
-* Editable Leontis-Westhof-style geometry markers in generated `.inp` files,
-  for example `[cWW]`, `[tWH]`, or `[tSS]`, with strand-direction information
-  for sign handling.
-* Local and global shape tables for base-base and inter-base-pair parameters.
-* Groove widths, backbone torsions, sugar pucker, curvature, and bending
-  summaries in text, JSON, or CSV output.
-* Batch trajectory analysis for MD simulations, including an experimental vectorized Curves+ fast path.
-* High-throughput `.inp` generation mode for precomputing topology files before
-  running large analysis batches.
-* Optional HTML/WebGL visualization of the molecular structure, helical axis,
-  backbone splines, base blocks, local frames, and parameter locations.
-
-## Installation
-
-Basic install:
+Use Curves+/3DNA-style local frames:
 
 ```bash
-pip install .
+pycurves test_data/1A1F_b_c.pdb --frame-convention standard --format json --output-file 1a1f_standard.json
 ```
 
-The package installs these command-line entry points:
+## Main Commands
 
 ```bash
 pycurves --help
@@ -130,32 +79,24 @@ pycurves-md-plot --help
 pycurves-viewer --help
 ```
 
-Optional dependency groups:
+Most users start with `pycurves`. The MD, batch, plot, and viewer commands are
+available when those workflows are needed.
 
-```bash
-pip install ".[md]"              # MDAnalysis and MDTraj trajectory readers
-pip install ".[md-fast]"         # optional numba accelerator for batch MD grooves
-pip install ".[plot]"            # matplotlib/ijson plotting tools
-pip install ".[legacy-process]"  # Biopython process_dna compatibility helper
-pip install ".[all]"             # everything above
-```
+## What pyCurves Adds
 
-JAX is required for the legacy Curves-style minimization. The default
-dependency installs CPU-compatible JAX. For GPU clusters, install the matching
-JAX build before installing pyCurves, for example:
+- PDB/mmCIF loading with automatic topology inference for DNA/RNA structures.
+- Legacy Curves 5.3-style curvilinear-axis minimization in Python/JAX.
+- Standard Curves+/3DNA-compatible local frame mode.
+- Non-canonical-aware frame selection for mismatches, Hoogsteen/reverse
+  Hoogsteen contacts, and other edge-pair geometries.
+- Editable geometry markers in generated `.inp` files, for example `[cWW]`,
+  `[tWH]`, and `[tSS]`.
+- Text, JSON, and CSV outputs for local/global helical parameters, grooves,
+  backbone torsions, curvature, and annotations.
+- MD trajectory analysis and an experimental vectorized Curves+ batch path.
+- Optional HTML viewer payload generation.
 
-```bash
-pip install -U "jax[cuda12]"
-```
-
-The repository also includes a small install helper:
-
-```bash
-python install_pycurves.py install --editable
-python install_pycurves.py uninstall --yes
-```
-
-## Main CLI
+## Important CLI Options
 
 ```bash
 pycurves [input.pdb|input.cif|input.inp] [options]
@@ -164,207 +105,95 @@ pycurves --generate-inp-only [structure ...] [options]
 
 Common options:
 
-* `--format {curves,json,csv}`: print a Curves-style report, slim JSON, or CSV
-  tables.
-* `--output-file PATH`: write output to a file or CSV prefix instead of
-  `stdout`.
-* `--frame-convention legacy|standard`: choose base reference frames.
-  `legacy` is Curves 5.3-style; `standard` is Curves+/3DNA-compatible.
-* `--axis-convention legacy|curvesplus`: choose the global-axis construction.
-  `legacy` runs the pyCurves/JAX minimizer. `curvesplus` reproduces the Curves+
-  smooth-axis path and skips pyCurves-only global-axis tables.
-* `--generate-inp-only` / `--inp-only`: infer and write Curves `.inp` files
-  for one or more PDB/mmCIF structures, globs, or directories, then exit before
-  any fitting, minimization, or parameter calculation.
-* `--continuous-strands`: treat connected multi-chain helices as one biological
-  helix when topology inference would otherwise split them.
-* `--fit` / `--no-fit`, `--grooves` / `--no-grooves`, `--mini` / `--no-mini`,
-  `--comb` / `--no-comb`, `--ends` / `--no-ends`: override analysis flags.
-* `--no-annotations`: suppress the non-canonical pairing/modification report.
-* `--visualization`: add geometry needed by `pycurves-viewer` to JSON output.
-
-Use `pycurves --help` for the full option list.
-
-## Output
-
-The standard JSON schema is `pycurves-slim-v1`. It is intentionally compact:
-
-* `frame_convention`, `analysis_options`, `inputs`, and `sequence` metadata.
-* A flat `dataframes` dictionary with table-like records.
-* Local tables such as `local_base_base`, `local_inter_base`,
-  `local_inter_base_pair`, `backbone`, and `groove`.
-* Global tables from legacy-axis runs, including `global_base_axis`,
-  `global_base_base`, `global_inter_base`, `global_inter_base_pair`,
-  `global_axis_curvature`, `global_axis_bending`, and
-  `global_axis_bending_summary`.
-
-Gapped or uncomputed paired positions are retained with `null` parameter values
-so sequence-indexed tables stay aligned. Debug-heavy internals such as raw
-gradients, derivative arrays, LSFit atom diagnostics, and topology arrays are
-not included in the standard JSON.
-
-CSV output writes one file per dataframe using the `--output-file` value as the
-filename prefix.
+- `--format {curves,json,csv}`: choose Curves-style text, JSON, or CSV output.
+- `--output-file PATH`: write output to a file or CSV prefix.
+- `--frame-convention legacy|standard`: choose legacy Curves frames or
+  Curves+/3DNA-style standard frames.
+- `--axis-convention legacy|curvesplus`: choose the legacy pyCurves/JAX axis or
+  the Curves+ smooth-axis path.
+- `--generate-inp-only` / `--inp-only`: infer `.inp` files and exit before
+  fitting, minimization, or parameter calculation.
+- `--continuous-strands`: treat connected split-chain helices as one biological
+  helix when possible.
+- `--fit`, `--grooves`, `--mini`, `--comb`, and `--ends`: override inferred
+  analysis flags. Each also accepts the `--no-*` form.
+- `--no-annotations`: suppress the pyCurves annotation report.
+- `--visualization`: include geometry needed by `pycurves-viewer` in JSON.
 
 ## Non-Canonical Pairing
 
-pyCurves is not intended to replace dedicated base-pair annotation tools such
-as X3DNA/DSSR. Its non-canonical layer is geometry-first: detected pairing
-edges and cis/trans orientation are used to choose robust local frames and
-strand-direction signs for downstream helical and shape calculations.
+pyCurves detects base-pair identity, interacting edges, and cis/trans orientation
+so that the right local frames and strand-direction signs can be used in shape
+calculations. Canonical Watson-Crick pairs keep the canonical legacy or standard
+frames. Non-canonical pairs use contact-geometry frames only when the observed
+edge/contact evidence is strong enough.
 
-Generated `.inp` files can include editable geometry tags such as `[cWW]`,
-`[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are reported as
-mismatches even when they use a Watson-Crick, Hoogsteen, sugar, or C-H edge
-contact geometry. Canonical Watson-Crick pairs continue to use the canonical
-legacy or standard frames; contact-geometry frames are used only when a
-non-canonical pair has reliable edge/contact evidence.
+Generated `.inp` files can carry editable geometry tags such as `[cWW]`,
+`[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are still reported as
+mismatches even when they have a clear edge-contact geometry.
 
-The annotation report and JSON/CSV tables expose these records for auditing:
+The annotation report and JSON/CSV tables include the detected pair class,
+observed edge/orientation tag, source mmCIF pair records when available, and
+warnings for source pairs that do not belong to the current generated `.inp`
+topology.
 
-* canonical, wobble, mismatch, Hoogsteen, reverse-Hoogsteen, and other
-  hydrogen-bonded non-canonical pair classifications;
-* observed edge/orientation annotations such as `[cWW:ap]` or `[tWH:ap]`;
-* source mmCIF base-pair records when available;
-* warnings when a source pair is outside the current generated `.inp` topology.
+## MD Trajectories
 
-## INP-Only Batch Generation
-
-For high-throughput workflows, pre-generate input files without analysis:
+Install the full optional set first:
 
 ```bash
-pycurves --generate-inp-only structures/*.cif --output-dir inp_batch
+pip install ".[all]"
 ```
 
-The mode accepts multiple structure files, shell globs, and directories. It
-uses the same topology inference as normal analysis, writes every inferred
-helical region as an editable `.inp` file, prints the generated paths, and
-exits before running base fitting, JAX minimization, groove analysis, or report
-generation.
-
-## MD Trajectory Analysis
-
-Install MD support first:
+Run trajectory summaries:
 
 ```bash
-pip install ".[md]"
+pycurves-md topology.pdb trajectory.xtc --mode summary --frames 1000:5000:10 --output-file dynamics.json
 ```
 
-Run summary statistics over a trajectory:
+Store both per-frame rows and summary statistics:
 
 ```bash
-pycurves-md topology.pdb trajectory.xtc \
-  --mode summary \
-  --frames 1000:5000:10 \
-  --output-file dynamics.json
+pycurves-md topology.pdb trajectory.dcd --mode both --format json --output-file dynamics_full.json
 ```
 
-Store both per-frame data and summary statistics:
+For canonical two-strand Curves+/standard-frame trajectories, the experimental
+batch path can be much faster:
 
 ```bash
-pycurves-md topology.pdb trajectory.dcd \
-  --mode both \
-  --format json \
-  --output-file dynamics_full.json
+pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --frame-convention standard --batch-size 256 --mode summary --output-file dynamics_batch.json
 ```
 
-Useful MD-only options:
+Use `pycurves-md` for legacy-axis minimization, non-canonical contact-geometry
+frames, `--no-comb`, or `--ends`.
 
-* `--frames SPEC`: comma-separated frame indices/ranges, for example
-  `0,10,100:500:5`.
-* `--start`, `--stop`, `--step`: regular frame window selection.
-* `--mode {per-frame,summary,both}`: choose frame-level output, aggregate
-  summary statistics, or both.
-* `--no-warm-start`: do not initialize each frame from the previous frame.
-* `--no-axis-continuity`: do not force global-axis signs to stay aligned with
-  the first processed frame.
+## Plotting And Viewer
 
-Static and MD runs share the same core options, including `--frame-convention`,
-`--axis-convention`, `--continuous-strands`, `--fit`, `--grooves`, and `--comb`.
-
-For high-throughput Curves+/standard-frame MD runs, `pycurves-md-batch` provides
-an experimental vectorized path that avoids re-running the full scalar pipeline
-for every frame:
-
-```bash
-pycurves-md-batch topology.pdb trajectory.xtc \
-  --axis-convention curvesplus \
-  --frame-convention standard \
-  --batch-size 256 \
-  --frames 1000:5000:10 \
-  --mode summary \
-  --output-file dynamics_batch.json
-```
-
-The batch path currently targets canonical two-strand `comb=true` duplexes with
-`fit=true`, `ends=false`, standard base frames, and Curves+ axis construction.
-It writes the accelerated slim sections `local_inter_base`, `local_base_base`,
-`local_inter_base_pair`, `curvesplus_base_pair_axis`, `backbone`, and, when
-`grv=.t.` or `--grooves` is active, `groove`. Add `--no-grooves` to suppress
-that larger section, `--curvesplus-axis-steps` to include the Curves+ smooth-axis
-`curvesplus_inter_base_pair` table, or `--fit-quality` to include vectorized
-base-fitting RMSD diagnostics. Installing `.[md-fast]` enables an optional numba
-JIT kernel for the remaining branch-heavy groove scanner; without numba the same
-kernel runs as a pure-Python fallback. Use `pycurves-md` for legacy-axis
-minimization, annotations, non-canonical contact-geometry frames, `--no-comb`,
-or `--ends`.
-
-## Plotting MD Results
-
-Install plotting support:
-
-```bash
-pip install ".[plot]"
-```
-
-Generate the default plot set:
+After `pip install ".[all]"`, plot MD JSON output:
 
 ```bash
 pycurves-md-plot dynamics.json --outdir md_plots
-```
-
-Plot selected feature families:
-
-```bash
-pycurves-md-plot dynamics.json --block global --block local --outdir shape_plots
-pycurves-md-plot dynamics.json --block curvature --block axis_bending --outdir axis_plots
-pycurves-md-plot dynamics.json --block torsions --block groove --outdir diagnostic_plots
-```
-
-Export extracted tables without plotting:
-
-```bash
 pycurves-md-plot dynamics.json --export-csv --no-plots --outdir raw_csvs
 ```
 
-## HTML Viewer
-
-The viewer is built from JSON generated with `--visualization`:
+Generate a self-contained HTML viewer from visualization JSON:
 
 ```bash
 pycurves structure.pdb --format json --visualization --output-file viewer.json
 pycurves-viewer viewer.json --output viewer.html
 ```
 
-The generated HTML file is self-contained except for the browser-side 3Dmol.js
-dependency.
-
 ## Python API
-
-The high-level API is `CurvesWrapper`:
 
 ```python
 from pycurves_lib.curves_wrapper import CurvesWrapper
 
-runner = CurvesWrapper.from_file(
-    "test_data/1A1F_b_c.pdb",
-    frame_convention="standard",
-)
+runner = CurvesWrapper.from_file("test_data/1A1F_b_c.pdb", frame_convention="standard")
 runner.analyze()
 json_text = runner.output(fmt="json")
 ```
 
-Generate `.inp` files programmatically without running analysis:
+Generate `.inp` files programmatically without analysis:
 
 ```python
 from pycurves_lib.curves_wrapper import CurvesWrapper
@@ -377,26 +206,10 @@ runner = CurvesWrapper(
 inp_files = runner.generate_inp(prefix="1QNB_auto")
 ```
 
+## Output
 
-## Project Layout
-
-Root scripts are command-line entry points. Reusable code lives in
-`pycurves_lib/`:
-
-* `pycurves.py`: single-structure CLI.
-* `pycurves_md.py`: trajectory CLI.
-* `pycurves_md_batch.py`: experimental vectorized Curves+ trajectory CLI.
-* `pycurves_md_plot.py`: MD JSON plotting helper.
-* `pycurves_viewer.py`: HTML viewer generator.
-* `process_dna.py`: compatibility wrapper for external pipelines.
-* `pycurves_lib/core/`: base fitting, backbone analysis, helical-axis
-  minimization, local/global parameter calculations, groove analysis, and
-  convention-specific math.
-* `pycurves_lib/io/`: molecular loading, input parsing, output formatting,
-  reference-base libraries, and viewer payload generation.
-* `pycurves_lib/topology/`: automatic topology inference and pairing
-  annotations.
-* `pycurves_lib/md/`: trajectory-reader adapters.
-* `pycurves_lib/data/`: modified-base mapping data.
-
-
+JSON output uses the `pycurves-slim-v1` schema. It contains metadata plus flat
+`dataframes` records for local/global parameters, backbone, groove, curvature,
+and annotations. Gapped or uncomputed positions are kept with `null` values so
+sequence-indexed tables stay aligned. CSV output writes one file per dataframe
+using the `--output-file` value as the prefix.

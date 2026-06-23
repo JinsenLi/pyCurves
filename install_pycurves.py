@@ -39,7 +39,7 @@ def main() -> int:
     parser.add_argument(
         "--extras",
         default="",
-        help="Comma-separated extras to install, for example 'md,plot' or 'all'.",
+        help="Optional dependency sets to install. Use 'all' for MD, plotting, and compatibility tools; use 'dev' for build tools.",
     )
     parser.add_argument(
         "--upgrade",

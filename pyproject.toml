@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pycurves-dna"
 version = "0.1.0"
 description = "Python implementation and extension of Curves-style DNA/RNA helical analysis."
-readme = "readme.md"
+readme = "README.md"
 requires-python = ">=3.10"
 authors = [
   { name = "pyCurves contributors" }
@@ -23,24 +23,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-md = [
-  "MDAnalysis>=2.6",
-  "mdtraj>=1.9",
-]
-md-fast = [
-  "numba>=0.59",
-]
-plot = [
-  "ijson>=3.2",
-  "matplotlib>=3.7",
-  "python-dateutil>=2.8",
-]
-legacy-process = [
-  "biopython>=1.81",
-]
-dev = [
-  "build>=1.0",
-]
 all = [
   "MDAnalysis>=2.6",
   "mdtraj>=1.9",
@@ -49,6 +31,8 @@ all = [
   "matplotlib>=3.7",
   "python-dateutil>=2.8",
   "biopython>=1.81",
+]
+dev = [
   "build>=1.0",
 ]
 

@@ -11,12 +11,9 @@ try:
     import pandas as pd
 except ImportError as exc:
     raise SystemExit(
-        "pycurves_md_plot.py requires pandas and matplotlib. Install with:\n"
-        "  pip install pandas python-dateutil matplotlib\n"
-        "For lower-memory JSON streaming, also install:\n"
-        "  pip install ijson"
+        "pycurves-md-plot needs the full optional dependencies. Install from the source tree with:\n"
+        "  pip install \".[all]\""
     ) from exc
-
 
 PARAMETER_BLOCKS = {
     "step": {
@@ -465,7 +462,7 @@ def plot_parameter_summary(
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:
-        raise SystemExit("Plotting requires matplotlib. Install with: pip install matplotlib") from exc
+        raise SystemExit("Plotting requires matplotlib. Install the full optional dependencies with: pip install \".[all]\"") from exc
 
     series = parameter_timeseries(df, parameter, time_column=time_column, aggregate=True, statistic=statistic)
     if series.empty:
@@ -529,7 +526,7 @@ def plot_parameter_heatmap(
     try:
         import matplotlib.pyplot as plt
     except ImportError as exc:
-        raise SystemExit("Plotting requires matplotlib. Install with: pip install matplotlib") from exc
+        raise SystemExit("Plotting requires matplotlib. Install the full optional dependencies with: pip install \".[all]\"") from exc
 
     matrix = pivot_parameter_matrix(df, parameter, index_column=time_column, column=level_column)
     if matrix.empty:

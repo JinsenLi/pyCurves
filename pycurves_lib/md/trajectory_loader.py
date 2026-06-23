@@ -42,7 +42,8 @@ class TrajectoryLoader:
 
         raise ImportError(
             "Trajectory input requires either MDAnalysis or mdtraj. "
-            "Install one of them, or provide a multi-model PDB as the topology input with no trajectory file."
+            "Install the full optional dependencies with `pip install '.[all]'`, "
+            "or provide a multi-model PDB as the topology input with no trajectory file."
         )
 
     @staticmethod
