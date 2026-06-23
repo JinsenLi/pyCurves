@@ -462,8 +462,7 @@ class RobustTopologyInferrer:
 
         distances = [distance for _, _, distance in matches]
         mean_distance = float(np.mean(distances))
-        # More H-bonds are better; shorter mean distance breaks ties.
-        score = -10.0 * len(matches) + mean_distance + 0.05 * center_distance
+        score = self._base_pair_candidate_score(pair_family, len(matches), mean_distance, center_distance)
         return BasePairCandidate(
             first=first,
             second=second,
@@ -476,6 +475,29 @@ class RobustTopologyInferrer:
             atom_pairs=tuple(matches),
             is_hoogsteen=pair_family == "hoogsteen_like",
         )
+
+    @staticmethod
+    def _base_pair_candidate_score(
+        pair_family: str,
+        hbond_count: int,
+        mean_distance: float,
+        center_distance: float,
+    ) -> float:
+        """Score topology candidates with canonical register priority.
+
+        Generic noncanonical contacts can contain extra weak C-H/edge contacts.
+        If raw contact count dominates the score, a nearby mismatch can steal a
+        residue from a clean Watson-Crick register in predicted structures such
+        as AF3 models. Keep generic pairs available, but rank named H-bond
+        patterns first and use contact count only within a family.
+        """
+        family_priority = {
+            "source_annotated": -200.0,
+            "watson_crick_or_wobble": -120.0,
+            "hoogsteen_like": -90.0,
+            "hbonded_noncanonical": -50.0,
+        }.get(pair_family, -20.0)
+        return family_priority - 2.0 * hbond_count + mean_distance + 0.05 * center_distance
 
     def _pattern_hbond_matches(
         self,
