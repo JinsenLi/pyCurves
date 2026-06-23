@@ -118,7 +118,7 @@ class MDTrajectoryAnalyzer:
                     axis_sign_reference = np.asarray(axis_direction_signs, dtype=int)
 
             formatter = CurvesOutputFormatter(runner, annotations=self.include_annotations)
-            dataframes = formatter._build_dataframes()
+            dataframes = self._normalize_frame_dataframes(formatter._build_dataframes())
 
             for table_name, rows in dataframes.items():
                 if isinstance(rows, list):
@@ -255,6 +255,35 @@ class MDTrajectoryAnalyzer:
         return molecule
 
     @staticmethod
+    def _normalize_frame_dataframes(dataframes: Dict) -> Dict:
+        normalized = {}
+        for name, rows in dataframes.items():
+            if name == "groove" and isinstance(rows, dict) and "data" in rows:
+                normalized[name] = MDTrajectoryAnalyzer._flatten_groove_records(rows)
+            else:
+                normalized[name] = rows
+        return normalized
+
+    @staticmethod
+    def _flatten_groove_records(groove: Dict) -> List[Dict]:
+        flat_rows: List[Dict] = []
+        for level, level_data in groove.get("data", {}).items():
+            for sub_level, sub_data in level_data.get("sub_levels", {}).items():
+                row = {
+                    "atom_defining_backbone": groove.get("atom_defining_backbone", ""),
+                    "total_levels": groove.get("levels", 0),
+                    "total_sub_levels": groove.get("sub_levels", 0),
+                    "level": int(level),
+                    "base_pair": level_data.get("base_pair", ""),
+                    "sub_level": int(sub_level),
+                }
+                for key, value in sub_data.items():
+                    if key != "geometry":
+                        row[key] = value
+                flat_rows.append(row)
+        return flat_rows
+
+    @staticmethod
     def _summarize_tables(tables: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
         summaries = {}
         for name, rows in tables.items():
@@ -266,7 +295,7 @@ class MDTrajectoryAnalyzer:
             identifier_cols = {
                 "strand", "level", "residue_id", "subunit", "sub_level",
                 "total_levels", "total_sub_levels", "partner_strand",
-                "sequence_index", "next_level",
+                "sequence_index", "next_level", "fit_atom_count",
             }
             numeric_cols = []
             for col in all_cols:
@@ -463,3 +492,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+

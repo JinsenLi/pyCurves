@@ -27,6 +27,9 @@ md = [
   "MDAnalysis>=2.6",
   "mdtraj>=1.9",
 ]
+md-fast = [
+  "numba>=0.59",
+]
 plot = [
   "ijson>=3.2",
   "matplotlib>=3.7",
@@ -41,6 +44,7 @@ dev = [
 all = [
   "MDAnalysis>=2.6",
   "mdtraj>=1.9",
+  "numba>=0.59",
   "ijson>=3.2",
   "matplotlib>=3.7",
   "python-dateutil>=2.8",
@@ -51,6 +55,7 @@ all = [
 [project.scripts]
 pycurves = "pycurves:main"
 pycurves-md = "pycurves_md:main"
+pycurves-md-batch = "pycurves_md_batch:main"
 pycurves-md-plot = "pycurves_md_plot:main"
 pycurves-viewer = "pycurves_viewer:main"
 
@@ -58,6 +63,7 @@ pycurves-viewer = "pycurves_viewer:main"
 py-modules = [
   "pycurves",
   "pycurves_md",
+  "pycurves_md_batch",
   "pycurves_md_plot",
   "pycurves_viewer",
   "process_dna",

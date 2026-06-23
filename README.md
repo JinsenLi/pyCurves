@@ -106,7 +106,7 @@ pycurves your_input.inp --pdb your_structure.pdb
 * Local and global shape tables for base-base and inter-base-pair parameters.
 * Groove widths, backbone torsions, sugar pucker, curvature, and bending
   summaries in text, JSON, or CSV output.
-* Batch trajectory analysis for MD simulations.
+* Batch trajectory analysis for MD simulations, including an experimental vectorized Curves+ fast path.
 * High-throughput `.inp` generation mode for precomputing topology files before
   running large analysis batches.
 * Optional HTML/WebGL visualization of the molecular structure, helical axis,
@@ -125,6 +125,7 @@ The package installs these command-line entry points:
 ```bash
 pycurves --help
 pycurves-md --help
+pycurves-md-batch --help
 pycurves-md-plot --help
 pycurves-viewer --help
 ```
@@ -133,6 +134,7 @@ Optional dependency groups:
 
 ```bash
 pip install ".[md]"              # MDAnalysis and MDTraj trajectory readers
+pip install ".[md-fast]"         # optional numba accelerator for batch MD grooves
 pip install ".[plot]"            # matplotlib/ijson plotting tools
 pip install ".[legacy-process]"  # Biopython process_dna compatibility helper
 pip install ".[all]"             # everything above
@@ -280,6 +282,33 @@ Useful MD-only options:
 Static and MD runs share the same core options, including `--frame-convention`,
 `--axis-convention`, `--continuous-strands`, `--fit`, `--grooves`, and `--comb`.
 
+For high-throughput Curves+/standard-frame MD runs, `pycurves-md-batch` provides
+an experimental vectorized path that avoids re-running the full scalar pipeline
+for every frame:
+
+```bash
+pycurves-md-batch topology.pdb trajectory.xtc \
+  --axis-convention curvesplus \
+  --frame-convention standard \
+  --batch-size 256 \
+  --frames 1000:5000:10 \
+  --mode summary \
+  --output-file dynamics_batch.json
+```
+
+The batch path currently targets canonical two-strand `comb=true` duplexes with
+`fit=true`, `ends=false`, standard base frames, and Curves+ axis construction.
+It writes the accelerated slim sections `local_inter_base`, `local_base_base`,
+`local_inter_base_pair`, `curvesplus_base_pair_axis`, `backbone`, and, when
+`grv=.t.` or `--grooves` is active, `groove`. Add `--no-grooves` to suppress
+that larger section, `--curvesplus-axis-steps` to include the Curves+ smooth-axis
+`curvesplus_inter_base_pair` table, or `--fit-quality` to include vectorized
+base-fitting RMSD diagnostics. Installing `.[md-fast]` enables an optional numba
+JIT kernel for the remaining branch-heavy groove scanner; without numba the same
+kernel runs as a pure-Python fallback. Use `pycurves-md` for legacy-axis
+minimization, annotations, non-canonical contact-geometry frames, `--no-comb`,
+or `--ends`.
+
 ## Plotting MD Results
 
 Install plotting support:
@@ -356,6 +385,7 @@ Root scripts are command-line entry points. Reusable code lives in
 
 * `pycurves.py`: single-structure CLI.
 * `pycurves_md.py`: trajectory CLI.
+* `pycurves_md_batch.py`: experimental vectorized Curves+ trajectory CLI.
 * `pycurves_md_plot.py`: MD JSON plotting helper.
 * `pycurves_viewer.py`: HTML viewer generator.
 * `process_dna.py`: compatibility wrapper for external pipelines.
@@ -368,3 +398,5 @@ Root scripts are command-line entry points. Reusable code lives in
   annotations.
 * `pycurves_lib/md/`: trajectory-reader adapters.
 * `pycurves_lib/data/`: modified-base mapping data.
+
+
