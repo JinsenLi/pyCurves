@@ -200,23 +200,45 @@ class VisualizationPayloadMixin:
                         "direction": point_payload(direction),
                     })
 
+        def frame_view(frame_array, strand: int, level: int, fallback: np.ndarray) -> np.ndarray:
+            if (
+                frame_array is None
+                or getattr(frame_array, "shape", None) != p.frames.shape
+                or not np.any(frame_array)
+            ):
+                return fallback
+            frame = np.asarray(frame_array[strand, level], dtype=float)
+            return frame if _all_finite(frame) else fallback
+
+        contact_frame_keys = getattr(ctx, "contact_geometry_frame_keys", set()) or set()
+        axis_frame_adjustments = set(getattr(ctx, "axis_frame_adjustments", []) or [])
+
+        def uses_contact_frame(strand: int, level: int) -> bool:
+            return any(key_strand == strand and key_level == level for key_strand, _, key_level in contact_frame_keys)
+
         base_origins_by_key = {}
         base_origins = []
         for strand in range(ctx.nst):
             for level in range(1, ctx.nux + 1):
                 if ctx.ni_map[strand, level - 1] <= 0:
                     continue
-                coords = np.asarray(p.frames[strand, level, 3, :], dtype=float)
-                if not _all_finite(coords):
+                fit_frame = np.asarray(p.frames[strand, level], dtype=float)
+                if not _all_finite(fit_frame[3]):
                     continue
                 residue = residue_payload(strand, level)
                 if residue is None:
                     continue
                 base_atoms = base_heavy_atoms(residue["subunit"])
-                frame_origin = np.asarray(coords, dtype=float)
-                frame_x = np.asarray(p.frames[strand, level, 0, :], dtype=float)
-                frame_y = np.asarray(p.frames[strand, level, 1, :], dtype=float)
-                frame_z = np.asarray(p.frames[strand, level, 2, :], dtype=float)
+                shape_frame = frame_view(getattr(p, "shape_frames", None), strand, level, fit_frame)
+                axis_frame = frame_view(getattr(p, "axis_frames", None), strand, level, shape_frame)
+                frame_origin = np.asarray(shape_frame[3], dtype=float)
+                frame_x = np.asarray(shape_frame[0], dtype=float)
+                frame_y = np.asarray(shape_frame[1], dtype=float)
+                frame_z = np.asarray(shape_frame[2], dtype=float)
+                fit_origin = np.asarray(fit_frame[3], dtype=float)
+                fit_x = np.asarray(fit_frame[0], dtype=float)
+                fit_y = np.asarray(fit_frame[1], dtype=float)
+                fit_z = np.asarray(fit_frame[2], dtype=float)
                 is_purine = residue["parent_base"] in {"A", "G", "I"}
                 (
                     display_center,
@@ -230,10 +252,10 @@ class VisualizationPayloadMixin:
                 ) = base_plate_geometry(
                     base_atoms,
                     hbond_edge_atoms.get(residue["parent_base"], set()),
-                    frame_origin,
-                    frame_x,
-                    frame_y,
-                    frame_z,
+                    fit_origin,
+                    fit_x,
+                    fit_y,
+                    fit_z,
                     is_purine,
                 )
                 (
@@ -248,12 +270,13 @@ class VisualizationPayloadMixin:
                 ) = base_plate_geometry(
                     base_atoms,
                     hoogsteen_edge_atoms.get(residue["parent_base"], hbond_edge_atoms.get(residue["parent_base"], set())),
-                    frame_origin,
-                    frame_x,
-                    frame_y,
-                    frame_z,
+                    fit_origin,
+                    fit_x,
+                    fit_y,
+                    fit_z,
                     is_purine,
                 )
+                contact_frame = uses_contact_frame(strand, level)
                 entry = {
                     **residue,
                     **point_payload(display_center),
@@ -261,6 +284,16 @@ class VisualizationPayloadMixin:
                     "x_axis": vector_payload(frame_x),
                     "y_axis": vector_payload(frame_y),
                     "z_axis": vector_payload(frame_z),
+                    "analysis_frame_source": "contact_geometry" if contact_frame else "fitted_base",
+                    "axis_frame_adjusted": (strand + 1, level) in axis_frame_adjustments,
+                    "fit_frame_origin": point_payload(fit_origin),
+                    "fit_x_axis": vector_payload(fit_x),
+                    "fit_y_axis": vector_payload(fit_y),
+                    "fit_z_axis": vector_payload(fit_z),
+                    "axis_frame_origin": point_payload(axis_frame[3]),
+                    "axis_x_axis": vector_payload(axis_frame[0]),
+                    "axis_y_axis": vector_payload(axis_frame[1]),
+                    "axis_z_axis": vector_payload(axis_frame[2]),
                     "plate_x_axis": vector_payload(plate_x),
                     "plate_y_axis": vector_payload(plate_y),
                     "plate_z_axis": vector_payload(plate_z),
@@ -388,7 +421,7 @@ class VisualizationPayloadMixin:
         local_inter_base = result_records.get("local_inter_base", [])
 
         return {
-            "schema": "pycurves-visualization-v10",
+            "schema": "pycurves-visualization-v11",
             "axis_mode": "combined" if ctx.cfg.comb else "per_strand",
             "analyzed_residue_names": sorted({
                 item["residue_name"] for item in base_origins if item.get("residue_name")

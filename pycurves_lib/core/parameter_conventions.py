@@ -213,7 +213,11 @@ def _edge_points_for_frame(base: str, edge: str, atom_map: dict, contact_atoms) 
     return np.asarray([atom_map[name] for name in names if name in atom_map], dtype=float)
 
 
-def _interaction_member_reference_frame(raw_frame: np.ndarray, edge_points: np.ndarray, hbond_axis: np.ndarray) -> np.ndarray:
+def _interaction_member_reference_frame(
+    raw_frame: np.ndarray,
+    edge_points: np.ndarray,
+    hbond_axis: np.ndarray,
+) -> np.ndarray:
     """Return one base's observed-edge interaction frame."""
     edge_points = np.asarray(edge_points, dtype=float)
     z_axis = _unit(raw_frame[2], np.array([0.0, 0.0, 1.0]))

@@ -283,6 +283,11 @@ HTML_TEMPLATE = r"""<!doctype html>
     tr.selected {
       background: #e9f3ff;
     }
+    td.selected-feature {
+      background: #ffd79a;
+      color: #111827;
+      font-weight: 700;
+    }
     .empty {
       padding: 10px;
       color: var(--muted);
@@ -441,6 +446,14 @@ HTML_TEMPLATE = r"""<!doctype html>
       return scaleVec(values, 1 / length);
     }
 
+    function dotVec(left, right) {
+      return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+    }
+
+    function alignVec(values, reference) {
+      return dotVec(values, reference) < 0 ? scaleVec(values, -1) : values;
+    }
+
     function addShape(shape) {
       overlayShapes.push(shape);
       return shape;
@@ -459,9 +472,43 @@ HTML_TEMPLATE = r"""<!doctype html>
       }));
     }
 
+    function addDashedSegment(a, b, color, radius, segments = 9, opacity = 1.0) {
+      if (!a || !b) return;
+      const start = vec(a);
+      const delta = subVec(vec(b), start);
+      for (let i = 0; i < segments; i += 2) {
+        const t1 = i / segments;
+        const t2 = Math.min((i + 1) / segments, 1.0);
+        addSegment(
+          pointFrom(addVec(start, scaleVec(delta, t1))),
+          pointFrom(addVec(start, scaleVec(delta, t2))),
+          color,
+          radius,
+          opacity
+        );
+      }
+    }
+
     function addPoint(point, color, radius) {
       if (!point) return;
       addShape(viewer.addSphere({center: xyz(point), radius, color}));
+    }
+
+    function addArrowLikeSegment(a, b, color, radius, opacity = 1.0) {
+      if (!a || !b) return;
+      addSegment(a, b, color, radius, opacity);
+      const direction = unitVec(subVec(vec(b), vec(a)), [1, 0, 0]);
+      const end = vec(b);
+      const fallback = Math.abs(direction[2]) < 0.82 ? [0, 0, 1] : [0, 1, 0];
+      const side1 = unitVec(crossVec(direction, fallback), [0, 1, 0]);
+      const side2 = unitVec(crossVec(direction, side1), [0, 0, 1]);
+      const headLength = Math.max(radius * 8.0, 0.22);
+      const headWidth = Math.max(radius * 4.2, 0.12);
+      const back = subVec(end, scaleVec(direction, headLength));
+      addSegment(b, pointFrom(addVec(back, scaleVec(side1, headWidth))), color, radius, opacity);
+      addSegment(b, pointFrom(subVec(back, scaleVec(side1, headWidth))), color, radius, opacity);
+      addSegment(b, pointFrom(addVec(back, scaleVec(side2, headWidth))), color, radius, opacity);
+      addSegment(b, pointFrom(subVec(back, scaleVec(side2, headWidth))), color, radius, opacity);
     }
 
     function addFilledQuad(corners, color, opacity = 0.7) {
@@ -539,15 +586,16 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function analyticalBasePlate(base) {
       const origin = base.frame_origin || base;
+      const contactFrame = String(base.analysis_frame_source || "") === "contact_geometry";
       return Object.assign({}, base, {
         x: origin.x,
         y: origin.y,
         z: origin.z,
-        plate_x_axis: base.plate_x_axis || base.y_axis,
-        plate_y_axis: base.plate_y_axis || base.x_axis,
-        plate_z_axis: base.plate_z_axis || base.z_axis,
-        plate_length: Number(base.plate_length || 5.0) * 0.72,
-        plate_width: Number(base.plate_width || 2.7) * 0.72
+        plate_x_axis: base.x_axis || base.plate_x_axis || base.y_axis,
+        plate_y_axis: base.y_axis || base.plate_y_axis || base.x_axis,
+        plate_z_axis: base.z_axis || base.plate_z_axis,
+        plate_length: contactFrame ? 2.2 : Number(base.plate_length || 5.0) * 0.58,
+        plate_width: contactFrame ? 1.1 : Number(base.plate_width || 2.7) * 0.58
       });
     }
 
@@ -582,14 +630,186 @@ HTML_TEMPLATE = r"""<!doctype html>
       }
     }
 
+    function drawFrameAxes(base, scale = 1.15) {
+      if (!base) return;
+      const origin = base.frame_origin || base;
+      const xAxis = unitVec(vec(base.x_axis || {x: 1, y: 0, z: 0}), [1, 0, 0]);
+      const yAxis = unitVec(vec(base.y_axis || {x: 0, y: 1, z: 0}), [0, 1, 0]);
+      const zAxis = unitVec(vec(base.z_axis || {x: 0, y: 0, z: 1}), [0, 0, 1]);
+      addPoint(origin, "#151a24", 0.09);
+      addSegment(origin, pointFrom(addVec(vec(origin), scaleVec(xAxis, scale))), "#d22f2f", 0.035, 0.9);
+      addSegment(origin, pointFrom(addVec(vec(origin), scaleVec(yAxis, scale))), "#268a3e", 0.035, 0.9);
+      addSegment(origin, pointFrom(addVec(vec(origin), scaleVec(zAxis, scale))), "#2866d8", 0.035, 0.9);
+    }
+
+    function clampNumber(value, minimum, maximum) {
+      return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    function framePoint(frame, axisName, distance) {
+      return pointFrom(addVec(vec(frame.origin), scaleVec(frame[axisName], distance)));
+    }
+
+    function baseAnalysisFrame(base) {
+      if (!base) return null;
+      const analytical = analyticalBasePlate(base);
+      return {
+        origin: analytical.frame_origin || analytical,
+        x: unitVec(vec(analytical.x_axis || {x: 1, y: 0, z: 0}), [1, 0, 0]),
+        y: unitVec(vec(analytical.y_axis || {x: 0, y: 1, z: 0}), [0, 1, 0]),
+        z: unitVec(vec(analytical.z_axis || {x: 0, y: 0, z: 1}), [0, 0, 1])
+      };
+    }
+
+    function averageFrames(first, second, origin = null) {
+      if (!first) return second;
+      if (!second) return first;
+      const x2 = alignVec(second.x, first.x);
+      const y2 = alignVec(second.y, first.y);
+      const z2 = alignVec(second.z, first.z);
+      const xAxis = unitVec(addVec(first.x, x2), first.x);
+      let yAxis = unitVec(addVec(first.y, y2), first.y);
+      yAxis = unitVec(subVec(yAxis, scaleVec(xAxis, dotVec(yAxis, xAxis))), first.y);
+      const zPreferred = unitVec(addVec(first.z, z2), first.z);
+      let zAxis = unitVec(crossVec(xAxis, yAxis), zPreferred);
+      if (dotVec(zAxis, zPreferred) < 0) {
+        yAxis = scaleVec(yAxis, -1);
+        zAxis = scaleVec(zAxis, -1);
+      }
+      const frameOrigin = origin || pointFrom(scaleVec(addVec(vec(first.origin), vec(second.origin)), 0.5));
+      return {origin: frameOrigin, x: xAxis, y: yAxis, z: zAxis};
+    }
+
+    function pairFrame(pair) {
+      if (!pair) return null;
+      const first = baseAnalysisFrame(pair.first);
+      const second = baseAnalysisFrame(pair.second);
+      const origin = pair.frame_midpoint || pair.midpoint || null;
+      return averageFrames(first, second, origin);
+    }
+
+    function drawFrameGlyph(frame, scale = 1.35, color = "#111827") {
+      if (!frame) return;
+      addPoint(frame.origin, color, 0.11);
+      addSegment(frame.origin, framePoint(frame, "x", scale), "#d22f2f", 0.045, 0.95);
+      addSegment(frame.origin, framePoint(frame, "y", scale), "#268a3e", 0.045, 0.95);
+      addSegment(frame.origin, framePoint(frame, "z", scale), "#2866d8", 0.045, 0.95);
+    }
+
+    function featureLabel(feature) {
+      const labels = {
+        shear: "Shear", stretch: "Stretch", stagger: "Stagger",
+        buckle: "Buckle", propel: "Propel", opening: "Opening",
+        xdisp: "Xdisp", ydisp: "Ydisp", inclin: "Inclin", tip: "Tip",
+        shift: "Shift", slide: "Slide", rise: "Rise",
+        tilt: "Tilt", roll: "Roll", twist: "Twist",
+        minor_width: "Minor width", minor_depth: "Minor depth", minor_angle: "Minor angle",
+        major_width: "Major width", major_depth: "Major depth", major_angle: "Major angle",
+        diameter: "Diameter"
+      };
+      return labels[feature] || feature || "Feature";
+    }
+
+    function featureUnit(feature) {
+      if (["buckle", "propel", "opening", "inclin", "tip", "tilt", "roll", "twist", "minor_angle", "major_angle"].includes(feature)) return "deg";
+      if (["shear", "stretch", "stagger", "xdisp", "ydisp", "shift", "slide", "rise", "minor_width", "minor_depth", "major_width", "major_depth", "diameter"].includes(feature)) return "A";
+      return "";
+    }
+
+    function translationAxisForFeature(feature) {
+      return {
+        shear: "x", stretch: "y", stagger: "z",
+        xdisp: "x", ydisp: "y",
+        shift: "x", slide: "y", rise: "z"
+      }[feature] || null;
+    }
+
+    function rotationAxisForFeature(feature) {
+      return {
+        buckle: "x", propel: "y", opening: "z",
+        inclin: "x", tip: "y",
+        tilt: "x", roll: "y", twist: "z"
+      }[feature] || null;
+    }
+
+    function drawAxisGuide(frame, axisName, color) {
+      addDashedSegment(framePoint(frame, axisName, -1.75), framePoint(frame, axisName, 1.75), color, 0.035, 10, 0.55);
+    }
+
+    function drawTranslationFeature(frame, feature, value, color) {
+      const axisName = translationAxisForFeature(feature);
+      if (!frame || !axisName) return false;
+      const numeric = Number(value);
+      drawAxisGuide(frame, axisName, color);
+      const sign = Number.isFinite(numeric) && numeric < 0 ? -1 : 1;
+      const distance = sign * clampNumber(Number.isFinite(numeric) ? Math.abs(numeric) : 1.2, 0.75, 3.2);
+      const end = framePoint(frame, axisName, distance);
+      addArrowLikeSegment(frame.origin, end, color, 0.09, 0.96);
+      const unit = featureUnit(feature);
+      addValueLabel(end, `${featureLabel(feature)} ${fmt(value)}${unit ? " " + unit : ""}`, color);
+      return true;
+    }
+
+    function drawRotationFeature(frame, feature, value, color) {
+      const axisName = rotationAxisForFeature(feature);
+      if (!frame || !axisName) return false;
+      const numeric = Number(value);
+      drawAxisGuide(frame, axisName, color);
+      const axis = frame[axisName];
+      const startAxisName = axisName === "x" ? "y" : "x";
+      const startDirection = unitVec(subVec(frame[startAxisName], scaleVec(axis, dotVec(frame[startAxisName], axis))), [1, 0, 0]);
+      const turnDirection = unitVec(crossVec(axis, startDirection), [0, 1, 0]);
+      const sign = Number.isFinite(numeric) && numeric < 0 ? -1 : 1;
+      const sweepDegrees = clampNumber(Number.isFinite(numeric) ? Math.abs(numeric) : 45.0, 18.0, 125.0);
+      const sweep = sign * sweepDegrees * Math.PI / 180.0;
+      const radius = 1.25;
+      const steps = 14;
+      let previous = null;
+      let current = null;
+      for (let i = 0; i <= steps; i += 1) {
+        const theta = sweep * i / steps;
+        const direction = addVec(scaleVec(startDirection, Math.cos(theta)), scaleVec(turnDirection, Math.sin(theta)));
+        current = pointFrom(addVec(vec(frame.origin), scaleVec(direction, radius)));
+        if (previous) {
+          if (i === steps) addArrowLikeSegment(previous, current, color, 0.055, 0.96);
+          else addSegment(previous, current, color, 0.055, 0.96);
+        }
+        previous = current;
+      }
+      const unit = featureUnit(feature);
+      addValueLabel(current, `${featureLabel(feature)} ${fmt(value)}${unit ? " " + unit : ""}`, color);
+      return true;
+    }
+
+    function drawFeatureMeasurement(frame, feature, value, color) {
+      if (!feature) return false;
+      return drawTranslationFeature(frame, feature, value, color) || drawRotationFeature(frame, feature, value, color);
+    }
+
+    function drawAnalyticalPairSource(pair, color) {
+      if (!pair) return;
+      const first = analyticalBasePlate(pair.first);
+      const second = analyticalBasePlate(pair.second);
+      drawFrameAxes(first, first.analysis_frame_source === "contact_geometry" ? 1.35 : 1.1);
+      drawFrameAxes(second, second.analysis_frame_source === "contact_geometry" ? 1.35 : 1.1);
+      const firstOrigin = first.frame_origin || first;
+      const secondOrigin = second.frame_origin || second;
+      addDashedSegment(firstOrigin, secondOrigin, color, 0.045, 9, 0.85);
+    }
+
     function fmt(value) {
       if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
       if (typeof value === "number") return value.toFixed(2);
       return String(value);
     }
 
-    function pairAtLevel(level) {
-      return (VIS.base_pairs || []).find(pair => Number(pair.level) === Number(level));
+    function pairAtLevel(level, partnerStrand = null) {
+      return (VIS.base_pairs || []).find(pair => {
+        if (Number(pair.level) !== Number(level)) return false;
+        if (partnerStrand === null || partnerStrand === undefined || Number(partnerStrand) === 0) return true;
+        return Number(pair.first && pair.first.strand || 0) === Number(partnerStrand)
+          || Number(pair.second && pair.second.strand || 0) === Number(partnerStrand);
+      });
     }
 
     function baseAtLevel(strand, level) {
@@ -729,9 +949,11 @@ HTML_TEMPLATE = r"""<!doctype html>
       const params = VIS.parameters || {};
       if (tab === "base_pair") {
         return (params.base_pair || []).map(row => ({
-          id: `base_pair:${row.level}`,
+          id: `base_pair:${row.partner_strand || 0}:${row.level}`,
           type: "base_pair",
           level: Number(row.level),
+          partnerStrand: row.partner_strand === undefined || row.partner_strand === null ? null : Number(row.partner_strand),
+          features: [null, null, "shear", "stretch", "stagger", "buckle", "propel", "opening"],
           cells: [
             row.level,
             row.duplex || "",
@@ -750,6 +972,8 @@ HTML_TEMPLATE = r"""<!doctype html>
           id: `base_pair_axis:${row.partner_strand || 0}:${row.level}`,
           type: "base_pair_axis",
           level: Number(row.level),
+          partnerStrand: row.partner_strand === undefined || row.partner_strand === null ? null : Number(row.partner_strand),
+          features: [null, null, "xdisp", "ydisp", "inclin", "tip"],
           cells: [
             row.level,
             row.duplex || "",
@@ -767,6 +991,7 @@ HTML_TEMPLATE = r"""<!doctype html>
           type: "base_axis",
           level: Number(row.level),
           strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
+          features: [null, null, null, "xdisp", "ydisp", "inclin", "tip"],
           cells: [
             row.level,
             row.strand || "",
@@ -786,7 +1011,10 @@ HTML_TEMPLATE = r"""<!doctype html>
           type: "step",
           tab,
           level: Number(row.level),
+          nextLevel: row.next_level === undefined || row.next_level === null ? Number(row.level) + 1 : Number(row.next_level),
           strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
+          partnerStrand: row.partner_strand === undefined || row.partner_strand === null ? null : Number(row.partner_strand),
+          features: [null, null, "shift", "slide", "rise", "tilt", "roll", "twist"],
           cells: [
             row.level,
             row.duplex || row.step || (row.strand ? `Strand ${row.strand}` : ""),
@@ -805,6 +1033,7 @@ HTML_TEMPLATE = r"""<!doctype html>
         type: "groove",
         level: Number(row.level),
         subLevel: Number(row.sub_level),
+        features: [null, null, "minor_width", "minor_depth", "minor_angle", "major_width", "major_depth", "major_angle", "diameter"],
         cells: [
           row.level + "." + row.sub_level,
           row.base_pair || "",
@@ -843,15 +1072,26 @@ HTML_TEMPLATE = r"""<!doctype html>
           <tbody>
             ${rows.map((entry, index) => `
               <tr data-index="${index}" class="${selectedInspection && selectedInspection.id === entry.id ? "selected" : ""}">
-                ${entry.cells.map(cell => `<td>${cell}</td>`).join("")}
+                ${entry.cells.map((cell, cellIndex) => {
+                  const feature = (entry.features || [])[cellIndex] || "";
+                  const selected = feature && selectedInspection && selectedInspection.id === entry.id && selectedInspection.feature === feature;
+                  return `<td data-feature="${feature}" class="${selected ? "selected-feature" : ""}">${cell}</td>`;
+                }).join("")}
               </tr>
             `).join("")}
           </tbody>
         </table>
       `;
       container.querySelectorAll("tbody tr").forEach(row => {
-        row.addEventListener("click", () => {
-          selectedInspection = rows[Number(row.dataset.index)];
+        row.addEventListener("click", event => {
+          const entry = rows[Number(row.dataset.index)];
+          const cell = event.target.closest("td");
+          const feature = cell ? (cell.dataset.feature || null) : null;
+          selectedInspection = Object.assign({}, entry, {
+            feature,
+            featureLabel: feature ? featureLabel(feature) : null,
+            featureValue: feature ? entry.row[feature] : null
+          });
           renderParameterTable();
           redraw();
         });
@@ -896,93 +1136,153 @@ HTML_TEMPLATE = r"""<!doctype html>
     function drawAnalyticalBaseFrames() {
       (VIS.base_origins || []).forEach(base => {
         const analytical = analyticalBasePlate(base);
-        const color = baseColor(base.parent_base || base.residue_name);
-        drawBasePlate(analytical, null, "#151a24", {
-          fillColor: color,
-          fillOpacity: 0.22,
-          edgeRadius: 0.045,
-          edgeOpacity: 0.72,
-          highlightFacingEdge: false
-        });
-        addSegment(
-          analytical,
-          pointFrom(addVec(vec(analytical), scaleVec(vec(base.z_axis || {x: 0, y: 0, z: 1}), 1.0))),
-          "#151a24",
-          0.035,
-          0.65
-        );
+        drawFrameAxes(analytical, analytical.analysis_frame_source === "contact_geometry" ? 1.25 : 1.0);
+      });
+      (VIS.base_pairs || []).forEach(pair => {
+        if (pair.frame_mode !== "contact_geometry" && pair.is_canonical) return;
+        const color = pairColor(pair);
+        const first = analyticalBasePlate(pair.first);
+        const second = analyticalBasePlate(pair.second);
+        addDashedSegment(first.frame_origin || first, second.frame_origin || second, color, 0.035, 9, 0.72);
       });
     }
 
     function drawSelectedBasePair(entry) {
-      const pair = pairAtLevel(entry.level);
+      const pair = pairAtLevel(entry.level, entry.partnerStrand);
       if (!pair) return;
-      drawBasePlate(pair.first, pair.second, "#ff2f00", {fillOpacity: 0.42, edgeRadius: 0.13});
-      drawBasePlate(pair.second, pair.first, "#ff2f00", {fillOpacity: 0.42, edgeRadius: 0.13});
-      addSegment(pair.first, pair.second, "#ff2f00", 0.13, 1.0);
-      addValueLabel(pair.midpoint, `Level ${entry.level}`, "#ff2f00");
+      const color = "#ff2f00";
+      const first = actualBlockForPair(pair.first, pair);
+      const second = actualBlockForPair(pair.second, pair);
+      drawBasePlate(first, second, color, {fillOpacity: 0.32, edgeRadius: 0.12});
+      drawBasePlate(second, first, color, {fillOpacity: 0.32, edgeRadius: 0.12});
+      drawAnalyticalPairSource(pair, color);
+      const frame = pairFrame(pair);
+      drawFrameGlyph(frame, 1.65, "#111827");
+      if (entry.feature && drawFeatureMeasurement(frame, entry.feature, entry.featureValue, color)) return;
+      addValueLabel(pair.frame_midpoint || pair.midpoint, `Pair frame level ${entry.level}`, color);
+    }
+
+    function drawSelectedBasePairAxis(entry) {
+      const pair = pairAtLevel(entry.level, entry.partnerStrand);
+      if (!pair) return;
+      const color = "#ff2f00";
+      drawSelectedBasePair(Object.assign({}, entry, {feature: null, featureValue: null}));
+      const frame = pairFrame(pair);
+      const axis = axisAtLevel(entry.level);
+      if (axis) {
+        addPoint(axis, color, 0.46);
+        addArrowLikeSegment(frame.origin, axis, color, 0.075, 0.9);
+      }
+      if (entry.feature && drawFeatureMeasurement(frame, entry.feature, entry.featureValue, color)) return;
+      if (axis) addValueLabel(axis, `Axis relation level ${entry.level}`, color);
     }
 
     function drawSelectedBaseAxis(entry) {
       const base = baseAtLevel(entry.strand, entry.level);
       if (!base) return;
-      drawBasePlate(analyticalBasePlate(base), null, "#ff2f00", {fillOpacity: 0.36, edgeRadius: 0.12, highlightFacingEdge: false});
+      const color = "#ff2f00";
+      const analytical = analyticalBasePlate(base);
+      const origin = analytical.frame_origin || analytical;
+      const frame = baseAnalysisFrame(base);
+      drawFrameAxes(analytical, 1.45);
       const axis = axisAtLevel(entry.level, entry.strand);
       if (axis) {
-        addPoint(axis, "#ff2f00", 0.44);
-        addSegment(base.frame_origin || base, axis, "#ff2f00", 0.08, 0.85);
+        addPoint(axis, color, 0.44);
+        addArrowLikeSegment(origin, axis, color, 0.075, 0.88);
       }
-      addValueLabel(base.frame_origin || base, `Strand ${entry.strand} level ${entry.level}`, "#ff2f00");
+      if (entry.feature && drawFeatureMeasurement(frame, entry.feature, entry.featureValue, color)) return;
+      addValueLabel(origin, `Strand ${entry.strand} level ${entry.level}`, color);
+    }
+
+    function stepEndpointFrame(entry, level) {
+      if (entry.strand !== null && entry.strand !== undefined) {
+        return baseAnalysisFrame(baseAtLevel(entry.strand, level));
+      }
+      const pair = pairAtLevel(level, entry.partnerStrand);
+      return pairFrame(pair);
+    }
+
+    function drawStepEndpoint(entry, level) {
+      if (entry.strand !== null && entry.strand !== undefined) {
+        const base = baseAtLevel(entry.strand, level);
+        if (base) drawFrameAxes(analyticalBasePlate(base), 1.25);
+        return;
+      }
+      const pair = pairAtLevel(level, entry.partnerStrand);
+      if (pair) {
+        drawAnalyticalPairSource(pair, "#ff2f00");
+        drawFrameGlyph(pairFrame(pair), 1.35, "#111827");
+      }
     }
 
     function drawSelectedStep(entry) {
-      const first = pairAtLevel(entry.level);
-      const second = pairAtLevel(entry.level + 1);
-      if (first) drawSelectedBasePair({level: entry.level});
-      if (second) drawSelectedBasePair({level: entry.level + 1});
-      if (!first && entry.strand !== null && entry.strand !== undefined) {
-        const firstBase = baseAtLevel(entry.strand, entry.level);
-        const secondBase = baseAtLevel(entry.strand, entry.level + 1);
-        if (firstBase) drawBasePlate(analyticalBasePlate(firstBase), null, "#ff2f00", {fillOpacity: 0.34, edgeRadius: 0.11, highlightFacingEdge: false});
-        if (secondBase) drawBasePlate(analyticalBasePlate(secondBase), null, "#ff2f00", {fillOpacity: 0.34, edgeRadius: 0.11, highlightFacingEdge: false});
-        if (firstBase && secondBase) addSegment(firstBase, secondBase, "#ff2f00", 0.12, 0.85);
+      const color = "#ff2f00";
+      const nextLevel = entry.nextLevel || entry.level + 1;
+      drawStepEndpoint(entry, entry.level);
+      drawStepEndpoint(entry, nextLevel);
+      const firstFrame = stepEndpointFrame(entry, entry.level);
+      const secondFrame = stepEndpointFrame(entry, nextLevel);
+      if (firstFrame && secondFrame) {
+        addArrowLikeSegment(firstFrame.origin, secondFrame.origin, color, 0.12, 0.9);
+        const midOrigin = pointFrom(scaleVec(addVec(vec(firstFrame.origin), vec(secondFrame.origin)), 0.5));
+        const midFrame = averageFrames(firstFrame, secondFrame, midOrigin);
+        drawFrameGlyph(midFrame, 1.45, "#111827");
+        if (entry.feature && drawFeatureMeasurement(midFrame, entry.feature, entry.featureValue, color)) return;
+        addValueLabel(midOrigin, entry.strand ? `Strand ${entry.strand} step ${entry.level}` : `Step ${entry.level}`, color);
       }
       const axis1 = axisAtLevel(entry.level, entry.strand);
-      const axis2 = axisAtLevel(entry.level + 1, entry.strand);
+      const axis2 = axisAtLevel(nextLevel, entry.strand);
       if (axis1 && axis2) {
-        addSegment(axis1, axis2, "#ff2f00", 0.32, 1.0);
-        const label = entry.strand ? `Strand ${entry.strand} step ${entry.level}` : `Step ${entry.level}`;
-        addValueLabel(pointFrom(scaleVec(addVec(vec(axis1), vec(axis2)), 0.5)), label, "#ff2f00");
+        addSegment(axis1, axis2, color, 0.24, 0.72);
       }
     }
 
-    function drawGrooveMeasurement(row, side, color) {
+    function drawGrooveMeasurement(row, side, color, feature = null) {
       const geometry = row.geometry && row.geometry[side];
-      const value = side === "minor" ? row.minor_width : row.major_width;
-      if (!geometry || value === null || value === undefined) return;
-      addSegment(geometry.width_endpoint_1, geometry.width_endpoint_2, color, 0.15, 1.0);
-      addSegment(geometry.depth_reference, geometry.depth_point, color, 0.08, 0.86);
-      addPoint(geometry.width_endpoint_1, color, 0.24);
-      addPoint(geometry.width_endpoint_2, color, 0.24);
-      addPoint(geometry.depth_point, color, 0.2);
-      const mid = pointFrom(scaleVec(addVec(vec(geometry.width_endpoint_1), vec(geometry.width_endpoint_2)), 0.5));
-      addValueLabel(mid, `${side} ${fmt(value)} A`, color);
+      if (!geometry) return;
+      const widthFeature = `${side}_width`;
+      const depthFeature = `${side}_depth`;
+      const angleFeature = `${side}_angle`;
+      const showWidth = !feature || feature === widthFeature || feature === "diameter";
+      const showDepth = !feature || feature === depthFeature;
+      const showAngle = feature === angleFeature;
+      if (showWidth && row[widthFeature] !== null && row[widthFeature] !== undefined) {
+        addSegment(geometry.width_endpoint_1, geometry.width_endpoint_2, color, 0.15, 1.0);
+        addPoint(geometry.width_endpoint_1, color, 0.24);
+        addPoint(geometry.width_endpoint_2, color, 0.24);
+        const mid = pointFrom(scaleVec(addVec(vec(geometry.width_endpoint_1), vec(geometry.width_endpoint_2)), 0.5));
+        addValueLabel(mid, `${featureLabel(widthFeature)} ${fmt(row[widthFeature])} A`, color);
+      }
+      if (showDepth && row[depthFeature] !== null && row[depthFeature] !== undefined) {
+        addSegment(geometry.depth_reference, geometry.depth_point, color, 0.09, 0.9);
+        addPoint(geometry.depth_point, color, 0.22);
+        addValueLabel(geometry.depth_point, `${featureLabel(depthFeature)} ${fmt(row[depthFeature])} A`, color);
+      }
+      if (showAngle && row[angleFeature] !== null && row[angleFeature] !== undefined) {
+        addSegment(geometry.width_endpoint_1, geometry.depth_point, color, 0.07, 0.78);
+        addSegment(geometry.width_endpoint_2, geometry.depth_point, color, 0.07, 0.78);
+        addValueLabel(geometry.depth_point, `${featureLabel(angleFeature)} ${fmt(row[angleFeature])} deg`, color);
+      }
     }
 
     function drawSelectedGroove(entry) {
-      drawGrooveMeasurement(entry.row, "minor", "#d12b72");
-      drawGrooveMeasurement(entry.row, "major", "#6246ea");
+      const feature = entry.feature;
+      const showMinor = !feature || feature.startsWith("minor_") || feature === "diameter";
+      const showMajor = !feature || feature.startsWith("major_") || feature === "diameter";
+      if (showMinor) drawGrooveMeasurement(entry.row, "minor", "#d12b72", feature);
+      if (showMajor) drawGrooveMeasurement(entry.row, "major", "#6246ea", feature);
       const axis = axisAtLevel(entry.level);
       if (axis) {
         addPoint(axis, "#111827", 0.42);
-        addValueLabel(axis, `Groove ${entry.level}.${entry.subLevel}`, "#111827");
+        const label = feature ? `${featureLabel(feature)} ${fmt(entry.featureValue)}${featureUnit(feature) ? " " + featureUnit(feature) : ""}` : `Groove ${entry.level}.${entry.subLevel}`;
+        addValueLabel(axis, label, "#111827");
       }
     }
 
     function drawInspectionSelection() {
       if (!selectedInspection) return;
       if (selectedInspection.type === "base_pair") drawSelectedBasePair(selectedInspection);
-      if (selectedInspection.type === "base_pair_axis") drawSelectedBasePair(selectedInspection);
+      if (selectedInspection.type === "base_pair_axis") drawSelectedBasePairAxis(selectedInspection);
       if (selectedInspection.type === "base_axis") drawSelectedBaseAxis(selectedInspection);
       if (selectedInspection.type === "step") drawSelectedStep(selectedInspection);
       if (selectedInspection.type === "groove") drawSelectedGroove(selectedInspection);
