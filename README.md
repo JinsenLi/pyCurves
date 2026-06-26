@@ -183,6 +183,20 @@ pycurves structure.pdb --format json --visualization --output-file viewer.json
 pycurves-viewer viewer.json --output viewer.html
 ```
 
+Generate a PyMOL inspection scene from the same visualization JSON:
+
+```bash
+pycurves-pymol viewer.json --output viewer.pml
+```
+
+Open the scene in PyMOL with `@viewer.pml`. The PML is a structure-free
+overlay containing only the helical axis, backbone splines, base-pair color
+blocks, and groove width connector lines. The PyMOL object panel exposes
+individual axis points, backbone strands, base-pair blocks, and groove lines
+under grouped dropdowns, so they can be toggled one by one. Load the source
+PDB/mmCIF separately if you want to inspect coordinates underneath the
+pyCurves geometry.
+
 ## Python API
 
 ```python
