@@ -4,13 +4,13 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
 
 from pycurves_lib.io.curves_output import _to_jsonable
-from pycurves_lib.md.batch_curvesplus import BatchCurvesPlusMDAnalyzer
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
 
@@ -165,6 +165,8 @@ def _write_csv_payload(payload: Dict, prefix: str) -> None:
 
 
 def run_batch(args) -> Dict:
+    from pycurves_lib.md.batch_curvesplus import BatchCurvesPlusMDAnalyzer
+
     if args.axis_convention.lower().replace("-", "_") not in {"curvesplus", "curves_plus", "curves+", "canal"}:
         raise SystemExit("pycurves-md-batch currently supports only --axis-convention curvesplus.")
     if args.frame_convention.lower().replace("-", "_") not in {"standard", "curvesplus", "curves_plus", "curves+", "x3dna", "3dna"}:
@@ -270,6 +272,63 @@ def run_batch(args) -> Dict:
         payload["summary"] = MDTrajectoryAnalyzer._summarize_tables(table_records)
     return payload
 
+
+def analyze_trajectory_batch(
+    topology_file: str,
+    trajectory_file: Optional[str] = None,
+    inpfile: Optional[str] = None,
+    output_dir: str = ".",
+    frames: Optional[str] = None,
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    step: int = 1,
+    batch_size: int = 128,
+    mode: str = "per-frame",
+    continuous_strands: bool = False,
+    fit: Optional[bool] = None,
+    grooves: Optional[bool] = None,
+    comb: Optional[bool] = None,
+    ends: Optional[bool] = None,
+    frame_convention: str = "standard",
+    axis_convention: str = "curvesplus",
+    curvesplus_axis_steps: bool = False,
+    fit_quality: bool = False,
+) -> Dict:
+    """Run the vectorized Curves+/standard-frame MD path from Python.
+
+    This is the notebook-friendly equivalent of ``pycurves-md-batch``. It is
+    intended for canonical, standard-frame analyses where the experimental
+    batch engine is applicable.
+    """
+    if mode not in {"per-frame", "summary", "both"}:
+        raise ValueError("mode must be one of: per-frame, summary, both")
+    args = SimpleNamespace(
+        topology=topology_file,
+        trajectory=trajectory_file,
+        inp=inpfile,
+        output_dir=output_dir,
+        output_file=None,
+        mode=mode,
+        format="json",
+        frames=frames,
+        start=start,
+        stop=stop,
+        step=step,
+        batch_size=batch_size,
+        continuous_strands=continuous_strands,
+        fit=fit,
+        grooves=grooves,
+        comb=comb,
+        ends=ends,
+        frame_convention=frame_convention,
+        axis_convention=axis_convention,
+        curvesplus_axis_steps=curvesplus_axis_steps,
+        fit_quality=fit_quality,
+    )
+    try:
+        return run_batch(args)
+    except SystemExit as exc:
+        raise ValueError(str(exc)) from exc
 
 def main() -> None:
     parser = argparse.ArgumentParser(

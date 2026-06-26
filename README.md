@@ -167,6 +167,83 @@ pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --fra
 Use `pycurves-md` for legacy-axis minimization, non-canonical contact-geometry
 frames, `--no-comb`, or `--ends`.
 
+
+## MD Analysis In Notebooks
+
+For exploratory MD work, use the Python helpers directly instead of writing JSON
+and calling `pycurves-md-plot`. Use `mode="per-frame"` or `mode="both"` when
+you want to slice levels, strands, time windows, or individual parameters in a
+notebook. `mode="summary"` is compact, but it does not keep per-frame rows.
+
+```python
+from pycurves_md import analyze_trajectory
+from pycurves_md_plot import (
+    add_time_axis,
+    extract_block,
+    extract_summary_block,
+    filter_rows,
+    parameter_timeseries,
+    pivot_parameter_matrix,
+    wrap_degrees,
+)
+
+payload = analyze_trajectory(
+    "topology.pdb",
+    "trajectory.xtc",
+    frames="1000:5000:10",
+    mode="both",
+    frame_convention="standard",
+    axis_convention="curvesplus",
+)
+
+# Long-form DataFrames from the in-memory payload.
+steps = extract_block(payload, "step")
+base_pairs = extract_block(payload, "base_pair")
+grooves = extract_block(payload, "groove")
+
+# Work on a subsection, then build custom plots/tables.
+mid_steps = filter_rows(steps, level=range(5, 16), drop_terminal=1)
+mid_steps = add_time_axis(mid_steps, time_scale=0.001, time_label="time (ns)")
+mid_steps["twist"] = wrap_degrees(mid_steps["twist"])
+
+twist_series = parameter_timeseries(
+    mid_steps,
+    "twist",
+    time_column="plot_time",
+    aggregate=True,
+)
+twist_heatmap = pivot_parameter_matrix(
+    mid_steps,
+    "twist",
+    index_column="plot_time",
+    column="level",
+)
+
+# Summary tables are available when mode="summary" or mode="both".
+bp_summary = extract_summary_block(payload, "base_pair")
+```
+
+For canonical two-strand standard-frame analyses, the vectorized batch path has
+a matching notebook helper:
+
+```python
+from pycurves_md_batch import analyze_trajectory_batch
+from pycurves_md_plot import extract_block
+
+payload = analyze_trajectory_batch(
+    "topology.pdb",
+    "trajectory.xtc",
+    frames="0:10000:10",
+    batch_size=256,
+    mode="per-frame",
+)
+steps = extract_block(payload, "step")
+```
+
+Use `analyze_trajectory` rather than the batch helper when you need legacy-axis
+minimization, non-canonical contact-geometry frames, `comb=False`, or terminal
+end-level handling.
+
 ## Plotting And Viewer
 
 After `pip install ".[all]"`, plot MD JSON output:

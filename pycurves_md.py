@@ -421,6 +421,74 @@ def collect_available_frame_indices(topology_file: str, trajectory_file: Optiona
     return [frame.index for frame in TrajectoryLoader.iter_frames(topology_file, trajectory_file)]
 
 
+def analyze_trajectory(
+    topology_file: str,
+    trajectory_file: Optional[str] = None,
+    inpfile: Optional[str] = None,
+    output_dir: str = ".",
+    frames: Optional[str] = None,
+    start: Optional[int] = None,
+    stop: Optional[int] = None,
+    step: int = 1,
+    mode: str = "per-frame",
+    annotations: bool = True,
+    frame_convention: str = "legacy",
+    axis_convention: str = "legacy",
+    continuous_strands: bool = False,
+    fit: Optional[bool] = None,
+    grooves: Optional[bool] = None,
+    mini: Optional[bool] = None,
+    comb: Optional[bool] = None,
+    ends: Optional[bool] = None,
+    verbose: bool = False,
+    warm_start: bool = True,
+    axis_continuity: bool = True,
+) -> Dict:
+    """Run pyCurves trajectory analysis from Python and return the JSON-like payload.
+
+    This is the notebook-friendly equivalent of ``pycurves-md``. Use
+    ``mode="per-frame"`` or ``mode="both"`` when the payload will be converted
+    to long-form DataFrames with ``pycurves_md_plot.extract_block``.
+    """
+    if mode not in {"per-frame", "summary", "both"}:
+        raise ValueError("mode must be one of: per-frame, summary, both")
+    if step <= 0:
+        raise ValueError("step must be positive")
+
+    _, normalized_axis = CurvesWrapper.normalize_conventions(frame_convention, axis_convention)
+    effective_mini = True if mini is None else bool(mini)
+    if normalized_axis != "curvesplus" and not effective_mini:
+        raise ValueError(
+            "mini=False is not supported for trajectory analysis yet; downstream axis, bend, "
+            "and groove parameters require the fitted helical axis."
+        )
+
+    frame_selector, selection = make_frame_selector(frames, start, stop, step)
+    analyzer = MDTrajectoryAnalyzer(
+        topology_file=topology_file,
+        trajectory_file=trajectory_file,
+        inpfile=inpfile,
+        output_dir=output_dir,
+        annotations=annotations,
+        frame_convention=frame_convention,
+        axis_convention=axis_convention,
+        continuous_strands=continuous_strands,
+        fit_override=fit,
+        grv_override=grooves,
+        mini_override=mini,
+        comb_override=comb,
+        ends_override=ends,
+    )
+    return analyzer.run(
+        frame_selector=frame_selector,
+        selection=selection,
+        mode=mode,
+        mini=effective_mini,
+        verbose=verbose,
+        warm_start=warm_start,
+        axis_continuity=axis_continuity,
+    )
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run pyCurves over an MD trajectory.")
     parser.add_argument("topology", help="Topology/reference structure file, usually PDB or CIF.")

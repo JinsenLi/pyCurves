@@ -217,13 +217,30 @@ def expand_block_selection(blocks: Optional[Sequence[str]]) -> List[str]:
     return out
 
 
-def iter_pycurves_frames(json_path: str | Path) -> Iterator[Dict]:
-    """Yield per-frame payloads from a pyCurves trajectory JSON file.
+def load_trajectory_payload(source: str | Path | Dict) -> Dict:
+    """Load a pyCurves MD payload from a dict or JSON file path."""
+    if isinstance(source, dict):
+        return source
+    return json.loads(Path(source).read_text(encoding="utf-8"))
 
-    If `ijson` is installed, frames are streamed from disk. Otherwise the script
-    falls back to `json.load`, which is fine for moderate-size files.
+
+def iter_pycurves_frames(source: str | Path | Dict | List[Dict]) -> Iterator[Dict]:
+    """Yield per-frame payloads from a pyCurves trajectory payload or JSON file.
+
+    Passing a dict is convenient in notebooks after ``analyze_trajectory``. Passing
+    a path streams frames with ``ijson`` when available, which is better for large
+    JSON files written by the CLI.
     """
-    path = Path(json_path)
+    if isinstance(source, dict):
+        for frame in source.get("frames", []):
+            yield frame
+        return
+    if isinstance(source, list):
+        for frame in source:
+            yield frame
+        return
+
+    path = Path(source)
     try:
         import ijson
     except ImportError:
@@ -238,7 +255,7 @@ def iter_pycurves_frames(json_path: str | Path) -> Iterator[Dict]:
 
 
 def flatten_groove_table(groove_payload: Dict) -> List[Dict]:
-    """Flatten pyCurves nested groove records into long-form rows."""
+    """Flatten nested pyCurves groove records into long-form rows."""
     if not isinstance(groove_payload, dict):
         return []
 
@@ -250,25 +267,22 @@ def flatten_groove_table(groove_payload: Dict) -> List[Dict]:
         except (TypeError, ValueError):
             level = level_text
         base_pair = level_data.get("base_pair", "")
-        
-        param_sums = {}
-        param_counts = {}
         for sub_level_text, values in (level_data.get("sub_levels") or {}).items():
-            if isinstance(values, dict):
-                for k, v in values.items():
-                    if isinstance(v, (int, float)):
-                        param_sums[k] = param_sums.get(k, 0.0) + float(v)
-                        param_counts[k] = param_counts.get(k, 0) + 1
-                        
-        if param_counts:
+            if not isinstance(values, dict):
+                continue
+            try:
+                sub_level = int(sub_level_text)
+            except (TypeError, ValueError):
+                sub_level = sub_level_text
             row = {
                 "level": level,
+                "sub_level": sub_level,
                 "base_pair": base_pair,
                 "atom_defining_backbone": atom_defining_backbone,
             }
-            for k, total in param_sums.items():
-                if param_counts[k] > 0:
-                    row[k] = total / param_counts[k]
+            for key, value in values.items():
+                if key != "geometry":
+                    row[key] = value
             rows.append(row)
     return rows
 
@@ -277,10 +291,10 @@ def frame_table_rows(frame: Dict, table_name: str) -> List[Dict]:
     """Return one frame's table rows with `frame` and `time` columns attached."""
     dataframes = frame.get("dataframes", {})
     payload = dataframes.get(table_name)
-    if table_name == "groove":
-        rows = flatten_groove_table(payload)
-    elif isinstance(payload, list):
+    if isinstance(payload, list):
         rows = payload
+    elif table_name == "groove" and isinstance(payload, dict):
+        rows = flatten_groove_table(payload)
     else:
         rows = []
 
@@ -295,18 +309,30 @@ def frame_table_rows(frame: Dict, table_name: str) -> List[Dict]:
     return out
 
 
-def extract_table(json_path: str | Path, table_name: str) -> pd.DataFrame:
-    """Extract a pyCurves trajectory table into a long-form DataFrame."""
+def extract_table(source: str | Path | Dict | List[Dict], table_name: str) -> pd.DataFrame:
+    """Extract a per-frame pyCurves trajectory table into a long-form DataFrame."""
     rows: List[Dict] = []
-    for frame in iter_pycurves_frames(json_path):
+    for frame in iter_pycurves_frames(source):
         rows.extend(frame_table_rows(frame, table_name))
     return pd.DataFrame(rows)
 
 
-def extract_block(json_path: str | Path, block: str) -> pd.DataFrame:
+def extract_block(source: str | Path | Dict | List[Dict], block: str) -> pd.DataFrame:
     """Extract one named analysis block such as step, base_pair, axis, groove, or backbone."""
     spec = block_spec(block)
-    return extract_table(json_path, spec["table"])
+    return extract_table(source, spec["table"])
+
+
+def extract_summary_table(source: str | Path | Dict, table_name: str) -> pd.DataFrame:
+    """Extract a summary table from a summary/both-mode MD payload or JSON file."""
+    payload = load_trajectory_payload(source)
+    return pd.DataFrame((payload.get("summary") or {}).get(table_name, []))
+
+
+def extract_summary_block(source: str | Path | Dict, block: str) -> pd.DataFrame:
+    """Extract a named block's summary table from a summary/both-mode payload."""
+    spec = block_spec(block)
+    return extract_summary_table(source, spec["table"])
 
 
 def block_spec(block: str) -> Dict:
@@ -315,7 +341,6 @@ def block_spec(block: str) -> Dict:
         allowed = available_block_names()
         raise ValueError(f"Unknown block {block!r}. Use one of: {allowed}.")
     return PARAMETER_BLOCKS[key]
-
 
 def filter_rows(
     df: pd.DataFrame,
