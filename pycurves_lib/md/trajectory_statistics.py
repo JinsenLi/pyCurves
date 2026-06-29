@@ -45,6 +45,11 @@ def wrap_degrees_180(value: float) -> float:
     return 180.0 if np.isclose(wrapped, -180.0) else wrapped
 
 
+def wrap_degrees_180_array(values: np.ndarray) -> np.ndarray:
+    wrapped = (np.asarray(values, dtype=float) + 180.0) % 360.0 - 180.0
+    return np.where(np.isclose(wrapped, -180.0), 180.0, wrapped)
+
+
 def _stddev_from_variance(variance: Optional[float]) -> Optional[float]:
     if variance is None:
         return None
@@ -89,7 +94,7 @@ def circular_degree_summary(values: np.ndarray) -> SummaryStats:
     )
     if mean is None:
         return SummaryStats(None, None)
-    residuals = np.asarray([wrap_degrees_180(value - mean) for value in vals], dtype=float)
+    residuals = wrap_degrees_180_array(vals - mean)
     variance = float(np.mean(residuals * residuals))
     if abs(variance) < 1e-15:
         variance = 0.0
