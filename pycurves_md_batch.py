@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from pycurves_lib.io.curves_output import _to_jsonable
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
-from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
+from pycurves_md import MDTrajectoryAnalyzer, _circular_degree_summary_from_sums, make_frame_selector
 
 
 class BatchSummaryAccumulator:
@@ -23,6 +23,17 @@ class BatchSummaryAccumulator:
 
     def ensure_table(self, table_name: str) -> None:
         self._tables.setdefault(table_name, {})
+
+    @staticmethod
+    def _new_stats(name: str) -> Dict[str, float]:
+        return {
+            "valid": 0,
+            "sum": 0.0,
+            "sumsq": 0.0,
+            "sin": 0.0,
+            "cos": 0.0,
+            "circular": MDTrajectoryAnalyzer._is_circular_degree_column(name),
+        }
 
     def add_values(self, table_name: str, metadata: Dict, parameter_names, values) -> None:
         self.ensure_table(table_name)
@@ -40,7 +51,7 @@ class BatchSummaryAccumulator:
                 "metadata": metadata,
                 "count": 0,
                 "stats": {
-                    name: {"valid": 0, "sum": 0.0, "sumsq": 0.0}
+                    name: self._new_stats(name)
                     for name in parameter_names
                 },
             }
@@ -54,8 +65,13 @@ class BatchSummaryAccumulator:
             vals = column[finite]
             stats = group["stats"][name]
             stats["valid"] += int(vals.size)
-            stats["sum"] += float(np.sum(vals))
-            stats["sumsq"] += float(np.sum(vals * vals))
+            if stats["circular"]:
+                radians = np.radians(vals)
+                stats["sin"] += float(np.sum(np.sin(radians)))
+                stats["cos"] += float(np.sum(np.cos(radians)))
+            else:
+                stats["sum"] += float(np.sum(vals))
+                stats["sumsq"] += float(np.sum(vals * vals))
 
     def add_rows(self, table_name: str, rows: List[Dict], numeric_names) -> None:
         self.ensure_table(table_name)
@@ -74,7 +90,7 @@ class BatchSummaryAccumulator:
                     "metadata": metadata,
                     "count": 0,
                     "stats": {
-                        name: {"valid": 0, "sum": 0.0, "sumsq": 0.0}
+                        name: self._new_stats(name)
                         for name in numeric_names
                     },
                 }
@@ -89,8 +105,13 @@ class BatchSummaryAccumulator:
                     continue
                 stats = group["stats"][name]
                 stats["valid"] += 1
-                stats["sum"] += number
-                stats["sumsq"] += number * number
+                if stats["circular"]:
+                    radians = np.radians(number)
+                    stats["sin"] += float(np.sin(radians))
+                    stats["cos"] += float(np.cos(radians))
+                else:
+                    stats["sum"] += number
+                    stats["sumsq"] += number * number
 
     def to_summary(self) -> Dict[str, List[Dict]]:
         output: Dict[str, List[Dict]] = {}
@@ -104,6 +125,10 @@ class BatchSummaryAccumulator:
                     if valid == 0:
                         out[f"{name}_mean"] = None
                         out[f"{name}_variance"] = None
+                    elif stats["circular"]:
+                        mean, variance = _circular_degree_summary_from_sums(stats["sin"], stats["cos"], valid)
+                        out[f"{name}_mean"] = mean
+                        out[f"{name}_variance"] = variance
                     else:
                         mean = stats["sum"] / valid
                         variance = stats["sumsq"] / valid - mean * mean

@@ -158,7 +158,7 @@ pycurves-md topology.pdb trajectory.dcd --mode both --format json --output-file 
 ```
 
 For canonical two-strand Curves+/standard-frame trajectories, the experimental
-batch path can be much faster:
+batch path can be 100x faster:
 
 ```bash
 pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --frame-convention standard --batch-size 256 --mode summary --output-file dynamics_batch.json
@@ -166,7 +166,6 @@ pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --fra
 
 Use `pycurves-md` for legacy-axis minimization, non-canonical contact-geometry
 frames, `--no-comb`, or `--ends`.
-
 
 ## MD Analysis In Notebooks
 

@@ -23,6 +23,64 @@ from pycurves_lib.cli.pycurves_cli_options import (
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 
 
+CIRCULAR_DEGREE_COLUMNS = frozenset({
+    "tilt", "roll", "twist",
+    "buckle", "propel", "opening",
+    "inclin", "tip",
+    "ainc", "atip", "angle",
+    "minor_angle", "major_angle",
+    "local_direction", "overall_bend_uu", "overall_bend_pp",
+    "c1_c2", "c2_c3", "phase",
+    "c1_prime", "c2_prime", "c3_prime",
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "chi",
+})
+
+
+def _wrap_degrees_180(value: float) -> float:
+    wrapped = (float(value) + 180.0) % 360.0 - 180.0
+    return 180.0 if np.isclose(wrapped, -180.0) else wrapped
+
+
+def _linear_summary(values: np.ndarray) -> tuple[Optional[float], Optional[float]]:
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return None, None
+    mean = float(np.mean(vals))
+    variance = float(np.var(vals))
+    if abs(variance) < 1e-15:
+        variance = 0.0
+    return mean, variance
+
+
+def _circular_degree_summary_from_sums(sin_sum: float, cos_sum: float, count: int) -> tuple[Optional[float], Optional[float]]:
+    if count <= 0:
+        return None, None
+    resultant = float(np.hypot(sin_sum, cos_sum))
+    if resultant <= 1e-12:
+        return None, None
+    mean = _wrap_degrees_180(np.degrees(np.arctan2(sin_sum, cos_sum)))
+    resultant_length = min(1.0, max(resultant / float(count), 1e-15))
+    stddev = float(np.degrees(np.sqrt(max(0.0, -2.0 * np.log(resultant_length)))))
+    variance = stddev * stddev
+    if abs(variance) < 1e-15:
+        variance = 0.0
+    return mean, variance
+
+
+def _circular_degree_summary(values: np.ndarray) -> tuple[Optional[float], Optional[float]]:
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return None, None
+    radians = np.radians(vals)
+    return _circular_degree_summary_from_sums(
+        float(np.sum(np.sin(radians))),
+        float(np.sum(np.cos(radians))),
+        int(vals.size),
+    )
+
+
 class MDTrajectoryAnalyzer:
     """Run pyCurves over selected trajectory frames and summarize named records."""
 
@@ -326,15 +384,19 @@ class MDTrajectoryAnalyzer:
                         [row.get(col) for row in group_rows if row.get(col) is not None],
                         dtype=float,
                     )
-                    if vals.size == 0:
-                        out[f"{col}_mean"] = None
-                        out[f"{col}_variance"] = None
+                    if MDTrajectoryAnalyzer._is_circular_degree_column(col):
+                        mean, variance = _circular_degree_summary(vals)
                     else:
-                        out[f"{col}_mean"] = float(np.mean(vals))
-                        out[f"{col}_variance"] = float(np.var(vals))
+                        mean, variance = _linear_summary(vals)
+                    out[f"{col}_mean"] = mean
+                    out[f"{col}_variance"] = variance
                 table_summary.append(out)
             summaries[name] = table_summary
         return summaries
+
+    @staticmethod
+    def _is_circular_degree_column(column_name: str) -> bool:
+        return str(column_name).lower() in CIRCULAR_DEGREE_COLUMNS
 
     @staticmethod
     def _summary_key_value(value):
