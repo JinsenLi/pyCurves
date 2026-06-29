@@ -23,6 +23,14 @@ from pycurves_lib.io.curves_config_loader import ConfigLoader
 from pycurves_lib.io.curves_mol_loader import MolecularLoader
 from pycurves_lib.curves_wrapper import CurvesWrapper
 from pycurves_lib.md.batch_groove import compute_batch_grooves
+from pycurves_lib.md.trajectory_statistics import (
+    ALPHA_GAMMA_STATES,
+    BI_BII_STATES,
+    SUGAR_PUCKERS as SUMMARY_SUGAR_PUCKERS,
+    alpha_gamma_counts,
+    bi_bii_counts,
+    sugar_pucker_counts,
+)
 
 
 STEP_PARAMETERS = ("shift", "slide", "rise", "tilt", "roll", "twist")
@@ -795,6 +803,12 @@ class BatchCurvesPlusMDAnalyzer:
                     ],
                     axis=1,
                 )
+                metadata = {
+                    "strand": strand + 1,
+                    "level": level,
+                    "residue_name": residue_name,
+                    "residue_id": residue_id,
+                }
                 phase = pucker[:, 1]
                 pucker_index = np.zeros(phase.shape[0], dtype=int)
                 finite = np.isfinite(phase)
@@ -808,17 +822,42 @@ class BatchCurvesPlusMDAnalyzer:
                         seen.append(value)
                 for idx in seen:
                     mask = pucker_index == idx
-                    accumulator.add_values(
-                        "backbone",
+                    row_metadata = dict(metadata)
+                    row_metadata["pucker"] = SUGAR_PUCKERS[idx]
+                    accumulator.add_values("backbone", row_metadata, names, values[mask])
+
+                sugar_counts, sugar_total = sugar_pucker_counts(phase)
+                for label, count in zip(SUMMARY_SUGAR_PUCKERS, sugar_counts):
+                    accumulator.add_population_counts(
+                        "backbone_sugar_pucker_distribution",
+                        metadata,
+                        {"pucker": label},
+                        int(count),
+                        sugar_total,
+                    )
+
+                bi_counts, bi_total = bi_bii_counts(tor[:, 6], tor[:, 7])
+                for label, count in zip(BI_BII_STATES, bi_counts):
+                    accumulator.add_population_counts(
+                        "backbone_bi_bii_distribution",
+                        metadata,
+                        {"conformer": label},
+                        int(count),
+                        bi_total,
+                    )
+
+                ag_counts, ag_total = alpha_gamma_counts(tor[:, 10], tor[:, 8])
+                for (alpha_state, gamma_state), count in zip(ALPHA_GAMMA_STATES, ag_counts):
+                    accumulator.add_population_counts(
+                        "backbone_alpha_gamma_distribution",
+                        metadata,
                         {
-                            "strand": strand + 1,
-                            "level": level,
-                            "residue_name": residue_name,
-                            "residue_id": residue_id,
-                            "pucker": SUGAR_PUCKERS[idx],
+                            "alpha_state": alpha_state,
+                            "gamma_state": gamma_state,
+                            "conformer": f"{alpha_state}/{gamma_state}",
                         },
-                        names,
-                        values[mask],
+                        int(count),
+                        ag_total,
                     )
 
     def _accumulate_fit_quality_summary(self, accumulator, rmsd: np.ndarray) -> None:

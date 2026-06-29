@@ -12,7 +12,11 @@ from tqdm import tqdm
 
 from pycurves_lib.io.curves_output import _to_jsonable
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
-from pycurves_md import MDTrajectoryAnalyzer, _circular_degree_summary_from_sums, make_frame_selector
+from pycurves_lib.md.trajectory_statistics import (
+    circular_degree_summary_from_sums,
+    is_circular_degree_column,
+)
+from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
 
 
 class BatchSummaryAccumulator:
@@ -20,9 +24,31 @@ class BatchSummaryAccumulator:
 
     def __init__(self) -> None:
         self._tables: Dict[str, Dict[tuple, Dict]] = {}
+        self._population_tables: Dict[str, Dict[tuple, Dict]] = {}
 
     def ensure_table(self, table_name: str) -> None:
         self._tables.setdefault(table_name, {})
+
+    def add_population_counts(
+        self,
+        table_name: str,
+        metadata: Dict,
+        category_metadata: Dict,
+        count: int,
+        total_count: int,
+    ) -> None:
+        if total_count <= 0:
+            return
+        table = self._population_tables.setdefault(table_name, {})
+        row_metadata = dict(metadata)
+        row_metadata.update(category_metadata)
+        key = tuple(row_metadata.items())
+        group = table.get(key)
+        if group is None:
+            group = {"metadata": row_metadata, "count": 0, "total_count": 0}
+            table[key] = group
+        group["count"] += int(count)
+        group["total_count"] += int(total_count)
 
     @staticmethod
     def _new_stats(name: str) -> Dict[str, float]:
@@ -32,7 +58,7 @@ class BatchSummaryAccumulator:
             "sumsq": 0.0,
             "sin": 0.0,
             "cos": 0.0,
-            "circular": MDTrajectoryAnalyzer._is_circular_degree_column(name),
+            "circular": is_circular_degree_column(name),
         }
 
     def add_values(self, table_name: str, metadata: Dict, parameter_names, values) -> None:
@@ -126,7 +152,7 @@ class BatchSummaryAccumulator:
                         out[f"{name}_mean"] = None
                         out[f"{name}_variance"] = None
                     elif stats["circular"]:
-                        mean, variance = _circular_degree_summary_from_sums(stats["sin"], stats["cos"], valid)
+                        mean, variance = circular_degree_summary_from_sums(stats["sin"], stats["cos"], valid)
                         out[f"{name}_mean"] = mean
                         out[f"{name}_variance"] = variance
                     else:
@@ -137,6 +163,20 @@ class BatchSummaryAccumulator:
                         out[f"{name}_mean"] = float(mean)
                         out[f"{name}_variance"] = float(variance)
                 rows.append(out)
+            output[table_name] = rows
+
+        for table_name, groups in self._population_tables.items():
+            rows = []
+            for group in groups.values():
+                total_count = int(group["total_count"])
+                count = int(group["count"])
+                fraction = count / float(total_count) if total_count > 0 else 0.0
+                row = dict(group["metadata"])
+                row["count"] = count
+                row["total_count"] = total_count
+                row["fraction"] = float(fraction)
+                row["percent"] = float(100.0 * fraction)
+                rows.append(row)
             output[table_name] = rows
         return output
 
