@@ -147,7 +147,6 @@ class BatchSummaryAccumulator:
                     if valid == 0:
                         out[f"{name}_mean"] = None
                         out[f"{name}_stddev"] = None
-                        out[f"{name}_variance_sq"] = None
                     elif stats["circular"]:
                         parts = stats["values"]
                         if parts and isinstance(parts[0], np.ndarray):
@@ -157,7 +156,6 @@ class BatchSummaryAccumulator:
                         summary = circular_degree_summary(values)
                         out[f"{name}_mean"] = summary.mean
                         out[f"{name}_stddev"] = summary.stddev
-                        out[f"{name}_variance_sq"] = summary.variance
                     else:
                         mean = stats["sum"] / valid
                         variance = stats["sumsq"] / valid - mean * mean
@@ -165,7 +163,6 @@ class BatchSummaryAccumulator:
                             variance = 0.0
                         out[f"{name}_mean"] = float(mean)
                         out[f"{name}_stddev"] = float(np.sqrt(max(float(variance), 0.0)))
-                        out[f"{name}_variance_sq"] = float(variance)
                 rows.append(out)
             output[table_name] = rows
 

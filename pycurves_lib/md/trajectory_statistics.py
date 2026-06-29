@@ -34,7 +34,6 @@ ALPHA_GAMMA_STATES = (
 class SummaryStats(NamedTuple):
     mean: Optional[float]
     stddev: Optional[float]
-    variance: Optional[float]
 
 
 def is_circular_degree_column(column_name: str) -> bool:
@@ -56,12 +55,12 @@ def linear_summary(values: np.ndarray) -> SummaryStats:
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
-        return SummaryStats(None, None, None)
+        return SummaryStats(None, None)
     mean = float(np.mean(vals))
     variance = float(np.var(vals))
     if abs(variance) < 1e-15:
         variance = 0.0
-    return SummaryStats(mean, _stddev_from_variance(variance), variance)
+    return SummaryStats(mean, _stddev_from_variance(variance))
 
 
 def circular_degree_mean_from_sums(
@@ -81,7 +80,7 @@ def circular_degree_summary(values: np.ndarray) -> SummaryStats:
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
-        return SummaryStats(None, None, None)
+        return SummaryStats(None, None)
     radians = np.radians(vals)
     mean = circular_degree_mean_from_sums(
         float(np.sum(np.sin(radians))),
@@ -89,12 +88,12 @@ def circular_degree_summary(values: np.ndarray) -> SummaryStats:
         int(vals.size),
     )
     if mean is None:
-        return SummaryStats(None, None, None)
+        return SummaryStats(None, None)
     residuals = np.asarray([wrap_degrees_180(value - mean) for value in vals], dtype=float)
     variance = float(np.mean(residuals * residuals))
     if abs(variance) < 1e-15:
         variance = 0.0
-    return SummaryStats(mean, _stddev_from_variance(variance), variance)
+    return SummaryStats(mean, _stddev_from_variance(variance))
 
 
 def sugar_pucker_counts(phase_values: Sequence[float]) -> Tuple[np.ndarray, int]:

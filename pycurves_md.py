@@ -338,7 +338,6 @@ class MDTrajectoryAnalyzer:
                         stats = linear_summary(vals)
                     out[f"{col}_mean"] = stats.mean
                     out[f"{col}_stddev"] = stats.stddev
-                    out[f"{col}_variance_sq"] = stats.variance
                 table_summary.append(out)
             summaries[name] = table_summary
 

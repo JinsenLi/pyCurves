@@ -151,9 +151,9 @@ Run trajectory summaries:
 pycurves-md topology.pdb trajectory.xtc --mode summary --frames 1000:5000:10 --output-file dynamics.json
 ```
 
-Summary tables report numeric columns as `*_mean`, `*_stddev`, and `*_variance_sq`.
-Angular columns use circular statistics, so `*_stddev` is the Canal-style value
-to compare against reported `Sdev` columns.
+Summary tables report numeric columns as `*_mean` and `*_stddev`. Angular columns
+use circular statistics, so `*_stddev` is the Canal-style value to compare
+against reported `Sdev` columns.
 
 Store both per-frame rows and summary statistics:
 
