@@ -52,23 +52,17 @@ def linear_summary(values: np.ndarray) -> Tuple[Optional[float], Optional[float]
     return mean, variance
 
 
-def circular_degree_summary_from_sums(
+def circular_degree_mean_from_sums(
     sin_sum: float,
     cos_sum: float,
     count: int,
-) -> Tuple[Optional[float], Optional[float]]:
+) -> Optional[float]:
     if count <= 0:
-        return None, None
+        return None
     resultant = float(np.hypot(sin_sum, cos_sum))
     if resultant <= 1e-12:
-        return None, None
-    mean = wrap_degrees_180(np.degrees(np.arctan2(sin_sum, cos_sum)))
-    resultant_length = min(1.0, max(resultant / float(count), 1e-15))
-    stddev = float(np.degrees(np.sqrt(max(0.0, -2.0 * np.log(resultant_length)))))
-    variance = stddev * stddev
-    if abs(variance) < 1e-15:
-        variance = 0.0
-    return mean, variance
+        return None
+    return wrap_degrees_180(np.degrees(np.arctan2(sin_sum, cos_sum)))
 
 
 def circular_degree_summary(values: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
@@ -77,11 +71,18 @@ def circular_degree_summary(values: np.ndarray) -> Tuple[Optional[float], Option
     if vals.size == 0:
         return None, None
     radians = np.radians(vals)
-    return circular_degree_summary_from_sums(
+    mean = circular_degree_mean_from_sums(
         float(np.sum(np.sin(radians))),
         float(np.sum(np.cos(radians))),
         int(vals.size),
     )
+    if mean is None:
+        return None, None
+    residuals = np.asarray([wrap_degrees_180(value - mean) for value in vals], dtype=float)
+    variance = float(np.mean(residuals * residuals))
+    if abs(variance) < 1e-15:
+        variance = 0.0
+    return mean, variance
 
 
 def sugar_pucker_counts(phase_values: Sequence[float]) -> Tuple[np.ndarray, int]:
