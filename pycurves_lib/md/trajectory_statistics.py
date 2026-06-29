@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -31,6 +31,12 @@ ALPHA_GAMMA_STATES = (
 )
 
 
+class SummaryStats(NamedTuple):
+    mean: Optional[float]
+    stddev: Optional[float]
+    variance: Optional[float]
+
+
 def is_circular_degree_column(column_name: str) -> bool:
     return str(column_name).lower() in CIRCULAR_DEGREE_COLUMNS
 
@@ -40,16 +46,22 @@ def wrap_degrees_180(value: float) -> float:
     return 180.0 if np.isclose(wrapped, -180.0) else wrapped
 
 
-def linear_summary(values: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
+def _stddev_from_variance(variance: Optional[float]) -> Optional[float]:
+    if variance is None:
+        return None
+    return float(np.sqrt(max(float(variance), 0.0)))
+
+
+def linear_summary(values: np.ndarray) -> SummaryStats:
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
-        return None, None
+        return SummaryStats(None, None, None)
     mean = float(np.mean(vals))
     variance = float(np.var(vals))
     if abs(variance) < 1e-15:
         variance = 0.0
-    return mean, variance
+    return SummaryStats(mean, _stddev_from_variance(variance), variance)
 
 
 def circular_degree_mean_from_sums(
@@ -65,11 +77,11 @@ def circular_degree_mean_from_sums(
     return wrap_degrees_180(np.degrees(np.arctan2(sin_sum, cos_sum)))
 
 
-def circular_degree_summary(values: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
+def circular_degree_summary(values: np.ndarray) -> SummaryStats:
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
-        return None, None
+        return SummaryStats(None, None, None)
     radians = np.radians(vals)
     mean = circular_degree_mean_from_sums(
         float(np.sum(np.sin(radians))),
@@ -77,12 +89,12 @@ def circular_degree_summary(values: np.ndarray) -> Tuple[Optional[float], Option
         int(vals.size),
     )
     if mean is None:
-        return None, None
+        return SummaryStats(None, None, None)
     residuals = np.asarray([wrap_degrees_180(value - mean) for value in vals], dtype=float)
     variance = float(np.mean(residuals * residuals))
     if abs(variance) < 1e-15:
         variance = 0.0
-    return mean, variance
+    return SummaryStats(mean, _stddev_from_variance(variance), variance)
 
 
 def sugar_pucker_counts(phase_values: Sequence[float]) -> Tuple[np.ndarray, int]:

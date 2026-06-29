@@ -151,6 +151,10 @@ Run trajectory summaries:
 pycurves-md topology.pdb trajectory.xtc --mode summary --frames 1000:5000:10 --output-file dynamics.json
 ```
 
+Summary tables report numeric columns as `*_mean`, `*_stddev`, and `*_variance_sq`.
+Angular columns use circular statistics, so `*_stddev` is the Canal-style value
+to compare against reported `Sdev` columns.
+
 Store both per-frame rows and summary statistics:
 
 ```bash
@@ -158,7 +162,7 @@ pycurves-md topology.pdb trajectory.dcd --mode both --format json --output-file 
 ```
 
 For canonical two-strand Curves+/standard-frame trajectories, the experimental
-batch path can be 100x faster:
+batch path can be much faster:
 
 ```bash
 pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --frame-convention standard --batch-size 256 --mode summary --output-file dynamics_batch.json
@@ -166,6 +170,7 @@ pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --fra
 
 Use `pycurves-md` for legacy-axis minimization, non-canonical contact-geometry
 frames, `--no-comb`, or `--ends`.
+
 
 ## MD Analysis In Notebooks
 

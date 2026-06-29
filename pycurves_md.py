@@ -333,11 +333,12 @@ class MDTrajectoryAnalyzer:
                         dtype=float,
                     )
                     if MDTrajectoryAnalyzer._is_circular_degree_column(col):
-                        mean, variance = circular_degree_summary(vals)
+                        stats = circular_degree_summary(vals)
                     else:
-                        mean, variance = linear_summary(vals)
-                    out[f"{col}_mean"] = mean
-                    out[f"{col}_variance"] = variance
+                        stats = linear_summary(vals)
+                    out[f"{col}_mean"] = stats.mean
+                    out[f"{col}_stddev"] = stats.stddev
+                    out[f"{col}_variance_sq"] = stats.variance
                 table_summary.append(out)
             summaries[name] = table_summary
 
