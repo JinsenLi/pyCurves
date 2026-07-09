@@ -186,7 +186,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
     def _frame_convention_payload(self) -> Dict[str, Any]:
         cfg = self.runner.ctx.cfg
-        name = getattr(cfg, "frame_convention", "legacy")
+        name = getattr(cfg, "frame_convention", "standard")
         library = getattr(self.runner.ctx, "base_reference_library", None)
         return {
             "name": name,
@@ -480,7 +480,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
     def _uses_curvesplus_axis(self) -> bool:
         cfg = self.runner.ctx.cfg
         return (
-            str(getattr(cfg, "frame_convention", "legacy")).lower() == "standard"
+            str(getattr(cfg, "frame_convention", "standard")).lower() == "standard"
             and str(getattr(cfg, "axis_convention", "legacy")).lower() == "curvesplus"
         )
 

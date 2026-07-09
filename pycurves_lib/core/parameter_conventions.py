@@ -915,7 +915,7 @@ class StandardParameterConvention(LegacyParameterConvention):
 
 
 def convention_for_context(ctx) -> BaseParameterConvention:
-    name = str(getattr(ctx.cfg, "frame_convention", "legacy")).strip().lower()
+    name = str(getattr(ctx.cfg, "frame_convention", "standard")).strip().lower()
     if name in {"standard", "curves_plus", "curves+", "curvesplus", "x3dna", "3dna"}:
         return StandardParameterConvention()
     return LegacyParameterConvention()

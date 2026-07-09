@@ -75,7 +75,7 @@ class BaseGeometryConstants:
 class BaseLocator:
     def __init__(self, constants: BaseGeometryConstants, reference_library: BaseReferenceLibrary = None):
         self.const = constants
-        self.reference_library = reference_library or BaseReferenceLibrary.load("legacy")
+        self.reference_library = reference_library or BaseReferenceLibrary.load("standard")
         self.frame_fitter = BaseFrameFitter(self.reference_library)
 
     def locate_all(self, ctx: 'CurvesContext'):
@@ -366,10 +366,10 @@ class BaseLocator:
             "residue_name": atom_indices.get("residue_name", "").strip().upper(),
             "parent_base": atom_indices.get("parent_base", "unknown"),
             "template_used": atom_indices.get("template_base", "unknown"),
-            "frame_convention": getattr(ctx.cfg, "frame_convention", "legacy"),
+            "frame_convention": getattr(ctx.cfg, "frame_convention", "standard"),
             "fit_strategy": (
                 "standard_base_library"
-                if getattr(ctx.cfg, "frame_convention", "legacy") == "standard"
+                if getattr(ctx.cfg, "frame_convention", "standard") == "standard"
                 else ("parent_base_atoms" if atom_indices.get("is_modified") else "standard_base_atoms")
             ),
             "rmsd": float(rms),
@@ -449,7 +449,7 @@ class BaseLocator:
     def _calculate_base_frame(self, strand: int, level: int, atom_data: dict, ctx: 'CurvesContext'):
         """
         """
-        if getattr(ctx.cfg, "frame_convention", "legacy") == "standard" and ctx.cfg.fit:
+        if getattr(ctx.cfg, "frame_convention", "standard") == "standard" and ctx.cfg.fit:
             result = self._calculate_standard_base_frame(strand, level, atom_data, ctx)
             if result is not None:
                 return result
@@ -697,7 +697,7 @@ class HelicalConfig:
     test: bool = False    # Test/debug mode from Curves input.
     old: bool = True      # Curves 5.3 compatibility mode.
     axonly: bool = False  # Axis-only calculation.
-    frame_convention: str = "legacy"  # Base reference-frame convention: legacy or standard.
+    frame_convention: str = "standard"  # Base reference-frame convention: standard or legacy.
     axis_convention: str = "legacy"  # Global axis convention: legacy optimizer or curvesplus axis/smooth.
 
     # Fortran hel(0,*,*) and hel(nux+1,*,*) terminal rows used when ends=.t.

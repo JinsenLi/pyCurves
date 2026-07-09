@@ -40,8 +40,8 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--frame-convention",
-        default="legacy",
-        help="Base reference-frame convention. Use 'standard' for Curves+/3DNA-compatible frames.",
+        default="standard",
+        help="Base reference-frame convention (default: standard; use 'legacy' for Curves 5.3-compatible frames).",
     )
     parser.add_argument(
         "--axis-convention",
@@ -53,7 +53,7 @@ def pycurves_runner_kwargs(args) -> dict:
     """Return CurvesWrapper keyword arguments from shared CLI options."""
     return {
         "continuous_strands": getattr(args, "continuous_strands", False),
-        "frame_convention": getattr(args, "frame_convention", "legacy"),
+        "frame_convention": getattr(args, "frame_convention", "standard"),
         "axis_convention": getattr(args, "axis_convention", "legacy"),
         "fit_override": getattr(args, "fit", None),
         "grv_override": getattr(args, "grooves", None),

@@ -159,7 +159,7 @@ class BaseReferenceLibrary:
         self.convention = convention
 
     @classmethod
-    def load(cls, convention: str = "legacy", path: Optional[Path | str] = None) -> "BaseReferenceLibrary":
+    def load(cls, convention: str = "standard", path: Optional[Path | str] = None) -> "BaseReferenceLibrary":
         name = convention.strip().lower().replace("-", "_")
         if name in {"legacy"}:
             return cls({}, "setup.f hardcoded bref", "legacy")

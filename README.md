@@ -63,10 +63,10 @@ Analyze an existing Curves `.inp` file:
 pycurves your_input.inp --pdb your_structure.pdb
 ```
 
-Use Curves+/3DNA-style local frames:
+Use legacy Curves 5.3-style local frames when you need old-frame compatibility:
 
 ```bash
-pycurves test_data/1A1F_b_c.pdb --frame-convention standard --format json --output-file 1a1f_standard.json
+pycurves test_data/1A1F_b_c.pdb --frame-convention legacy --format json --output-file 1a1f_legacy.json
 ```
 
 ## Main Commands
@@ -86,7 +86,8 @@ available when those workflows are needed.
 
 - PDB/mmCIF loading with automatic topology inference for DNA/RNA structures.
 - Legacy Curves 5.3-style curvilinear-axis minimization in Python/JAX.
-- Standard Curves+/3DNA-compatible local frame mode.
+- Curves+/3DNA-compatible standard local frames by default, with legacy
+  Curves 5.3 base frames still available.
 - Non-canonical-aware frame selection for mismatches, Hoogsteen/reverse
   Hoogsteen contacts, and other edge-pair geometries.
 - Editable geometry markers in generated `.inp` files, for example `[cWW]`,
@@ -107,8 +108,8 @@ Common options:
 
 - `--format {curves,json,csv}`: choose Curves-style text, JSON, or CSV output.
 - `--output-file PATH`: write output to a file or CSV prefix.
-- `--frame-convention legacy|standard`: choose legacy Curves frames or
-  Curves+/3DNA-style standard frames.
+- `--frame-convention standard|legacy`: use Curves+/3DNA-style standard
+  frames by default, or choose legacy Curves 5.3-compatible frames.
 - `--axis-convention legacy|curvesplus`: choose the legacy pyCurves/JAX axis or
   the Curves+ smooth-axis path.
 - `--generate-inp-only` / `--inp-only`: infer `.inp` files and exit before
@@ -124,8 +125,9 @@ Common options:
 
 pyCurves detects base-pair identity, interacting edges, and cis/trans orientation
 so that the right local frames and strand-direction signs can be used in shape
-calculations. Canonical Watson-Crick pairs keep the canonical legacy or standard
-frames. Non-canonical pairs use contact-geometry frames only when the observed
+calculations. Canonical Watson-Crick pairs keep the selected canonical frame
+convention; by default this is the Curves+/3DNA-compatible standard frame.
+Non-canonical pairs use contact-geometry frames only when the observed
 edge/contact evidence is strong enough.
 
 Generated `.inp` files can carry editable geometry tags such as `[cWW]`,
@@ -283,7 +285,7 @@ pyCurves geometry.
 ```python
 from pycurves_lib.curves_wrapper import CurvesWrapper
 
-runner = CurvesWrapper.from_file("test_data/1A1F_b_c.pdb", frame_convention="standard")
+runner = CurvesWrapper.from_file("test_data/1A1F_b_c.pdb")
 runner.analyze()
 json_text = runner.output(fmt="json")
 ```

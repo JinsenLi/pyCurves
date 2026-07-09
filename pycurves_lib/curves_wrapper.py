@@ -34,7 +34,7 @@ class CurvesWrapper:
         inpfile: Optional[str] = None,
         output_dir: str = ".",
         continuous_strands: bool = False,
-        frame_convention: str = "legacy",
+        frame_convention: str = "standard",
         axis_convention: str = "legacy",
         fit_override: Optional[bool] = None,
         grv_override: Optional[bool] = None,
@@ -80,7 +80,7 @@ class CurvesWrapper:
         path: str,
         output_dir: str = ".",
         continuous_strands: bool = False,
-        frame_convention: str = "legacy",
+        frame_convention: str = "standard",
         axis_convention: str = "legacy",
     ):
         suffix = Path(path).suffix.lower()
@@ -340,7 +340,7 @@ class CurvesWrapper:
 
     @staticmethod
     def _normalize_frame_convention(value: str) -> str:
-        normalized = str(value or "legacy").strip().lower().replace("-", "_")
+        normalized = str(value or "standard").strip().lower().replace("-", "_")
         if normalized in {"legacy"}:
             return "legacy"
         if normalized in {"standard", "curves_plus", "curves+", "curvesplus", "x3dna", "3dna"}:
