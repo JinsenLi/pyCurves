@@ -1,8 +1,0 @@
-process_dna
-pycurves
-pycurves_lib
-pycurves_md
-pycurves_md_batch
-pycurves_md_plot
-pycurves_pymol
-pycurves_viewer
