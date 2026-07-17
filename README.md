@@ -84,7 +84,8 @@ available when those workflows are needed.
 
 ## What pyCurves Adds
 
-- PDB/mmCIF loading with automatic topology inference for DNA/RNA structures.
+- Gemmi-backed PDB/mmCIF loading with automatic topology inference for DNA/RNA
+  structures and a legacy fixed-column fallback for PDB files Gemmi cannot read.
 - Legacy Curves 5.3-style curvilinear-axis minimization in Python/JAX.
 - Curves+/3DNA-compatible standard local frames by default, with legacy
   Curves 5.3 base frames still available.

@@ -1,7 +1,14 @@
 import gzip
+from typing import TYPE_CHECKING
+import warnings
+
 import gemmi
 import numpy as np
 from pycurves_lib.data.modified_bases import is_known_modified_base, parent_base_name
+
+if TYPE_CHECKING:
+    from pycurves_lib.core.curves_dataclasses import CurvesContext
+
 
 class MolecularLoader:
     """
@@ -77,8 +84,59 @@ class MolecularLoader:
 
     @staticmethod
     def _read_pdb(file_path: str, context: 'CurvesContext'):
+        """Read PDB with Gemmi, falling back to the legacy fixed-column parser."""
+        try:
+            MolecularLoader._read_pdb_gemmi(file_path, context)
+        except (OSError, RuntimeError, ValueError) as exc:
+            warnings.warn(
+                f"Gemmi could not read PDB file {file_path!r}; using the legacy "
+                f"fixed-column parser ({exc}).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            MolecularLoader._read_pdb_legacy(file_path, context)
+
+    @staticmethod
+    def _read_pdb_gemmi(file_path: str, context: 'CurvesContext'):
+        """Parse the first PDB model through Gemmi."""
+        structure = gemmi.read_structure(file_path)
+        if len(structure) == 0:
+            raise ValueError("the file contains no structural models")
+
+        atoms_data = MolecularLoader._gemmi_first_model_atoms(structure)
+        atoms_data = MolecularLoader._filter_unfit_modified_residues(atoms_data)
+        if not atoms_data:
+            raise ValueError("the first model contains no supported atom records")
+
+        crystal_cell = None
+        spacegroup_hm = ""
+        if structure.cell.is_crystal():
+            crystal_cell = MolecularLoader._gemmi_cell_tuple(structure)
+            spacegroup_hm = structure.spacegroup_hm
+
+        source_base_pairs = []
+        atoms_data, source_base_pairs = MolecularLoader._append_detected_crystal_mates(
+            atoms_data,
+            source_base_pairs,
+            crystal_cell,
+            spacegroup_hm,
+        )
+
+        info = dict(structure.info)
+        title = MolecularLoader._clean_title(info.get("_struct.title"))
+        MolecularLoader._populate_molecule(
+            context,
+            atoms_data,
+            title=title,
+            crystal_cell=crystal_cell,
+            spacegroup_hm=spacegroup_hm,
+            source_base_pairs=source_base_pairs,
+        )
+
+    @staticmethod
+    def _read_pdb_legacy(file_path: str, context: 'CurvesContext'):
         """
-        Parse PDB ATOM records using the fixed-column layout.
+        Parse PDB ATOM records using the legacy fixed-column layout.
 
         Curves reads the coordinate file as a flat atom stream and reports all
         ATOM records, including protein atoms that are not part of the DNA
@@ -146,19 +204,14 @@ class MolecularLoader:
             spacegroup_hm,
         )
 
-        context.molecule.mcode = title
-        context.molecule.crystal_cell = crystal_cell
-        context.molecule.spacegroup_hm = spacegroup_hm
-
-        # Populate MolecularStructure
-        n = len(atoms_data)
-        context.molecule.kam = n
-        context.molecule.atom_names = np.array([a['name'] for a in atoms_data])
-        context.molecule.coordinates = np.array([a['pos'] for a in atoms_data])
-        context.molecule.residue_names = np.array([a['res_name'] for a in atoms_data])
-        context.molecule.residue_ids = np.array([a['res_id'] for a in atoms_data])
-        context.molecule.chain_ids = np.array([a['chain_id'] for a in atoms_data])
-        context.molecule.source_base_pairs = source_base_pairs
+        MolecularLoader._populate_molecule(
+            context,
+            atoms_data,
+            title=title,
+            crystal_cell=crystal_cell,
+            spacegroup_hm=spacegroup_hm,
+            source_base_pairs=source_base_pairs,
+        )
 
     @staticmethod
     def _read_cif(file_path: str, context: 'CurvesContext'):
@@ -170,29 +223,11 @@ class MolecularLoader:
             raise ValueError(f"Empty CIF file: {file_path}")
 
         block = doc[-1]
-        title = block.find_value('_struct.title')
-        if title:
-            title = title.strip(' \'"\n\r')
-        else:
-            title = "No Title"
+        title = MolecularLoader._clean_title(block.find_value('_struct.title'))
 
         st = gemmi.make_structure_from_block(block)
 
-        atoms_data = []
-        if len(st) > 0:
-            for chain in st[0]:  # Process only the first model
-                for res in chain:
-                    if res.het_flag == "H" and not is_known_modified_base(res.name):
-                        continue
-                    for atom in res:
-                        atoms_data.append({
-                            'name': atom.name,
-                            'res_name': res.name,
-                            'chain_id': chain.name,
-                            'res_id': res.seqid.num,
-                            'pos': [atom.pos.x, atom.pos.y, atom.pos.z],
-                            'het_flag': res.het_flag,
-                        })
+        atoms_data = MolecularLoader._gemmi_first_model_atoms(st)
 
         atoms_data = MolecularLoader._filter_unfit_modified_residues(atoms_data)
         source_base_pairs = MolecularLoader._read_cif_base_pair_annotations(block)
@@ -203,20 +238,68 @@ class MolecularLoader:
             block,
         )
 
-        context.molecule.mcode = title
-        context.molecule.crystal_cell = (
-            st.cell.a, st.cell.b, st.cell.c, st.cell.alpha, st.cell.beta, st.cell.gamma
-        ) if len(st) > 0 else None
-        context.molecule.spacegroup_hm = st.spacegroup_hm if len(st) > 0 else ""
+        MolecularLoader._populate_molecule(
+            context,
+            atoms_data,
+            title=title,
+            crystal_cell=MolecularLoader._gemmi_cell_tuple(st) if len(st) > 0 else None,
+            spacegroup_hm=st.spacegroup_hm if len(st) > 0 else "",
+            source_base_pairs=source_base_pairs,
+        )
 
-        n = len(atoms_data)
-        context.molecule.kam = n
-        context.molecule.atom_names = np.array([a['name'] for a in atoms_data])
-        context.molecule.coordinates = np.array([a['pos'] for a in atoms_data])
-        context.molecule.residue_names = np.array([a['res_name'] for a in atoms_data])
-        context.molecule.residue_ids = np.array([a['res_id'] for a in atoms_data])
-        context.molecule.chain_ids = np.array([a['chain_id'] for a in atoms_data])
-        context.molecule.source_base_pairs = source_base_pairs
+    @staticmethod
+    def _gemmi_first_model_atoms(structure):
+        """Return the Curves atom stream from the first Gemmi model."""
+        atoms_data = []
+        if len(structure) == 0:
+            return atoms_data
+
+        for chain in structure[0]:
+            for residue in chain:
+                if residue.het_flag != "A" and not is_known_modified_base(residue.name):
+                    continue
+                for atom in residue:
+                    atoms_data.append({
+                        "name": atom.name,
+                        "res_name": residue.name,
+                        "chain_id": chain.name,
+                        "res_id": residue.seqid.num,
+                        "pos": [atom.pos.x, atom.pos.y, atom.pos.z],
+                        "het_flag": residue.het_flag,
+                    })
+        return atoms_data
+
+    @staticmethod
+    def _gemmi_cell_tuple(structure):
+        cell = structure.cell
+        return cell.a, cell.b, cell.c, cell.alpha, cell.beta, cell.gamma
+
+    @staticmethod
+    def _clean_title(value):
+        title = str(value or "").strip(' \'"\n\r')
+        return title or "No Title"
+
+    @staticmethod
+    def _populate_molecule(
+        context,
+        atoms_data,
+        *,
+        title,
+        crystal_cell,
+        spacegroup_hm,
+        source_base_pairs,
+    ):
+        molecule = context.molecule
+        molecule.mcode = title
+        molecule.crystal_cell = crystal_cell
+        molecule.spacegroup_hm = spacegroup_hm
+        molecule.kam = len(atoms_data)
+        molecule.atom_names = np.array([atom["name"] for atom in atoms_data])
+        molecule.coordinates = np.array([atom["pos"] for atom in atoms_data])
+        molecule.residue_names = np.array([atom["res_name"] for atom in atoms_data])
+        molecule.residue_ids = np.array([atom["res_id"] for atom in atoms_data])
+        molecule.chain_ids = np.array([atom["chain_id"] for atom in atoms_data])
+        molecule.source_base_pairs = source_base_pairs
 
     @staticmethod
     def _filter_unfit_modified_residues(atoms_data):
@@ -862,13 +945,19 @@ class MolecularLoader:
                 indices['v1_ref'] = i
 
             if is_purine:
-                if name == 'N9': indices['base_origin_ref'] = i
-                if name == 'C4': indices['v2_ref'] = i
-                if name == 'C8': indices['v3_ref'] = i
+                if name == 'N9':
+                    indices['base_origin_ref'] = i
+                if name == 'C4':
+                    indices['v2_ref'] = i
+                if name == 'C8':
+                    indices['v3_ref'] = i
             else:
-                if name == 'N1': indices['base_origin_ref'] = i
-                if name == 'C2': indices['v2_ref'] = i
-                if name == 'C6': indices['v3_ref'] = i
+                if name == 'N1':
+                    indices['base_origin_ref'] = i
+                if name == 'C2':
+                    indices['v2_ref'] = i
+                if name == 'C6':
+                    indices['v3_ref'] = i
 
         if len(indices) < 4:
             return None
