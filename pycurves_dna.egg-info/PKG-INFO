@@ -1,3 +1,31 @@
+Metadata-Version: 2.4
+Name: pycurves-dna
+Version: 0.1.0
+Summary: Python implementation and extension of Curves-style DNA/RNA helical analysis.
+Author: pyCurves contributors
+Keywords: DNA,RNA,helical parameters,Curves,Curves+,3DNA
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: gemmi>=0.6
+Requires-Dist: jax>=0.4
+Requires-Dist: networkx>=3.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: pandas>=2.0
+Requires-Dist: scipy>=1.10
+Requires-Dist: tqdm>=4.65
+Provides-Extra: all
+Requires-Dist: MDAnalysis>=2.6; extra == "all"
+Requires-Dist: mdtraj>=1.9; extra == "all"
+Requires-Dist: numba>=0.59; extra == "all"
+Requires-Dist: ijson>=3.2; extra == "all"
+Requires-Dist: matplotlib>=3.7; extra == "all"
+Requires-Dist: python-dateutil>=2.8; extra == "all"
+Requires-Dist: biopython>=1.81; extra == "all"
+Provides-Extra: dev
+Requires-Dist: build>=1.0; extra == "dev"
+Dynamic: license-file
+
 # pyCurves
 
 pyCurves is a Python implementation and extension of Curves-style nucleic acid
@@ -117,14 +145,9 @@ Common options:
 - `--continuous-strands`: treat connected split-chain helices as one biological
   helix when possible.
 - `--fit`, `--grooves`, `--mini`, `--comb`, and `--ends`: override inferred
-  analysis flags. Each also accepts the `--no-*` form. When neither mini option
-  is given, the `mini` value in the `.inp` file is used.
+  analysis flags. Each also accepts the `--no-*` form.
 - `--no-annotations`: suppress the pyCurves annotation report.
 - `--visualization`: include geometry needed by `pycurves-viewer` in JSON.
-
-In legacy-axis mode, `mini=.f.` or `--no-mini` constructs the axis once from
-the input XYTP values and runs the full downstream parameter calculation
-without BFGS minimization.
 
 ## Non-Canonical Pairing
 

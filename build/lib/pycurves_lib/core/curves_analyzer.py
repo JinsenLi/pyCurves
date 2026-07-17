@@ -603,9 +603,7 @@ class HelicalOptimizer:
         """
         """
         ctx = self.ctx
-        p = ctx.params
         nux = ctx.n_levels
-        reference_frames = self._axis_reference_frames()
         
         for nl in range(ctx.n_strands):
             ist = 1 if ctx.cfg.comb else ctx.ng[nl]
@@ -617,19 +615,16 @@ class HelicalOptimizer:
                 self.uho[i, 2, nl] = float(ctx.idr[nl]) # uho(i,3,nl)=idr(nl) 
                 
                 nn = nl
-                if ctx.li[i, nl] < 0:
-                    nn = self.iact[i] - 1
-
-                res_z = reference_frames[nn, i, 3, 2]
+                if ctx.li[i-1, nl] < 0:
+                    nn = self.iact[i]
+                
+                res_z = ctx.base_frames.rez[nn, i, 3]
                 
                 self.hho[i, 0, nl] = 0.0
                 self.hho[i, 1, nl] = 0.0
-                self.hho[i, 2, nl] = res_z # hho(i,3,nl)=rez(i,4,nn)
-
+                self.hho[i, 2, nl] = res_z # hho(i,3,nl)=rez(i,4,nn) 
+                
                 self.oz[i] = res_z
-                if ctx.cfg.comb and nl == 0:
-                    p.ux[i] = self.uho[i, :, nl]
-                    p.ox[i] = self.hho[i, :, nl]
 
     def _prepare_before_analy(self):
         """
@@ -725,20 +720,13 @@ class HelicalOptimizer:
         """Fortran-compatible implementation."""
         self._prepare_before_analy()
         self.initial_origins = self._axis_reference_frames()[0, :, 3].copy()
+        #print(self.ctx.params.helical)
+        #first_sum = self._calc_physics_logic()
+        #self._compute_derivs() 
+        #self._compute_grads_logic()
         if mini:
             self.minimise()
-        elif not self.ctx.cfg.zaxe:
-            self.evaluate_initial_axis()
-        if not self.ctx.cfg.zaxe:
-            self.saveparams()
-
-    def evaluate_initial_axis(self):
-        """Construct the configured axis once without running minimization.
-
-        The base class has no legacy forward engine; Curves+ builds its axis in
-        ``HelicalCalculator``. The JAX legacy optimizer overrides this hook.
-        """
-        return None
+        self.saveparams()
 
     def saveparams(self):
         '''
@@ -867,6 +855,7 @@ class HelicalOptimizer:
 
     def _build_min_spec(self):
         ctx = self.ctx
+        p = ctx.params
         cfg = ctx.cfg
 
         comb = bool(getattr(cfg, "comb", False))
@@ -915,10 +904,6 @@ class HelicalOptimizer:
     def _pack_min_vars(self):
         p = self.ctx.params
         x = np.zeros(len(self._min_spec), dtype=float)
-        for m, (i, nch, col, is_angle) in enumerate(self._min_spec):
-            value = float(p.helical[nch, i, col])
-            # _jax_pack_helical converts angular optimizer variables from
-            # radians to the degree-valued helical work array. Keep packing and
-            # unpacking exact for nonzero .inp values and MD warm starts.
-            x[m] = value * self.cdr if is_angle else value
+        for m, (i, nch, col, _) in enumerate(self._min_spec):
+            x[m] = float(p.helical[nch, i, col])
         return x / self._min_scale

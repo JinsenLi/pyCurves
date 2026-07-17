@@ -230,6 +230,7 @@ def _compiled_jax_objective_and_grad(z, state: JAXOptState, cdr: float, nst: int
             r2 = state.j_frames[no, step_idx, :3, :]
             ux_prev = ux[step_idx - 1] if comb else ux[step_idx - 1, no, :]
             ux_curr = ux[step_idx] if comb else ux[step_idx, no, :]
+            sx_curr = sx[step_idx] if comb else sx[step_idx, no, :]
 
             d1_dyn = jnp.einsum("ijc,ic->ij", r1, ux_prev)
             c1_dyn = jnp.einsum("ijc,ic->ij", r1, bx[step_idx - 1, no, :])
@@ -278,15 +279,6 @@ def _compiled_jax_objective_and_grad(z, state: JAXOptState, cdr: float, nst: int
 
 class HelicalOptimizerJAX(HelicalOptimizer):
     """JAX-backed helical-axis optimizer."""
-
-    def evaluate_initial_axis(self):
-        """Evaluate configured helical parameters once for ``mini=.f.``."""
-        self._build_min_spec()
-        self.enable_jax_mode()
-        z0 = self._pack_min_vars()
-        f0, _ = self._evaluate(z0.copy(), log=False)
-        self.prev_sum = float(f0)
-        return z0
 
     def enable_jax_mode(self):
         p = self.ctx.params

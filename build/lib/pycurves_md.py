@@ -18,6 +18,7 @@ from pycurves_lib.curves_wrapper import CurvesWrapper
 from pycurves_lib.cli.pycurves_cli_options import (
     add_pycurves_analysis_options,
     pycurves_runner_kwargs,
+    resolved_mini,
 )
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 from pycurves_lib.md.trajectory_statistics import (
@@ -88,7 +89,7 @@ class MDTrajectoryAnalyzer:
         frame_selector,
         selection: Dict,
         mode: str = "summary",
-        mini: Optional[bool] = None,
+        mini: bool = True,
         verbose: bool = False,
         warm_start: bool = True,
         axis_continuity: bool = True,
@@ -99,7 +100,6 @@ class MDTrajectoryAnalyzer:
         frame_payloads = []
         table_records: Dict[str, List[Dict]] = {}
         processed = 0
-        effective_mini = False
 
         prev_helical = None
         axis_sign_reference = None
@@ -114,9 +114,8 @@ class MDTrajectoryAnalyzer:
                 prev_opt_helical=prev_helical if warm_start else None,
                 axis_sign_reference=axis_sign_reference if axis_continuity else None,
             )
-            effective_mini = bool(runner.ctx.cfg.mini)
 
-            if warm_start and effective_mini and hasattr(runner, 'ctx') and hasattr(runner.ctx, 'params') and hasattr(runner.ctx.params, 'helical'):
+            if warm_start and mini and hasattr(runner, 'ctx') and hasattr(runner.ctx, 'params') and hasattr(runner.ctx.params, 'helical'):
                 prev_helical = runner.ctx.params.helical.copy()
             axis_direction_signs = []
             if hasattr(runner, "calc") and hasattr(runner.calc, "axis_direction_sign"):
@@ -161,7 +160,7 @@ class MDTrajectoryAnalyzer:
                 "continuous_strands": self.continuous_strands,
                 "fit": self.fit_override,
                 "grooves": self.grv_override,
-                "mini": effective_mini,
+                "mini": False if self.axis_convention == "curvesplus" else (self.mini_override if self.mini_override is not None else mini),
                 "comb": self.comb_override,
                 "ends": self.ends_override,
                 "axis_convention": self.axis_convention,
@@ -169,7 +168,7 @@ class MDTrajectoryAnalyzer:
             "selection": {
                 **selection,
                 "processed_frames": processed,
-                "warm_start": bool(warm_start and effective_mini),
+                "warm_start": bool(warm_start),
                 "axis_continuity": bool(axis_continuity),
             },
             "frame_convention": {
@@ -469,6 +468,14 @@ def analyze_trajectory(
     if step <= 0:
         raise ValueError("step must be positive")
 
+    _, normalized_axis = CurvesWrapper.normalize_conventions(frame_convention, axis_convention)
+    effective_mini = True if mini is None else bool(mini)
+    if normalized_axis != "curvesplus" and not effective_mini:
+        raise ValueError(
+            "mini=False is not supported for trajectory analysis yet; downstream axis, bend, "
+            "and groove parameters require the fitted helical axis."
+        )
+
     frame_selector, selection = make_frame_selector(frames, start, stop, step)
     analyzer = MDTrajectoryAnalyzer(
         topology_file=topology_file,
@@ -489,7 +496,7 @@ def analyze_trajectory(
         frame_selector=frame_selector,
         selection=selection,
         mode=mode,
-        mini=mini,
+        mini=effective_mini,
         verbose=verbose,
         warm_start=warm_start,
         axis_continuity=axis_continuity,
@@ -522,6 +529,12 @@ def main() -> None:
     )
     parser.add_argument("--verbose", action="store_true", help="Print per-frame pyCurves logs.")
     args = parser.parse_args()
+    mini = resolved_mini(args, default=True)
+    if args.axis_convention != "curvesplus" and not mini:
+        raise SystemExit(
+            "--no-mini is not supported for trajectory analysis yet; downstream axis, bend, and groove "
+            "parameters require the fitted helical axis."
+        )
 
     frame_selector, selection = make_frame_selector(args.frames, args.start, args.stop, args.step)
     analyzer = MDTrajectoryAnalyzer(
@@ -537,7 +550,7 @@ def main() -> None:
             frame_selector=frame_selector,
             selection=selection,
             mode=args.mode,
-            mini=args.mini,
+            mini=mini,
             verbose=args.verbose,
             warm_start=not args.no_warm_start,
             axis_continuity=not args.no_axis_continuity,
@@ -560,4 +573,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 

@@ -106,7 +106,7 @@ class CurvesWrapper:
         self,
         inpfile: Optional[str] = None,
         pdbfile: Optional[str] = None,
-        mini: Optional[bool] = None,
+        mini: bool = True,
         verbose: bool = False,
         continuous_strands: Optional[bool] = None,
         frame_convention: Optional[str] = None,
@@ -124,12 +124,14 @@ class CurvesWrapper:
             next_frame_convention,
             next_axis_convention,
         )
+        if self.mini_override is not None:
+            mini = self.mini_override
+
         if self.inpfile is None:
             self.generated_inpfiles = self.generate_inp(pdbfile=self.pdbfile, output_dir=self.output_dir, continuous_strands=self.continuous_strands)
             self.inpfile = self.generated_inpfiles[0]
 
-        mini_override = self.mini_override if self.mini_override is not None else mini
-        self.cfg = self._load_config(mini_override=mini_override)
+        self.cfg = self._load_config()
 
         if self.pdbfile is None:
             self.pdbfile = self._pdbfile_from_config(self.cfg) or self._pdbfile_from_inp(self.inpfile)
@@ -139,13 +141,13 @@ class CurvesWrapper:
         self.ctx = CurvesContext(self.cfg)
         MolecularLoader.load(self.pdbfile, self.ctx)
 
-        return self._analyze_loaded_context(verbose=verbose)
+        return self._analyze_loaded_context(mini=mini, verbose=verbose)
 
     def analyze_molecule(
         self,
         molecule: MolecularStructure,
         inpfile: Optional[str] = None,
-        mini: Optional[bool] = None,
+        mini: bool = True,
         verbose: bool = False,
         prev_opt_helical: Optional[np.ndarray] = None,
         axis_sign_reference: Optional[np.ndarray] = None,
@@ -157,14 +159,16 @@ class CurvesWrapper:
         """
         if inpfile is not None:
             self.inpfile = inpfile
+        if self.mini_override is not None:
+            mini = self.mini_override
         if self.inpfile is None:
             raise ValueError("analyze_molecule requires an existing Curves .inp file.")
 
-        mini_override = self.mini_override if self.mini_override is not None else mini
-        self.cfg = self._load_config(mini_override=mini_override)
+        self.cfg = self._load_config()
         self.ctx = CurvesContext(self.cfg)
         self.ctx.molecule = molecule
         return self._analyze_loaded_context(
+            mini=mini,
             verbose=verbose,
             prev_opt_helical=prev_opt_helical,
             axis_sign_reference=axis_sign_reference,
@@ -172,18 +176,19 @@ class CurvesWrapper:
 
     def _analyze_loaded_context(
         self,
+        mini: bool = True,
         verbose: bool = False,
         prev_opt_helical: Optional[np.ndarray] = None,
         axis_sign_reference: Optional[np.ndarray] = None,
     ):
+        self._validate_supported_legacy_options(mini=mini)
         log_parts = []
         curvesplus_axis = str(getattr(self.ctx.cfg, "axis_convention", self.axis_convention)).lower() == "curvesplus"
         if curvesplus_axis:
             # Curves+ axis mode is derived from standard base-pair frames and
             # smooth.f-style axis construction, not the legacy minimizer.
+            mini = False
             self.ctx.cfg.mini = False
-        mini = bool(self.ctx.cfg.mini)
-        self._validate_supported_legacy_options(mini=mini)
 
         reference_library = self._reference_library(getattr(self.ctx.cfg, "frame_convention", self.frame_convention))
         self.ctx.base_reference_library = reference_library
@@ -195,18 +200,16 @@ class CurvesWrapper:
         self.bak = BackboneAnalyzer()
         log_parts.append(self._capture_call(lambda: self.bak.analyze(self.ctx), echo=verbose))
 
+        if prev_opt_helical is not None:
+            self.ctx.params.helical = prev_opt_helical.copy()
         if axis_sign_reference is not None:
             self.ctx.axis_direction_sign_reference = np.asarray(axis_sign_reference, dtype=int).copy()
 
-        if curvesplus_axis or self.ctx.cfg.zaxe:
-            self.opt = HelicalOptimizer(self.ctx)
-        else:
+        if mini:
             from pycurves_lib.core.curves_optimizer_jax import HelicalOptimizerJAX
             self.opt = HelicalOptimizerJAX(self.ctx)
-        if prev_opt_helical is not None:
-            # HelicalOptimizer.prepare() seeds XYTP values during construction.
-            # Apply trajectory warm starts after that initialization boundary.
-            self.ctx.params.helical = prev_opt_helical.copy()
+        else:
+            self.opt = HelicalOptimizer(self.ctx)
         log_parts.append(self._capture_call(lambda: self.opt.print_fortran_setup_report(self.ctx), echo=verbose))
         log_parts.append(self._capture_call(lambda: self.opt.run(mini=mini), echo=verbose))
         if mini:
@@ -220,32 +223,29 @@ class CurvesWrapper:
     def _validate_supported_legacy_options(self, mini: bool = True) -> None:
         """Reject legacy modes that would currently produce misleading results."""
         cfg = self.ctx.cfg
-        if mini and cfg.line:
+        if cfg.line:
             raise NotImplementedError(
                 "line=.t. is not implemented in the current JAX optimizer. "
                 "Curves 5.3 treats it as a distinct straight-axis minimization mode."
             )
-        if mini and cfg.dinu:
+        if cfg.dinu:
             raise NotImplementedError(
                 "dinu=.t. is not implemented in the current JAX optimizer. "
                 "Curves 5.3 changes the objective from adjacent-base to dinucleotide terms."
             )
 
-    def _load_config(self, mini_override: Optional[bool] = None) -> dict:
+    def _load_config(self) -> dict:
         """Return a fresh runtime config from a cached parse of the .inp file."""
         if self.inpfile is None:
             raise ValueError("No Curves input file is available.")
-        overrides = self._config_overrides()
-        if mini_override is not None:
-            overrides["mini"] = bool(mini_override)
         cache_key = (
             str(Path(self.inpfile).resolve()),
-            tuple(sorted(overrides.items())),
+            tuple(sorted(self._config_overrides().items())),
         )
         if cache_key != self._parsed_config_cache_key:
             self._parsed_config_cache = ConfigLoader.parse_inp(
                 self.inpfile,
-                config_overrides=overrides,
+                config_overrides=self._config_overrides(),
             )
             self._parsed_config_cache_key = cache_key
         return copy.deepcopy(self._parsed_config_cache)
@@ -267,7 +267,9 @@ class CurvesWrapper:
             "axis_convention": self.axis_convention,
         }
 
-    def run(self, output: bool = True, mini: Optional[bool] = None, verbose: bool = False, output_format: str = "curves", annotations: bool = True, visualization: bool = False):
+    def run(self, output: bool = True, mini: bool = True, verbose: bool = False, output_format: str = "curves", annotations: bool = True, visualization: bool = False):
+        if self.mini_override is not None:
+            mini = self.mini_override
         self.analyze(mini=mini, verbose=verbose)
         if output:
             self.output(fmt=output_format, annotations=annotations, visualization=visualization)

@@ -1,0 +1,7 @@
+[console_scripts]
+pycurves = pycurves:main
+pycurves-md = pycurves_md:main
+pycurves-md-batch = pycurves_md_batch:main
+pycurves-md-plot = pycurves_md_plot:main
+pycurves-pymol = pycurves_pymol:main
+pycurves-viewer = pycurves_viewer:main

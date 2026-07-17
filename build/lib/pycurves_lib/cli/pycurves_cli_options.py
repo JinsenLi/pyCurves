@@ -24,7 +24,7 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
         "--mini",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Override axis minimization (default: read from the .inp file).",
+        help="Override axis minimization (default: True).",
     )
     parser.add_argument(
         "--comb",
@@ -61,3 +61,9 @@ def pycurves_runner_kwargs(args) -> dict:
         "comb_override": getattr(args, "comb", None),
         "ends_override": getattr(args, "ends", None),
     }
+
+
+def resolved_mini(args, default: bool = True) -> bool:
+    """Resolve the BooleanOptionalAction mini value used by run-time calls."""
+    value = getattr(args, "mini", None)
+    return default if value is None else bool(value)
