@@ -600,6 +600,7 @@ class BatchCurvesPlusMDAnalyzer:
         coordinates: np.ndarray,
         frame_indices: Sequence[int],
         times: Sequence[Optional[float]],
+        accumulator=None,
     ) -> Tuple[List[Dict], Dict[str, List[Dict]]]:
         coordinates = np.asarray(coordinates, dtype=float)
         if coordinates.ndim != 3 or coordinates.shape[1:] != self.template_molecule.coordinates.shape:
@@ -632,6 +633,18 @@ class BatchCurvesPlusMDAnalyzer:
         if self.include_fit_quality:
             table_records["base_fit_quality"] = []
         local_inter_bp = self._local_inter_base_pair(pair_frames)
+        if accumulator is not None:
+            self._accumulate_precomputed_summary(
+                accumulator,
+                local_inter_base,
+                local_base_base,
+                local_inter_bp,
+                axis_tables,
+                backbone_torsions,
+                backbone_pucker,
+                rmsd,
+                groove_rows_by_frame,
+            )
 
         for batch_index, (frame_id, time_value) in enumerate(zip(frame_indices, times)):
             dataframes = {
@@ -681,7 +694,36 @@ class BatchCurvesPlusMDAnalyzer:
         axis_tables = self._curvesplus_axis_tables(frames, include_inter_bp=self.include_curvesplus_axis_steps)
         backbone_torsions, backbone_pucker = self._backbone_values(coordinates)
         local_inter_bp = self._local_inter_base_pair(pair_frames)
+        groove_rows_by_frame = (
+            compute_batch_grooves(self, coordinates, frames, axis_tables, local_inter_base)
+            if self.include_grooves else None
+        )
+        self._accumulate_precomputed_summary(
+            accumulator,
+            local_inter_base,
+            local_base_base,
+            local_inter_bp,
+            axis_tables,
+            backbone_torsions,
+            backbone_pucker,
+            rmsd,
+            groove_rows_by_frame,
+        )
+        return batch
 
+    def _accumulate_precomputed_summary(
+        self,
+        accumulator,
+        local_inter_base: np.ndarray,
+        local_base_base: np.ndarray,
+        local_inter_bp: np.ndarray,
+        axis_tables: Dict[str, np.ndarray],
+        backbone_torsions: np.ndarray,
+        backbone_pucker: np.ndarray,
+        rmsd: np.ndarray,
+        groove_rows_by_frame: Optional[List[List[Dict]]],
+    ) -> None:
+        batch = local_inter_base.shape[0]
         self._accumulate_local_inter_base_summary(accumulator, local_inter_base)
         self._accumulate_local_base_base_summary(accumulator, local_base_base, batch)
         self._accumulate_local_inter_base_pair_summary(accumulator, "local_inter_base_pair", local_inter_bp, batch)
@@ -689,12 +731,11 @@ class BatchCurvesPlusMDAnalyzer:
         self._accumulate_backbone_summary(accumulator, backbone_torsions, backbone_pucker)
         if self.include_grooves:
             accumulator.ensure_table("groove")
-            groove_rows_by_frame = compute_batch_grooves(self, coordinates, frames, axis_tables, local_inter_base)
             groove_names = (
                 "minor_width", "minor_depth", "minor_angle",
                 "major_width", "major_depth", "major_angle", "diameter",
             )
-            for rows in groove_rows_by_frame:
+            for rows in groove_rows_by_frame or ():
                 accumulator.add_rows("groove", rows, groove_names)
         if self.include_curvesplus_axis_steps:
             self._accumulate_local_inter_base_pair_summary(
@@ -705,7 +746,6 @@ class BatchCurvesPlusMDAnalyzer:
             )
         if self.include_fit_quality:
             self._accumulate_fit_quality_summary(accumulator, rmsd)
-        return batch
 
     def _accumulate_local_inter_base_summary(self, accumulator, values: np.ndarray) -> None:
         accumulator.ensure_table("local_inter_base")
@@ -1547,7 +1587,6 @@ class BatchCurvesPlusMDAnalyzer:
         if first is None or second is None:
             return "-"
         return f"{first[0]}{first[2]:3d}/{second[0]}{second[2]:3d}"
-
 
 
 

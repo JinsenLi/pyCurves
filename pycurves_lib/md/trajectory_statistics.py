@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
@@ -36,8 +37,258 @@ class SummaryStats(NamedTuple):
     stddev: Optional[float]
 
 
+@dataclass(slots=True)
+class LinearSummaryAccumulator:
+    """Mergeable population moments using the Chan-Welford algorithm."""
+
+    count: int = 0
+    mean: float = 0.0
+    m2: float = 0.0
+
+    def add(self, values) -> None:
+        vals = np.asarray(values, dtype=float).reshape(-1)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            return
+
+        batch_mean = float(np.mean(vals))
+        centered = vals - batch_mean
+        batch_m2 = float(np.dot(centered, centered))
+        self._merge_moments(int(vals.size), batch_mean, batch_m2)
+
+    def merge(self, other: "LinearSummaryAccumulator") -> None:
+        self._merge_moments(other.count, other.mean, other.m2)
+
+    def summary(self) -> SummaryStats:
+        if self.count == 0:
+            return SummaryStats(None, None)
+        variance = self.m2 / self.count
+        if abs(variance) < 1e-15:
+            variance = 0.0
+        return SummaryStats(float(self.mean), _stddev_from_variance(variance))
+
+    def _merge_moments(self, count: int, mean: float, m2: float) -> None:
+        if count <= 0:
+            return
+        if self.count == 0:
+            self.count = int(count)
+            self.mean = float(mean)
+            self.m2 = float(m2)
+            return
+
+        combined_count = self.count + count
+        delta = mean - self.mean
+        self.mean += delta * (count / combined_count)
+        self.m2 += m2 + delta * delta * self.count * count / combined_count
+        self.count = combined_count
+
+
+@dataclass(slots=True)
+class CircularDegreeSummaryAccumulator:
+    """Merge circular moments using compensated resultant-vector sums.
+
+    The standard deviation is ``sqrt(-2 log(R))`` in degrees, where ``R`` is
+    the mean resultant length. This definition needs only the two first
+    trigonometric moments and remains well behaved across the degree wrap.
+    """
+
+    count: int = 0
+    _sin_sum: float = 0.0
+    _sin_compensation: float = 0.0
+    _cos_sum: float = 0.0
+    _cos_compensation: float = 0.0
+
+    def add(self, values) -> None:
+        vals = np.asarray(values, dtype=float).reshape(-1)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            return
+
+        radians = np.radians(np.remainder(vals, 360.0))
+        self._add_sin(float(np.sum(np.sin(radians), dtype=np.float64)))
+        self._add_cos(float(np.sum(np.cos(radians), dtype=np.float64)))
+        self.count += int(vals.size)
+
+    def merge(self, other: "CircularDegreeSummaryAccumulator") -> None:
+        self._add_sin(other._sin_sum)
+        self._add_sin(other._sin_compensation)
+        self._add_cos(other._cos_sum)
+        self._add_cos(other._cos_compensation)
+        self.count += other.count
+
+    def summary(self) -> SummaryStats:
+        if self.count == 0:
+            return SummaryStats(None, None)
+
+        sin_sum = self._sin_sum + self._sin_compensation
+        cos_sum = self._cos_sum + self._cos_compensation
+        resultant = float(np.hypot(sin_sum, cos_sum))
+        mean_resultant_length = resultant / self.count
+        if mean_resultant_length <= 1e-12:
+            return SummaryStats(None, None)
+
+        mean = wrap_degrees_180(np.degrees(np.arctan2(sin_sum, cos_sum)))
+        mean_resultant_length = min(mean_resultant_length, 1.0)
+        if 1.0 - mean_resultant_length <= 8.0 * np.finfo(float).eps:
+            mean_resultant_length = 1.0
+        circular_variance = -2.0 * np.log(mean_resultant_length)
+        stddev = float(np.degrees(np.sqrt(max(float(circular_variance), 0.0))))
+        return SummaryStats(mean, stddev)
+
+    def _add_sin(self, value: float) -> None:
+        self._sin_sum, self._sin_compensation = _neumaier_add(
+            self._sin_sum,
+            self._sin_compensation,
+            value,
+        )
+
+    def _add_cos(self, value: float) -> None:
+        self._cos_sum, self._cos_compensation = _neumaier_add(
+            self._cos_sum,
+            self._cos_compensation,
+            value,
+        )
+
+
+def _neumaier_add(total: float, compensation: float, value: float) -> Tuple[float, float]:
+    updated = total + value
+    if abs(total) >= abs(value):
+        compensation += (total - updated) + value
+    else:
+        compensation += (value - updated) + total
+    return updated, compensation
+
+
 def is_circular_degree_column(column_name: str) -> bool:
     return str(column_name).lower() in CIRCULAR_DEGREE_COLUMNS
+
+
+class BatchSummaryAccumulator:
+    """Accumulate grouped trajectory statistics without materializing frames."""
+
+    def __init__(self) -> None:
+        self._tables: Dict[str, Dict[tuple, Dict]] = {}
+        self._population_tables: Dict[str, Dict[tuple, Dict]] = {}
+
+    def ensure_table(self, table_name: str) -> None:
+        self._tables.setdefault(table_name, {})
+
+    def add_population_counts(
+        self,
+        table_name: str,
+        metadata: Dict,
+        category_metadata: Dict,
+        count: int,
+        total_count: int,
+    ) -> None:
+        if total_count <= 0:
+            return
+        table = self._population_tables.setdefault(table_name, {})
+        row_metadata = dict(metadata)
+        row_metadata.update(category_metadata)
+        key = tuple(row_metadata.items())
+        group = table.get(key)
+        if group is None:
+            group = {"metadata": row_metadata, "count": 0, "total_count": 0}
+            table[key] = group
+        group["count"] += int(count)
+        group["total_count"] += int(total_count)
+
+    @staticmethod
+    def _new_stats(name: str):
+        if is_circular_degree_column(name):
+            return CircularDegreeSummaryAccumulator()
+        return LinearSummaryAccumulator()
+
+    def add_values(self, table_name: str, metadata: Dict, parameter_names, values) -> None:
+        self.ensure_table(table_name)
+        parameter_names = tuple(parameter_names)
+        arr = np.asarray(values, dtype=float)
+        if arr.ndim == 0:
+            arr = arr.reshape(1, 1)
+        elif arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        if arr.size == 0:
+            return
+        if arr.ndim != 2 or arr.shape[1] != len(parameter_names):
+            raise ValueError(
+                "Summary values must have one column per parameter name; "
+                f"got shape {arr.shape} for {len(parameter_names)} parameters."
+            )
+        row_count = int(arr.shape[0])
+        metadata = dict(metadata)
+        key = tuple(metadata.items())
+        group = self._tables[table_name].get(key)
+        if group is None:
+            group = {
+                "metadata": metadata,
+                "count": 0,
+                "stats": {
+                    name: self._new_stats(name)
+                    for name in parameter_names
+                },
+            }
+            self._tables[table_name][key] = group
+        group["count"] += row_count
+        for col_index, name in enumerate(parameter_names):
+            group["stats"][name].add(arr[:, col_index])
+
+    def add_rows(self, table_name: str, rows: List[Dict], numeric_names) -> None:
+        self.ensure_table(table_name)
+        numeric_names = tuple(numeric_names)
+        numeric_set = set(numeric_names)
+        for row in rows:
+            metadata = {
+                key: value
+                for key, value in row.items()
+                if key not in numeric_set and key not in {"frame", "time"}
+            }
+            key = tuple(metadata.items())
+            group = self._tables[table_name].get(key)
+            if group is None:
+                group = {
+                    "metadata": metadata,
+                    "count": 0,
+                    "stats": {
+                        name: self._new_stats(name)
+                        for name in numeric_names
+                    },
+                }
+                self._tables[table_name][key] = group
+            group["count"] += 1
+            for name in numeric_names:
+                value = row.get(name)
+                if value is not None:
+                    group["stats"][name].add(value)
+
+    def to_summary(self) -> Dict[str, List[Dict]]:
+        output: Dict[str, List[Dict]] = {}
+        for table_name, groups in self._tables.items():
+            rows = []
+            for group in groups.values():
+                out = dict(group["metadata"])
+                out["count"] = int(group["count"])
+                for name, stats in group["stats"].items():
+                    summary = stats.summary()
+                    out[f"{name}_mean"] = summary.mean
+                    out[f"{name}_stddev"] = summary.stddev
+                rows.append(out)
+            output[table_name] = rows
+
+        for table_name, groups in self._population_tables.items():
+            rows = []
+            for group in groups.values():
+                total_count = int(group["total_count"])
+                count = int(group["count"])
+                fraction = count / float(total_count) if total_count > 0 else 0.0
+                row = dict(group["metadata"])
+                row["count"] = count
+                row["total_count"] = total_count
+                row["fraction"] = float(fraction)
+                row["percent"] = float(100.0 * fraction)
+                rows.append(row)
+            output[table_name] = rows
+        return output
 
 
 def wrap_degrees_180(value: float) -> float:
@@ -57,15 +308,9 @@ def _stddev_from_variance(variance: Optional[float]) -> Optional[float]:
 
 
 def linear_summary(values: np.ndarray) -> SummaryStats:
-    vals = np.asarray(values, dtype=float)
-    vals = vals[np.isfinite(vals)]
-    if vals.size == 0:
-        return SummaryStats(None, None)
-    mean = float(np.mean(vals))
-    variance = float(np.var(vals))
-    if abs(variance) < 1e-15:
-        variance = 0.0
-    return SummaryStats(mean, _stddev_from_variance(variance))
+    accumulator = LinearSummaryAccumulator()
+    accumulator.add(values)
+    return accumulator.summary()
 
 
 def circular_degree_mean_from_sums(
@@ -76,29 +321,15 @@ def circular_degree_mean_from_sums(
     if count <= 0:
         return None
     resultant = float(np.hypot(sin_sum, cos_sum))
-    if resultant <= 1e-12:
+    if resultant / count <= 1e-12:
         return None
     return wrap_degrees_180(np.degrees(np.arctan2(sin_sum, cos_sum)))
 
 
 def circular_degree_summary(values: np.ndarray) -> SummaryStats:
-    vals = np.asarray(values, dtype=float)
-    vals = vals[np.isfinite(vals)]
-    if vals.size == 0:
-        return SummaryStats(None, None)
-    radians = np.radians(vals)
-    mean = circular_degree_mean_from_sums(
-        float(np.sum(np.sin(radians))),
-        float(np.sum(np.cos(radians))),
-        int(vals.size),
-    )
-    if mean is None:
-        return SummaryStats(None, None)
-    residuals = wrap_degrees_180_array(vals - mean)
-    variance = float(np.mean(residuals * residuals))
-    if abs(variance) < 1e-15:
-        variance = 0.0
-    return SummaryStats(mean, _stddev_from_variance(variance))
+    accumulator = CircularDegreeSummaryAccumulator()
+    accumulator.add(values)
+    return accumulator.summary()
 
 
 def sugar_pucker_counts(phase_values: Sequence[float]) -> Tuple[np.ndarray, int]:

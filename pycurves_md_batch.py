@@ -13,173 +13,9 @@ from tqdm import tqdm
 from pycurves_lib.io.curves_output import _to_jsonable
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 from pycurves_lib.md.trajectory_statistics import (
-    circular_degree_summary,
-    is_circular_degree_column,
+    BatchSummaryAccumulator,
 )
 from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
-
-
-class BatchSummaryAccumulator:
-    """Accumulate trajectory summary statistics without materializing frames."""
-
-    def __init__(self) -> None:
-        self._tables: Dict[str, Dict[tuple, Dict]] = {}
-        self._population_tables: Dict[str, Dict[tuple, Dict]] = {}
-
-    def ensure_table(self, table_name: str) -> None:
-        self._tables.setdefault(table_name, {})
-
-    def add_population_counts(
-        self,
-        table_name: str,
-        metadata: Dict,
-        category_metadata: Dict,
-        count: int,
-        total_count: int,
-    ) -> None:
-        if total_count <= 0:
-            return
-        table = self._population_tables.setdefault(table_name, {})
-        row_metadata = dict(metadata)
-        row_metadata.update(category_metadata)
-        key = tuple(row_metadata.items())
-        group = table.get(key)
-        if group is None:
-            group = {"metadata": row_metadata, "count": 0, "total_count": 0}
-            table[key] = group
-        group["count"] += int(count)
-        group["total_count"] += int(total_count)
-
-    @staticmethod
-    def _new_stats(name: str) -> Dict[str, object]:
-        circular = is_circular_degree_column(name)
-        return {
-            "valid": 0,
-            "sum": 0.0,
-            "sumsq": 0.0,
-            "values": [] if circular else None,
-            "circular": circular,
-        }
-
-    def add_values(self, table_name: str, metadata: Dict, parameter_names, values) -> None:
-        self.ensure_table(table_name)
-        arr = np.asarray(values, dtype=float)
-        if arr.ndim == 1:
-            arr = arr.reshape(-1, 1)
-        if arr.size == 0:
-            return
-        row_count = int(arr.shape[0])
-        metadata = dict(metadata)
-        key = tuple(metadata.items())
-        group = self._tables[table_name].get(key)
-        if group is None:
-            group = {
-                "metadata": metadata,
-                "count": 0,
-                "stats": {
-                    name: self._new_stats(name)
-                    for name in parameter_names
-                },
-            }
-            self._tables[table_name][key] = group
-        group["count"] += row_count
-        for col_index, name in enumerate(parameter_names):
-            column = arr[:, col_index]
-            finite = np.isfinite(column)
-            if not np.any(finite):
-                continue
-            vals = column[finite]
-            stats = group["stats"][name]
-            stats["valid"] += int(vals.size)
-            if stats["circular"]:
-                stats["values"].append(vals.astype(float, copy=True))
-            else:
-                stats["sum"] += float(np.sum(vals))
-                stats["sumsq"] += float(np.sum(vals * vals))
-
-    def add_rows(self, table_name: str, rows: List[Dict], numeric_names) -> None:
-        self.ensure_table(table_name)
-        numeric_names = tuple(numeric_names)
-        numeric_set = set(numeric_names)
-        for row in rows:
-            metadata = {
-                key: value
-                for key, value in row.items()
-                if key not in numeric_set and key not in {"frame", "time"}
-            }
-            key = tuple(metadata.items())
-            group = self._tables[table_name].get(key)
-            if group is None:
-                group = {
-                    "metadata": metadata,
-                    "count": 0,
-                    "stats": {
-                        name: self._new_stats(name)
-                        for name in numeric_names
-                    },
-                }
-                self._tables[table_name][key] = group
-            group["count"] += 1
-            for name in numeric_names:
-                value = row.get(name)
-                if value is None:
-                    continue
-                number = float(value)
-                if not np.isfinite(number):
-                    continue
-                stats = group["stats"][name]
-                stats["valid"] += 1
-                if stats["circular"]:
-                    stats["values"].append(float(number))
-                else:
-                    stats["sum"] += number
-                    stats["sumsq"] += number * number
-
-    def to_summary(self) -> Dict[str, List[Dict]]:
-        output: Dict[str, List[Dict]] = {}
-        for table_name, groups in self._tables.items():
-            rows = []
-            for group in groups.values():
-                out = dict(group["metadata"])
-                out["count"] = int(group["count"])
-                for name, stats in group["stats"].items():
-                    valid = int(stats["valid"])
-                    if valid == 0:
-                        out[f"{name}_mean"] = None
-                        out[f"{name}_stddev"] = None
-                    elif stats["circular"]:
-                        parts = stats["values"]
-                        if parts and isinstance(parts[0], np.ndarray):
-                            values = np.concatenate(parts)
-                        else:
-                            values = np.asarray(parts, dtype=float)
-                        summary = circular_degree_summary(values)
-                        out[f"{name}_mean"] = summary.mean
-                        out[f"{name}_stddev"] = summary.stddev
-                    else:
-                        mean = stats["sum"] / valid
-                        variance = stats["sumsq"] / valid - mean * mean
-                        if abs(variance) < 1e-15:
-                            variance = 0.0
-                        out[f"{name}_mean"] = float(mean)
-                        out[f"{name}_stddev"] = float(np.sqrt(max(float(variance), 0.0)))
-                rows.append(out)
-            output[table_name] = rows
-
-        for table_name, groups in self._population_tables.items():
-            rows = []
-            for group in groups.values():
-                total_count = int(group["total_count"])
-                count = int(group["count"])
-                fraction = count / float(total_count) if total_count > 0 else 0.0
-                row = dict(group["metadata"])
-                row["count"] = count
-                row["total_count"] = total_count
-                row["fraction"] = float(fraction)
-                row["percent"] = float(100.0 * fraction)
-                rows.append(row)
-            output[table_name] = rows
-        return output
 
 
 def _flush_batch(
@@ -189,7 +25,6 @@ def _flush_batch(
     times: List[Optional[float]],
     mode: str,
     frame_payloads: List[Dict],
-    table_records: Dict[str, List[Dict]],
     summary_accumulator: Optional[BatchSummaryAccumulator] = None,
 ) -> int:
     if not coordinates:
@@ -198,12 +33,14 @@ def _flush_batch(
     if mode == "summary" and summary_accumulator is not None:
         return analyzer.accumulate_batch_summary(batch_coordinates, frame_indices, times, summary_accumulator)
 
-    batch_frames, batch_tables = analyzer.analyze_batch(batch_coordinates, frame_indices, times)
+    batch_frames, _ = analyzer.analyze_batch(
+        batch_coordinates,
+        frame_indices,
+        times,
+        accumulator=summary_accumulator if mode == "both" else None,
+    )
     if mode in {"per-frame", "both"}:
         frame_payloads.extend(batch_frames)
-    if mode in {"summary", "both"}:
-        for name, rows in batch_tables.items():
-            table_records.setdefault(name, []).extend(rows)
     return len(coordinates)
 
 
@@ -256,8 +93,7 @@ def run_batch(args) -> Dict:
     )
 
     frame_payloads: List[Dict] = []
-    table_records: Dict[str, List[Dict]] = {}
-    summary_accumulator = BatchSummaryAccumulator() if args.mode == "summary" else None
+    summary_accumulator = BatchSummaryAccumulator() if args.mode in {"summary", "both"} else None
     coordinates: List[np.ndarray] = []
     frame_indices: List[int] = []
     times: List[Optional[float]] = []
@@ -276,7 +112,6 @@ def run_batch(args) -> Dict:
                 times,
                 args.mode,
                 frame_payloads,
-                table_records,
                 summary_accumulator,
             )
             coordinates.clear()
@@ -290,7 +125,6 @@ def run_batch(args) -> Dict:
         times,
         args.mode,
         frame_payloads,
-        table_records,
         summary_accumulator,
     )
     if processed == 0:
@@ -332,10 +166,8 @@ def run_batch(args) -> Dict:
     }
     if args.mode in {"per-frame", "both"}:
         payload["frames"] = frame_payloads
-    if args.mode == "summary":
+    if args.mode in {"summary", "both"}:
         payload["summary"] = summary_accumulator.to_summary() if summary_accumulator is not None else {}
-    elif args.mode == "both":
-        payload["summary"] = MDTrajectoryAnalyzer._summarize_tables(table_records)
     return payload
 
 
@@ -448,8 +280,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
 
 
 

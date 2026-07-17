@@ -160,8 +160,8 @@ pycurves-md topology.pdb trajectory.xtc --mode summary --frames 1000:5000:10 --o
 ```
 
 Summary tables report numeric columns as `*_mean` and `*_stddev`. Angular columns
-use circular statistics, so `*_stddev` is the Canal-style value to compare
-against reported `Sdev` columns.
+use a circular mean and the resultant-length standard deviation
+`sqrt(-2 log(R))`, where `R` is the mean resultant length, reported in degrees.
 
 Store both per-frame rows and summary statistics:
 
