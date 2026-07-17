@@ -71,10 +71,11 @@ class MolecularLoader:
             MolecularLoader._read_pdb(file_path, context)
         elif file_lower.endswith('.cif') or file_lower.endswith('.cif.gz'):
             MolecularLoader._read_cif(file_path, context)
-        elif file_lower.endswith('.mac'):
-            MolecularLoader._read_mac(file_path, context)
         else:
-            raise ValueError(f"Unknown geometry file type: {file_path}")
+            raise ValueError(
+                f"Unsupported geometry file type: {file_path}. "
+                "Use PDB, PDB.GZ, BRK, CIF, or CIF.GZ."
+            )
 
         # Post-processing equivalent to Fortran loops 10 and 12
         MolecularLoader._standardize_and_map(context)
@@ -856,22 +857,6 @@ class MolecularLoader:
     @staticmethod
     def _is_complementary(first: str, second: str) -> bool:
         return frozenset((first, second)) in MolecularLoader.PAIR_TYPES
-
-    @staticmethod
-    def _read_mac(file_path: str, context: 'CurvesContext'):
-        """
-        Parses the Curves-specific .MAC format [cite: 4-5].
-        """
-        with MolecularLoader._open_file(file_path) as f:
-            lines = [line for line in f if not line.startswith('#')]
-            # Read kam and kcen from header [cite: 4]
-            header = lines[0].split()
-            kam = int(header[0])
-            context.molecule.kam = kam
-
-            # Implementation of fixed-format read for MAC [cite: 5]
-            # (Simplified for demonstration)
-            pass
 
     @staticmethod
     def _find_subunits(context: 'CurvesContext'):
