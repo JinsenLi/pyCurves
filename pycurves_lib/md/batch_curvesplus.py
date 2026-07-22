@@ -1094,13 +1094,20 @@ class BatchCurvesPlusMDAnalyzer:
         current_levels = np.asarray(levels, dtype=int)
         previous = pair_frames[:, previous_levels]
         current = pair_frames[:, current_levels]
-        step = _step_aligned_values_batch(
+        step = _rigid_body_values_batch(
             previous[:, :, :3, :].reshape(-1, 3, 3),
             previous[:, :, 3, :].reshape(-1, 3),
             current[:, :, :3, :].reshape(-1, 3, 3),
             current[:, :, 3, :].reshape(-1, 3),
             self.degrees_per_radian,
+            translation_sign=1.0,
+            rotation_sign=1.0,
         ).reshape(batch, len(levels), 6)
+        delta = current[:, :, 3, :] - previous[:, :, 3, :]
+        invert = np.sum(delta * current[:, :, 2, :], axis=2) < 0.0
+        step[invert, 2] *= -1.0
+        step[invert, 5] *= -1.0
+        step[:, :, 3:] = _wrap_180(step[:, :, 3:])
         values[:, previous_levels, :] = step
         return values
 
@@ -1108,12 +1115,11 @@ class BatchCurvesPlusMDAnalyzer:
         ref = self._curvesplus_reference_frames(frames)
         upm = self._curvesplus_base_pair_frames(ref)
         uvw = self._curvesplus_smoothed_axis(ref, upm)
-        axis_upm = self._curvesplus_axis_parameter_frames(upm, uvw)
-        invert = self._curvesplus_inversion_flags(axis_upm)
-        bp_axis = self._curvesplus_bp_axis_values(axis_upm, uvw, invert)
+        invert = self._curvesplus_inversion_flags(upm)
+        bp_axis = self._curvesplus_bp_axis_values(upm, uvw, invert)
         tables = {"bp_axis": bp_axis, "axis_frames": uvw}
         if include_inter_bp:
-            tables["inter_bp"] = self._curvesplus_inter_base_pair(axis_upm, invert)
+            tables["inter_bp"] = self._curvesplus_inter_base_pair(upm, invert)
         return tables
 
     def _curvesplus_reference_frames(self, frames: np.ndarray) -> np.ndarray:
@@ -1238,9 +1244,6 @@ class BatchCurvesPlusMDAnalyzer:
         small = theta < 1e-10
         if np.any(~small):
             axis[~small] = rotvec[~small] / theta[~small, None]
-            flip = np.sum(axis[~small] * vector[~small], axis=1) < 0.0
-            idx = np.where(~small)[0]
-            axis[idx[flip]] *= -1.0
         if np.any(small):
             axis[small] = _unit(vector[small], first[small, 2, :])
         axial_distance = np.sum(axis * vector, axis=1, keepdims=True)
@@ -1308,26 +1311,28 @@ class BatchCurvesPlusMDAnalyzer:
             )[finite]
         return values
 
-    def _curvesplus_inter_base_pair(self, axis_upm: np.ndarray, invert: np.ndarray) -> np.ndarray:
-        batch = axis_upm.shape[0]
+    def _curvesplus_inter_base_pair(self, upm: np.ndarray, invert: np.ndarray) -> np.ndarray:
+        batch = upm.shape[0]
         values = np.full((batch, self.ctx.nux + 1, 6), np.nan, dtype=float)
         if self.ctx.nux < 2:
             return values
 
         previous_levels = np.arange(1, self.ctx.nux, dtype=int)
         current_levels = previous_levels + 1
-        previous = axis_upm[:, previous_levels]
-        current = axis_upm[:, current_levels]
+        previous = upm[:, previous_levels]
+        current = upm[:, current_levels]
         finite = np.all(np.isfinite(previous), axis=(2, 3)) & np.all(np.isfinite(current), axis=(2, 3))
         if not np.any(finite):
             return values
 
-        step = _step_aligned_values_batch(
+        step = _rigid_body_values_batch(
             previous[:, :, :3, :][finite],
             previous[:, :, 3, :][finite],
             current[:, :, :3, :][finite],
             current[:, :, 3, :][finite],
             self.degrees_per_radian,
+            translation_sign=1.0,
+            rotation_sign=1.0,
         )
         inv = invert[:, previous_levels][finite]
         step[inv, 2] *= -1.0

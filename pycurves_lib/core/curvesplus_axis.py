@@ -30,43 +30,31 @@ class CurvesPlusAxisMixin:
         ref = self._curvesplus_reference_frames()
         upm = self._curvesplus_base_pair_frames(ref)
         uvw = self._curvesplus_smoothed_axis(ref, upm)
-        axis_upm = self._curvesplus_axis_parameter_frames(upm, uvw)
-        invert = self._curvesplus_inversion_flags(axis_upm)
+        invert = self._curvesplus_inversion_flags(upm)
 
         nux = self.ctx.n_levels
         self.curvesplus_reference_frames = ref
         self.curvesplus_base_pair_frames = upm
-        self.curvesplus_axis_base_pair_frames = axis_upm
+        self.curvesplus_axis_base_pair_frames = upm.copy()
         self.curvesplus_axis_frames = uvw
         self.curvesplus_invert = invert
 
         self.curvesplus_bp_axis = np.full((nux + 1, 4), np.nan, dtype=float)
         for level in range(1, nux + 1):
-            self.curvesplus_bp_axis[level] = self._curvesplus_bp_axis_values(axis_upm[level], uvw[level], invert[level])
+            self.curvesplus_bp_axis[level] = self._curvesplus_bp_axis_values(upm[level], uvw[level], invert[level])
 
         self.curvesplus_inter_base_pair = np.full((nux + 1, 6), np.nan, dtype=float)
         for level in range(2, nux + 1):
             if not (
-                np.all(np.isfinite(axis_upm[level - 1]))
-                and np.all(np.isfinite(axis_upm[level]))
+                np.all(np.isfinite(upm[level - 1]))
+                and np.all(np.isfinite(upm[level]))
             ):
                 continue
-            previous_frame, current_frame = self.parameter_convention._step_aligned_frames(
-                self._frame_from_array(axis_upm[level - 1]),
-                self._frame_from_array(axis_upm[level]),
+            values = self.parameter_convention._curvesplus_step_values(
+                self._frame_from_array(upm[level - 1]),
+                self._frame_from_array(upm[level]),
                 self.cdr,
             )
-            values = self.parameter_convention._rigid_body_values(
-                previous_frame,
-                current_frame,
-                self.cdr,
-                translation_sign=1.0,
-                rotation_sign=1.0,
-            )
-            if invert[level - 1]:
-                values[2] = -values[2]
-                values[5] = -values[5]
-            values[3:] = [self._wrap_180(v) for v in values[3:]]
             self.curvesplus_inter_base_pair[level - 1] = values
 
     def _install_curvesplus_axis_for_groove(self):
@@ -291,8 +279,6 @@ class CurvesPlusAxisMixin:
             point = (first[3] + second[3]) / 2.0
             return axis, point
         axis = rotvec / theta
-        if np.dot(axis, vector) < 0.0:
-            axis = -axis
         axial_distance = np.dot(axis, vector)
         half_perp = (vector - axial_distance * axis) / 2.0
         point = (first[3] + second[3]) / 2.0 + np.cross(axis, half_perp) / math.tan(theta / 2.0)
