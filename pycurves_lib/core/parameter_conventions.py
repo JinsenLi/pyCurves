@@ -66,51 +66,73 @@ def build_axis_reference_frames(ctx):
     """Build the frame view consumed by the legacy global-axis optimizer.
 
     Noncanonical edge frames can be fit on a discontinuous in-plane branch.
-    Choose determinant-preserving sign equivalents so the legacy global-axis
-    optimizer sees continuous reference frames.
+    Choose determinant-preserving sign equivalents for those contact-geometry
+    frames only. Fitted canonical frames are fixed anchors: allowing an
+    adjusted contact frame to become the reference for the following residue
+    can propagate a sign branch across the rest of a strand.
     """
     p = ctx.params
     shape_frames = build_interaction_reference_frames(ctx)
     axis_frames = shape_frames.copy()
 
-    markers = getattr(ctx, "hoogsteen_markers", set()) or set()
-    annotations = getattr(ctx, "annotations", {}).get("base_pair_annotations", [])
-    has_contact_geometry = bool(getattr(ctx, "contact_geometry_frame_keys", set()))
-    has_hoogsteen = bool(markers) or any(bp.get("is_hoogsteen") for bp in annotations)
-    needs_continuity = has_contact_geometry or has_hoogsteen
-    ctx.axis_reference_uses_continuity = bool(needs_continuity)
-    if not needs_continuity:
+    contact_levels = {
+        (int(strand), int(level))
+        for strand, _partner, level in (getattr(ctx, "contact_geometry_frame_keys", set()) or set())
+        if 0 <= int(strand) < ctx.nst and 1 <= int(level) <= ctx.nux
+    }
+    ctx.axis_reference_uses_continuity = bool(contact_levels)
+    if not contact_levels:
         p.axis_frames = axis_frames
         ctx.axis_frame_adjustments = []
         return axis_frames
 
     adjustments = []
-    for strand in range(ctx.nst):
-        previous_axes = None
-        for level in range(0, ctx.nux + 2):
-            if level >= ctx.li.shape[0] or ctx.li[level, strand] < 0:
-                previous_axes = None
-                continue
-            current = shape_frames[strand, level]
-            if not np.all(np.isfinite(current)):
-                previous_axes = None
-                continue
+    for strand, level in sorted(contact_levels):
+        current = shape_frames[strand, level]
+        if ctx.li[level, strand] < 0 or not np.all(np.isfinite(current)):
+            continue
 
-            axes = current[:3].copy()
-            if previous_axes is not None:
-                candidates = [sign_flip @ axes for sign_flip in EQUIVALENT_AXIS_SIGN_FLIPS]
-                scores = [float(np.trace(previous_axes @ candidate.T)) for candidate in candidates]
-                best_index = int(np.argmax(scores))
-                axes = candidates[best_index]
-                axis_frames[strand, level, :3, :] = axes
-                if best_index != 0:
-                    adjustments.append((strand + 1, level))
+        anchors = _nearest_fitted_axis_anchors(
+            ctx,
+            shape_frames,
+            contact_levels,
+            strand,
+            level,
+        )
+        if not anchors:
+            continue
 
-            previous_axes = axes
+        axes = current[:3].copy()
+        candidates = [sign_flip @ axes for sign_flip in EQUIVALENT_AXIS_SIGN_FLIPS]
+        scores = [
+            sum(float(np.trace(anchor @ candidate.T)) for anchor in anchors)
+            for candidate in candidates
+        ]
+        best_index = int(np.argmax(scores))
+        axis_frames[strand, level, :3, :] = candidates[best_index]
+        if best_index != 0:
+            adjustments.append((strand + 1, level))
 
     p.axis_frames = axis_frames
     ctx.axis_frame_adjustments = adjustments
     return axis_frames
+
+
+def _nearest_fitted_axis_anchors(ctx, frames, contact_levels, strand: int, level: int):
+    """Return the nearest fixed frame on either side of a contact-frame run."""
+    anchors = []
+    for direction in (-1, 1):
+        neighbor = level + direction
+        while 1 <= neighbor <= ctx.nux:
+            if ctx.li[neighbor, strand] < 0:
+                break
+            if (strand, neighbor) not in contact_levels:
+                frame = frames[strand, neighbor]
+                if np.all(np.isfinite(frame)):
+                    anchors.append(frame[:3])
+                break
+            neighbor += direction
+    return anchors
 
 
 def _has_level(ctx, strand: int, level: int) -> bool:
