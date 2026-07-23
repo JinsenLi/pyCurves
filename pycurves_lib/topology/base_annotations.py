@@ -531,14 +531,11 @@ def _contact_geometry_for_pair(
     else:
         frame_mode = "fitted_fallback"
 
-    # Syn changes the LW-inferred local strand orientation, but not the axes of
-    # an ordinary fitted canonical base frame. Only noncanonical/contact-frame
-    # math uses the effective orientation to select the partner-frame branch.
-    frame_orientation = (
-        lw_default_strand_orientation
-        if frame_mode == "legacy_canonical"
-        else effective_local_orientation
-    )
+    # The syn-adjusted orientation describes how the LW family relates to the
+    # covalent strand topology. It must not be applied again to fitted or
+    # contact-geometry axes: the observed syn rotation is already present in
+    # those coordinates. Select the partner-frame branch from the LW family.
+    frame_orientation = lw_default_strand_orientation
     partner_frame_transform = {
         "parallel": "direct",
         "antiparallel": "yz_inverted",

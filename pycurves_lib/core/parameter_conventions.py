@@ -798,7 +798,14 @@ class StandardParameterConvention(LegacyParameterConvention):
         other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        if partner_frame_transform == "yz_inverted":
+        # LW orientation controls the coordinate-frame branch. A single-syn
+        # reversal is topology metadata; the fitted/contact frame already
+        # contains that rotation, so applying it here would double-count syn.
+        if lw_default_orientation == "antiparallel":
+            other = self._inverted_partner_frame(other)
+        elif lw_default_orientation == "parallel":
+            other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
+        elif partner_frame_transform == "yz_inverted":
             other = self._inverted_partner_frame(other)
         elif partner_frame_transform == "direct":
             other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
