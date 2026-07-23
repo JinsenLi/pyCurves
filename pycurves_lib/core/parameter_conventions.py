@@ -6,7 +6,11 @@ from typing import Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS, infer_lw_strand_orientation
+from pycurves_lib.topology.base_annotations import (
+    BASE_EDGE_ATOMS,
+    effective_lw_strand_orientation,
+    infer_lw_strand_orientation,
+)
 
 EQUIVALENT_AXIS_SIGN_FLIPS = (
     np.diag([1.0, 1.0, 1.0]),
@@ -769,22 +773,38 @@ class StandardParameterConvention(LegacyParameterConvention):
         annotation = self._base_pair_annotation(calc, partner_strand, level)
         annotated_geometry = (annotation or {}).get("contact_geometry") or {}
         pair_geometry = contact_geometry or annotated_geometry
-        lw_strand_orientation = str(pair_geometry.get("lw_strand_orientation") or "").lower()
-        if not lw_strand_orientation:
-            lw_strand_orientation = infer_lw_strand_orientation(
+        partner_frame_transform = str(pair_geometry.get("partner_frame_transform") or "").lower()
+        effective_orientation = str(pair_geometry.get("effective_local_orientation") or "").lower()
+        lw_default_orientation = str(
+            pair_geometry.get("lw_default_strand_orientation")
+            or pair_geometry.get("lw_strand_orientation")
+            or ""
+        ).lower()
+        if not lw_default_orientation:
+            lw_default_orientation = infer_lw_strand_orientation(
                 pair_geometry.get("glycosidic_orientation", ""),
                 pair_geometry.get("edge_1", ""),
                 pair_geometry.get("edge_2", ""),
             )
-        if not lw_strand_orientation:
-            lw_strand_orientation = str(pair_geometry.get("strand_direction") or "").lower()
+        if not effective_orientation and lw_default_orientation:
+            effective_orientation, _ = effective_lw_strand_orientation(
+                lw_default_orientation,
+                pair_geometry.get("glycosidic_conformation_1", "anti"),
+                pair_geometry.get("glycosidic_conformation_2", "anti"),
+            )
+        if not effective_orientation:
+            effective_orientation = str(pair_geometry.get("strand_direction") or "").lower()
         first = self._base_frame(calc, 0, level)
         other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        if lw_strand_orientation == "antiparallel":
+        if partner_frame_transform == "yz_inverted":
             other = self._inverted_partner_frame(other)
-        elif lw_strand_orientation == "parallel":
+        elif partner_frame_transform == "direct":
+            other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
+        elif effective_orientation == "antiparallel":
+            other = self._inverted_partner_frame(other)
+        elif effective_orientation == "parallel":
             other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
         else:
             prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)

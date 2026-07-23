@@ -438,10 +438,14 @@ class BatchCurvesPlusMDAnalyzer:
             raise NotImplementedError("pycurves-md-batch currently does not support ends=true.")
         if not cfg.fit:
             raise NotImplementedError("pycurves-md-batch currently requires least-squares base fitting.")
-        if self.ctx.hoogsteen_markers or self.ctx.pair_geometry_markers:
+        if (
+            self.ctx.hoogsteen_markers
+            or self.ctx.pair_geometry_markers
+            or self.ctx.glycosidic_conformation_markers
+        ):
             raise NotImplementedError(
-                "pycurves-md-batch currently supports canonical frame geometry only; "
-                "use pycurves-md for Hoogsteen/contact-geometry inputs."
+                "pycurves-md-batch does not yet support explicit pair-geometry or syn markers; "
+                "use pycurves-md for those inputs."
             )
 
     def _build_fit_templates(self) -> List[BaseFitTemplate]:

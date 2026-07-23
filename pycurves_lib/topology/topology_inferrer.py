@@ -6,7 +6,11 @@ import networkx as nx
 import numpy as np
 
 from pycurves_lib.core.curves_dataclasses import MolecularStructure
-from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS, EDGE_ORDER
+from pycurves_lib.topology.base_annotations import (
+    BASE_EDGE_ATOMS,
+    EDGE_ORDER,
+    infer_glycosidic_conformation,
+)
 from pycurves_lib.data.modified_bases import parent_base_name
 
 
@@ -124,6 +128,7 @@ class InferredTopology:
     ends: bool = False
     hoogsteen_markers: set = field(default_factory=set)
     pair_geometry_markers: Dict[Tuple[int, int], str] = field(default_factory=dict)
+    glycosidic_conformation_markers: Dict[Tuple[int, int], str] = field(default_factory=dict)
 
     @property
     def n_strands(self) -> int:
@@ -151,14 +156,20 @@ class InferredTopology:
             tokens = []
             for level, value in enumerate(row, start=1):
                 token = str(int(value))
+                tags = []
                 geometry_tag = self.pair_geometry_markers.get((strand, level)) if int(value) != 0 else None
                 if geometry_tag:
-                    token = f"{token}[{geometry_tag}]"
+                    tags.append(geometry_tag)
                 elif int(value) != 0 and (
                     (strand, level) in self.hoogsteen_markers
                     or level in self.hoogsteen_markers
                 ):
-                    token = f"{token}[Hoog]"
+                    tags.append("Hoog")
+                conformation = self.glycosidic_conformation_markers.get((strand, level))
+                if int(value) != 0 and conformation == "syn":
+                    tags.append("syn")
+                if tags:
+                    token += "".join(f"[{tag}]" for tag in tags)
                 tokens.append(token)
             lines.append(" " + " ".join(tokens))
         lines.append("0.0 0.0 0.0 0.0")
@@ -765,6 +776,7 @@ class RobustTopologyInferrer:
                 strand_by_subunit[subunit] = 2
         hoogsteen_markers = set()
         pair_geometry_markers = {}
+        glycosidic_conformation_markers = self._glycosidic_markers_for_map(ni_map)
         for candidate in selected_pairs:
             if candidate.first not in level_by_subunit or candidate.second not in level_by_subunit:
                 continue
@@ -799,6 +811,7 @@ class RobustTopologyInferrer:
             grv=paired_count >= 4,
             hoogsteen_markers=hoogsteen_markers,
             pair_geometry_markers=pair_geometry_markers,
+            glycosidic_conformation_markers=glycosidic_conformation_markers,
         )
 
     def _hoogsteen_marker_subunit(self, candidate: BasePairCandidate) -> int:
@@ -836,7 +849,18 @@ class RobustTopologyInferrer:
         if not edge_1 or not edge_2:
             return None
 
-        orientation = (
+        pattern_matches, pattern_family = self._pattern_hbond_matches(
+            residue_1.base,
+            residue_2.base,
+            self._atom_map(residue_1),
+            self._atom_map(residue_2),
+        )
+        canonical_watson_contacts = (
+            edge_1 == edge_2 == "W"
+            and pattern_family == "watson_crick_or_wobble"
+            and len(pattern_matches) >= 2
+        )
+        orientation = "c" if canonical_watson_contacts else (
             self._measured_glycosidic_orientation(candidate, atom_pairs)
             or self._lw_orientation_from_edges(edge_1, edge_2, strand_direction)
         )
@@ -895,6 +919,22 @@ class RobustTopologyInferrer:
     @staticmethod
     def _lw_tag_for_edges(edge_1: str, edge_2: str, orientation: str) -> str:
         return f"{orientation}{edge_1}{edge_2}"
+
+    def _glycosidic_markers_for_map(
+        self,
+        ni_map: np.ndarray,
+    ) -> Dict[Tuple[int, int], str]:
+        markers: Dict[Tuple[int, int], str] = {}
+        for strand_index, row in enumerate(np.asarray(ni_map), start=1):
+            for level, raw_subunit in enumerate(row, start=1):
+                subunit = int(raw_subunit)
+                if subunit <= 0 or subunit not in self.residues:
+                    continue
+                residue = self.residues[subunit]
+                conformation = infer_glycosidic_conformation(residue.base, self._atom_map(residue))
+                if conformation == "syn":
+                    markers[(strand_index, level)] = "syn"
+        return markers
 
     def _measured_glycosidic_orientation(
         self,
@@ -1763,6 +1803,7 @@ class RobustTopologyInferrer:
             chain_ids=[self.residues[selected[0]].chain],
             comb=False,
             grv=False,
+            glycosidic_conformation_markers=self._glycosidic_markers_for_map(row.reshape(1, -1)),
         )
 
     def _build_pairing_graph(self) -> nx.Graph:
@@ -1825,6 +1866,7 @@ class RobustTopologyInferrer:
                 chain_ids=[self.residues[selected[0][0]].chain],
                 comb=False,
                 grv=False,
+                glycosidic_conformation_markers=self._glycosidic_markers_for_map(row.reshape(1, -1)),
             )
 
         ref = selected[0]
@@ -1886,6 +1928,7 @@ class RobustTopologyInferrer:
             comb=True,
             fit=True,
             grv=paired_count >= 4,
+            glycosidic_conformation_markers=self._glycosidic_markers_for_map(ni_map),
         )
 
     def _trim_to_paired_core(self, rows: List[List[int]], nu_raw: List[int]) -> Tuple[List[List[int]], List[int]]:

@@ -35,7 +35,13 @@ class ConfigLoader:
 
         strand_directions = [1 if value >= 0 else -1 for value in signed_strand_lengths]  # Fortran idr
 
-        expanded_maps, current_idx, hoogsteen_markers, pair_geometry_markers = ConfigLoader._parse_strand_maps(
+        (
+            expanded_maps,
+            current_idx,
+            hoogsteen_markers,
+            pair_geometry_markers,
+            glycosidic_conformation_markers,
+        ) = ConfigLoader._parse_strand_maps(
             data_lines,
             strand_count,
             signed_strand_lengths,
@@ -82,6 +88,7 @@ class ConfigLoader:
             "ni_map": subunit_map,
             "hoogsteen_markers": hoogsteen_markers,
             "pair_geometry_markers": pair_geometry_markers,
+            "glycosidic_conformation_markers": glycosidic_conformation_markers,
             "config": cfg,
         }
 
@@ -193,22 +200,36 @@ class ConfigLoader:
 
     @staticmethod
     def _split_mapping_token(token: str):
-        match = re.fullmatch(r"\s*([+-]?\d+(?::[+-]?\d+)?)(?:\[([^\]]+)\])?\s*", token)
+        match = re.fullmatch(r"\s*([+-]?\d+(?::[+-]?\d+)?)((?:\[[^\]]+\])*)\s*", token)
         if not match:
             raise ValueError(f"Invalid Curves topology token {token!r}.")
-        tag = match.group(2)
-        if tag is None:
-            return match.group(1), None
-        normalized = tag.strip().lower().replace("_", "").replace("-", "")
-        if normalized in {"h", "hoog", "hoogsteen"}:
-            return match.group(1), {"kind": "hoogsteen", "tag": "Hoog"}
-        lw_tag = ConfigLoader._parse_lw_geometry_tag(normalized)
-        if lw_tag is None:
-            raise ValueError(
-                f"Unknown Curves topology tag [{tag}] in token {token!r}; "
-                "supported tags are [Hoog] and Leontis-Westhof-style geometry tags like [cWW], [tWH], and [cSS]."
-            )
-        return match.group(1), lw_tag
+        raw_tags = re.findall(r"\[([^\]]+)\]", match.group(2) or "")
+        tag_infos = []
+        seen_kinds = set()
+        for tag in raw_tags:
+            normalized = tag.strip().lower().replace("_", "").replace("-", "")
+            if normalized in {"h", "hoog", "hoogsteen"}:
+                tag_info = {"kind": "hoogsteen", "tag": "Hoog"}
+            elif normalized in {"syn", "anti"}:
+                tag_info = {
+                    "kind": "glycosidic_conformation",
+                    "glycosidic_conformation": normalized,
+                    "tag": normalized,
+                }
+            else:
+                tag_info = ConfigLoader._parse_lw_geometry_tag(normalized)
+            if tag_info is None:
+                raise ValueError(
+                    f"Unknown Curves topology tag [{tag}] in token {token!r}; "
+                    "supported tags are [syn], [anti], [Hoog], and Leontis-Westhof-style "
+                    "geometry tags like [cWW], [tWH], and [cSS]."
+                )
+            kind_group = "pair_geometry" if tag_info["kind"] in {"lw", "hoogsteen"} else tag_info["kind"]
+            if kind_group in seen_kinds:
+                raise ValueError(f"Duplicate {kind_group.replace('_', ' ')} tag in token {token!r}.")
+            seen_kinds.add(kind_group)
+            tag_infos.append(tag_info)
+        return match.group(1), tag_infos
 
     @staticmethod
     def _parse_lw_geometry_tag(normalized: str):
@@ -266,6 +287,7 @@ class ConfigLoader:
         maps = []
         hoogsteen_markers = set()
         pair_geometry_markers = {}
+        glycosidic_conformation_markers = {}
         current_idx = 1
         range_style = any(":" in line for line in data_lines[1:1 + strand_count])
 
@@ -278,17 +300,24 @@ class ConfigLoader:
                     core, tag_info = ConfigLoader._split_mapping_token(token)
                     for mapped_unit in ConfigLoader._expand_mapping_token(core):
                         mapping.append(mapped_unit)
-                        ConfigLoader._record_mapping_tag(
+                        ConfigLoader._record_mapping_tags(
                             tag_info,
                             strand + 1,
                             len(mapping),
                             mapped_unit,
                             hoogsteen_markers,
                             pair_geometry_markers,
+                            glycosidic_conformation_markers,
                         )
                 maps.append(mapping)
                 current_idx += 1
-            return maps, current_idx, hoogsteen_markers, pair_geometry_markers
+            return (
+                maps,
+                current_idx,
+                hoogsteen_markers,
+                pair_geometry_markers,
+                glycosidic_conformation_markers,
+            )
 
         level_count = max(abs(value) for value in signed_strand_lengths)
         for strand in range(strand_count):
@@ -302,37 +331,51 @@ class ConfigLoader:
                         if len(mapping) >= level_count:
                             break
                         mapping.append(mapped_unit)
-                        ConfigLoader._record_mapping_tag(
+                        ConfigLoader._record_mapping_tags(
                             tag_info,
                             strand + 1,
                             len(mapping),
                             mapped_unit,
                             hoogsteen_markers,
                             pair_geometry_markers,
+                            glycosidic_conformation_markers,
                         )
                 current_idx += 1
             maps.append(mapping[:level_count])
-        return maps, current_idx, hoogsteen_markers, pair_geometry_markers
+        return (
+            maps,
+            current_idx,
+            hoogsteen_markers,
+            pair_geometry_markers,
+            glycosidic_conformation_markers,
+        )
 
     @staticmethod
-    def _record_mapping_tag(
-        tag_info,
+    def _record_mapping_tags(
+        tag_infos,
         strand: int,
         level: int,
         mapped_unit: int,
         hoogsteen_markers: set,
         pair_geometry_markers: dict,
+        glycosidic_conformation_markers: dict,
     ) -> None:
-        if tag_info is None or mapped_unit == 0:
+        if not tag_infos or mapped_unit == 0:
             return
-        if tag_info.get("kind") == "hoogsteen":
-            hoogsteen_markers.add((strand, level))
-            return
-        if tag_info.get("kind") == "lw":
-            marker = dict(tag_info)
-            marker["annotated_strand"] = strand
-            marker["level"] = level
-            pair_geometry_markers[(strand, level)] = marker
+        for tag_info in tag_infos:
+            if tag_info.get("kind") == "hoogsteen":
+                hoogsteen_markers.add((strand, level))
+                continue
+            if tag_info.get("kind") == "lw":
+                marker = dict(tag_info)
+                marker["annotated_strand"] = strand
+                marker["level"] = level
+                pair_geometry_markers[(strand, level)] = marker
+                continue
+            if tag_info.get("kind") == "glycosidic_conformation":
+                glycosidic_conformation_markers[(strand, level)] = tag_info[
+                    "glycosidic_conformation"
+                ]
 
     @staticmethod
     def _initialize_helical_input_defaults(

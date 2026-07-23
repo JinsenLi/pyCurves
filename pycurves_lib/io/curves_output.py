@@ -611,9 +611,15 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "base_2": row.get("base_2"),
                 "edge_pair": row.get("edge_pair", ""),
                 "glycosidic_orientation": row.get("glycosidic_orientation", ""),
+                "glycosidic_conformation_1": row.get("glycosidic_conformation_1", ""),
+                "glycosidic_conformation_2": row.get("glycosidic_conformation_2", ""),
+                "lw_default_strand_orientation": row.get("lw_default_strand_orientation", ""),
                 "lw_strand_orientation": row.get("lw_strand_orientation", ""),
+                "syn_orientation_reversal": bool(row.get("syn_orientation_reversal", False)),
+                "effective_local_orientation": row.get("effective_local_orientation", ""),
                 "strand_direction": row.get("strand_direction", ""),
                 "topology_strand_direction": row.get("topology_strand_direction", ""),
+                "partner_frame_transform": row.get("partner_frame_transform", ""),
                 "frame_mode": row.get("frame_mode", ""),
                 "contact_confidence": row.get("contact_confidence", ""),
                 "contact_count": self._contact_count(row),
@@ -654,9 +660,15 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "edge_1": row.get("edge_1", ""),
                 "edge_2": row.get("edge_2", ""),
                 "glycosidic_orientation": row.get("glycosidic_orientation", ""),
+                "glycosidic_conformation_1": row.get("glycosidic_conformation_1", ""),
+                "glycosidic_conformation_2": row.get("glycosidic_conformation_2", ""),
+                "lw_default_strand_orientation": row.get("lw_default_strand_orientation", ""),
                 "lw_strand_orientation": row.get("lw_strand_orientation", ""),
+                "syn_orientation_reversal": bool(row.get("syn_orientation_reversal", False)),
+                "effective_local_orientation": row.get("effective_local_orientation", ""),
                 "strand_direction": row.get("strand_direction", ""),
                 "topology_strand_direction": row.get("topology_strand_direction", ""),
+                "partner_frame_transform": row.get("partner_frame_transform", ""),
                 "frame_mode": row.get("frame_mode", ""),
                 "contact_confidence": row.get("contact_confidence", ""),
                 "contact_count": self._contact_count(row),
@@ -677,6 +689,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             or row.get("pair_family") not in {"watson_crick", ""}
             or row.get("geometry_flag")
             or row.get("frame_mode") == "contact_geometry"
+            or row.get("syn_orientation_reversal")
         )
 
     @staticmethod
