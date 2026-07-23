@@ -6,7 +6,7 @@ from typing import Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS
+from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS, infer_lw_strand_orientation
 
 EQUIVALENT_AXIS_SIGN_FLIPS = (
     np.diag([1.0, 1.0, 1.0]),
@@ -768,23 +768,26 @@ class StandardParameterConvention(LegacyParameterConvention):
         contact_geometry = self._contact_geometry_for_pair(calc, partner_strand, level)
         annotation = self._base_pair_annotation(calc, partner_strand, level)
         annotated_geometry = (annotation or {}).get("contact_geometry") or {}
-        if contact_geometry is not None:
-            glycosidic_orientation = str(contact_geometry.get("glycosidic_orientation", "")).lower()
-            if glycosidic_orientation in {"cis", "c"}:
-                prefer_parallel = True
-            elif glycosidic_orientation in {"trans", "t"}:
-                prefer_parallel = False
-            else:
-                prefer_parallel = contact_geometry.get("strand_direction") == "parallel"
-        else:
-            prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)
+        pair_geometry = contact_geometry or annotated_geometry
+        lw_strand_orientation = str(pair_geometry.get("lw_strand_orientation") or "").lower()
+        if not lw_strand_orientation:
+            lw_strand_orientation = infer_lw_strand_orientation(
+                pair_geometry.get("glycosidic_orientation", ""),
+                pair_geometry.get("edge_1", ""),
+                pair_geometry.get("edge_2", ""),
+            )
+        if not lw_strand_orientation:
+            lw_strand_orientation = str(pair_geometry.get("strand_direction") or "").lower()
         first = self._base_frame(calc, 0, level)
         other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        if self._is_noncanonical_watson_pair(annotation, annotated_geometry):
-            other = self._closest_partner_frame(first, other)
+        if lw_strand_orientation == "antiparallel":
+            other = self._inverted_partner_frame(other)
+        elif lw_strand_orientation == "parallel":
+            other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
         else:
+            prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)
             other = self._aligned_partner_frame(first, other, prefer_parallel=prefer_parallel)
         return first, other
 
@@ -912,13 +915,6 @@ class StandardParameterConvention(LegacyParameterConvention):
         if inverted_score > direct_score + 1e-9:
             return inverted
         return ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
-
-    def _closest_partner_frame(self, first: ParameterFrame, other: ParameterFrame) -> ParameterFrame:
-        direct = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
-        inverted = self._inverted_partner_frame(other)
-        direct_score = float(np.trace(first.axes @ direct.axes.T))
-        inverted_score = float(np.trace(first.axes @ inverted.axes.T))
-        return inverted if inverted_score > direct_score + 1e-9 else direct
 
     @staticmethod
     def _inverted_partner_frame(frame: ParameterFrame) -> ParameterFrame:

@@ -250,17 +250,11 @@ def base_pair_geometry_tag(row: Dict[str, Any]) -> str:
 
 
 def base_pair_geometry_annotation(row: Dict[str, Any]) -> str:
-    """Return the user-facing geometry label, including strand direction suffix."""
+    """Return the user-facing Leontis-Westhof geometry label."""
     tag = base_pair_geometry_tag(row)
-    direction = str(row.get("strand_direction") or "").strip().lower()
-    suffix = {"parallel": "p", "antiparallel": "ap"}.get(direction, "")
-    if tag and suffix:
-        return f"[{tag}:{suffix}]"
     if tag:
         return f"[{tag}]"
     edge_pair = str(row.get("edge_pair") or "").strip()
-    if edge_pair and suffix:
-        return f"[{edge_pair}:{suffix}]"
     return edge_pair
 
 
@@ -339,9 +333,16 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             pair_subtype = contact_geometry.get("edge_pair") or subtype
             confidence = "heuristic_geometry"
             method = "identity_and_base_pair_geometry"
-        elif contact_geometry.get("edge_pair") and family == "mismatch":
+        elif contact_geometry.get("edge_pair") and (
+            family == "mismatch"
+            or (
+                contact_geometry.get("edge_1") == "W"
+                and contact_geometry.get("edge_2") == "W"
+                and contact_geometry.get("glycosidic_orientation") == "trans"
+            )
+        ):
             pair_family = "hbonded_noncanonical"
-            pair_subtype = contact_geometry.get("edge_pair") or subtype
+            pair_subtype = base_pair_geometry_tag(contact_geometry) or contact_geometry.get("edge_pair") or subtype
             confidence = contact_geometry.get("confidence", "heuristic_geometry")
             method = "edge_contact_geometry"
         else:
@@ -376,7 +377,9 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "edge_2": contact_geometry.get("edge_2", ""),
             "edge_pair": contact_geometry.get("edge_pair", ""),
             "glycosidic_orientation": contact_geometry.get("glycosidic_orientation", ""),
+            "lw_strand_orientation": contact_geometry.get("lw_strand_orientation", ""),
             "strand_direction": contact_geometry.get("strand_direction", ""),
+            "topology_strand_direction": contact_geometry.get("topology_strand_direction", ""),
             "frame_mode": frame_mode,
             "contact_atom_pairs": contact_geometry.get("contact_atom_pairs", []),
             "contact_count": contact_geometry.get("contact_count", 0),
@@ -445,18 +448,23 @@ def _contact_geometry_for_pair(
         edge_1_ambiguous = False
         edge_2_ambiguous = False
     edge_pair = f"{edge_1}/{edge_2}" if edge_1 and edge_2 else ""
-    strand_direction = manual_geometry.get("strand_direction") or _strand_direction(ctx, strand_1, strand_2)
-    manual_glycosidic_orientation = (
-        manual_geometry.get("glycosidic_orientation")
-        if manual_geometry.get("strand_direction_source") == "explicit"
-        else ""
-    )
+    topology_strand_direction = _strand_direction(ctx, strand_1, strand_2)
+    manual_glycosidic_orientation = manual_geometry.get("glycosidic_orientation", "")
     glycosidic_orientation = manual_glycosidic_orientation or _glycosidic_orientation(
         base_1,
         base_2,
         atom_map_1,
         atom_map_2,
         contacts,
+    )
+    manual_lw_strand_orientation = (
+        manual_geometry.get("lw_strand_orientation")
+        or manual_geometry.get("strand_direction")
+    )
+    lw_strand_orientation = manual_lw_strand_orientation or infer_lw_strand_orientation(
+        glycosidic_orientation,
+        edge_1,
+        edge_2,
     )
 
     has_reliable_contacts = (
@@ -472,7 +480,8 @@ def _contact_geometry_for_pair(
         has_usable_edge_geometry
         and edge_1 == "W"
         and edge_2 == "W"
-        and strand_direction == "antiparallel"
+        and lw_strand_orientation == "antiparallel"
+        and glycosidic_orientation == "cis"
     )
     watson_watson_geometry = has_usable_edge_geometry and edge_1 == "W" and edge_2 == "W"
     forced_noncanonical = bool(source_hoogsteen or marked_hoogsteen)
@@ -509,8 +518,15 @@ def _contact_geometry_for_pair(
         "edge_pair": edge_pair,
         "orientation": manual_geometry.get("orientation", ""),
         "glycosidic_orientation": glycosidic_orientation,
-        "strand_direction": strand_direction,
-        "strand_direction_source": manual_geometry.get("strand_direction_source", "topology"),
+        "lw_strand_orientation": lw_strand_orientation,
+        # Backward-compatible alias; this is LW-local, not global topology.
+        "strand_direction": lw_strand_orientation,
+        "strand_direction_source": (
+            manual_geometry.get("strand_direction_source")
+            if manual_lw_strand_orientation
+            else "inferred_from_contact_geometry" if lw_strand_orientation else ""
+        ),
+        "topology_strand_direction": topology_strand_direction,
         "frame_mode": frame_mode,
         "contact_atom_pairs": contacts,
         "contact_count": len(contacts),
@@ -612,6 +628,23 @@ def _strand_direction(ctx, strand_1: int, strand_2: int) -> str:
         return "parallel" if int(ctx.idr[strand_1]) == int(ctx.idr[strand_2]) else "antiparallel"
     except Exception:
         return "unknown"
+
+
+def infer_lw_strand_orientation(
+    glycosidic_orientation: str,
+    edge_1: str,
+    edge_2: str,
+) -> str:
+    orientation = str(glycosidic_orientation or "").strip().lower()
+    orientation = {"cis": "c", "trans": "t"}.get(orientation, orientation)
+    first_edge = str(edge_1 or "").strip().upper()
+    second_edge = str(edge_2 or "").strip().upper()
+    if orientation not in {"c", "t"} or first_edge not in EDGE_ORDER or second_edge not in EDGE_ORDER:
+        return ""
+    one_hoogsteen_edge = (first_edge == "H") ^ (second_edge == "H")
+    cis_is_parallel = one_hoogsteen_edge
+    is_parallel = cis_is_parallel if orientation == "c" else not cis_is_parallel
+    return "parallel" if is_parallel else "antiparallel"
 
 
 def _glycosidic_orientation(

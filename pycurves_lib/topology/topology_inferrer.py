@@ -821,14 +821,6 @@ class RobustTopologyInferrer:
     ) -> Optional[Tuple[int, int, str]]:
         residue_1 = self.residues[candidate.first]
         residue_2 = self.residues[candidate.second]
-        should_write = (
-            candidate.is_hoogsteen
-            or candidate.pair_family == "hbonded_noncanonical"
-            or not self._is_complementary(residue_1.base, residue_2.base)
-        )
-        if not should_write:
-            return None
-
         atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
         if not atom_pairs:
             return None
@@ -848,7 +840,17 @@ class RobustTopologyInferrer:
             self._measured_glycosidic_orientation(candidate, atom_pairs)
             or self._lw_orientation_from_edges(edge_1, edge_2, strand_direction)
         )
-        tag = self._lw_tag_for_edges(edge_1, edge_2, orientation, strand_direction)
+        tag = self._lw_tag_for_edges(edge_1, edge_2, orientation)
+        measured_noncanonical = (edge_1, edge_2) != ("W", "W") or orientation == "t"
+        should_write = (
+            candidate.is_hoogsteen
+            or candidate.pair_family == "hbonded_noncanonical"
+            or not self._is_complementary(residue_1.base, residue_2.base)
+            or measured_noncanonical
+        )
+        if not should_write:
+            return None
+
         strand_id = strand_by_subunit.get(candidate.first)
         level = level_by_subunit.get(candidate.first)
         if strand_id is None or level is None:
@@ -891,10 +893,8 @@ class RobustTopologyInferrer:
         return "c" if strand_direction == cis_direction else "t"
 
     @staticmethod
-    def _lw_tag_for_edges(edge_1: str, edge_2: str, orientation: str, strand_direction: str) -> str:
-        suffix = {"parallel": "p", "antiparallel": "ap"}.get(strand_direction)
-        tag = f"{orientation}{edge_1}{edge_2}"
-        return f"{tag}:{suffix}" if suffix else tag
+    def _lw_tag_for_edges(edge_1: str, edge_2: str, orientation: str) -> str:
+        return f"{orientation}{edge_1}{edge_2}"
 
     def _measured_glycosidic_orientation(
         self,

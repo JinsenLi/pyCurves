@@ -206,7 +206,7 @@ class ConfigLoader:
         if lw_tag is None:
             raise ValueError(
                 f"Unknown Curves topology tag [{tag}] in token {token!r}; "
-                "supported tags are [Hoog] and Leontis-Westhof-style geometry tags like [cWW], [tWH:ap], and [cSS:p]."
+                "supported tags are [Hoog] and Leontis-Westhof-style geometry tags like [cWW], [tWH], and [cSS]."
             )
         return match.group(1), lw_tag
 
@@ -224,10 +224,12 @@ class ConfigLoader:
         edge_2 = lw_text[2].upper()
         if edge_1 not in LW_EDGES or edge_2 not in LW_EDGES:
             return None
-        explicit_strand_direction = ConfigLoader._parse_lw_strand_direction(direction_text)
-        if direction_text and explicit_strand_direction is None:
+        # Older pyCurves builds emitted :p/:ap suffixes. Accept but ignore
+        # them: the standard LW tag itself determines local strand orientation.
+        if direction_text and ConfigLoader._parse_lw_strand_direction(direction_text) is None:
             return None
         tag = f"{orientation}{edge_1}{edge_2}"
+        strand_direction = ConfigLoader._lw_strand_direction(orientation, edge_1, edge_2)
         return {
             "kind": "lw",
             "tag": tag,
@@ -235,8 +237,9 @@ class ConfigLoader:
             "glycosidic_orientation": "cis" if orientation == "c" else "trans",
             "edge_1": edge_1,
             "edge_2": edge_2,
-            "strand_direction": explicit_strand_direction or ConfigLoader._lw_strand_direction(orientation, edge_1, edge_2),
-            "strand_direction_source": "explicit" if explicit_strand_direction else "inferred_from_lw_tag",
+            "lw_strand_orientation": strand_direction,
+            "strand_direction": strand_direction,
+            "strand_direction_source": "inferred_from_lw_tag",
         }
 
     @staticmethod
@@ -253,10 +256,9 @@ class ConfigLoader:
     @staticmethod
     def _lw_strand_direction(orientation: str, edge_1: str, edge_2: str) -> str:
         one_hoogsteen_edge = (edge_1 == "H") ^ (edge_2 == "H")
-        cis_direction = "parallel" if one_hoogsteen_edge else "antiparallel"
-        if orientation == "c":
-            return cis_direction
-        return "antiparallel" if cis_direction == "parallel" else "parallel"
+        cis_is_parallel = one_hoogsteen_edge
+        is_parallel = cis_is_parallel if orientation == "c" else not cis_is_parallel
+        return "parallel" if is_parallel else "antiparallel"
 
     @staticmethod
     def _parse_strand_maps(data_lines, strand_count, signed_strand_lengths, file_path):
