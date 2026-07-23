@@ -397,10 +397,12 @@ class BaseLocator:
         sq2 = np.sqrt(2.0)
 
         valid_indices = []
+        valid_template_positions = []
         valid_bref = []
         for l in range(n):
             if nind[l] != -1:
                 valid_indices.append(nind[l])
+                valid_template_positions.append(l)
                 valid_bref.append(bref[lequ - 1, l])
 
         if len(valid_indices) < 3:
@@ -411,11 +413,21 @@ class BaseLocator:
         valid_bref = np.array(valid_bref)
 
         cg = np.mean(fit_coords, axis=0)
+        # Complete legacy templates are already centered and must retain the
+        # original Curves 5.3 calculation exactly. For an incomplete base,
+        # center the same available reference subset used for the coordinate
+        # fit, as in the missing-atom-capable Curves+ least-squares routine.
+        reference_center = (
+            np.zeros(3)
+            if len(valid_indices) == n
+            else np.mean(valid_bref, axis=0)
+        )
+        centered_bref = valid_bref - reference_center
 
         u = np.zeros((3, 3))
         for l in range(len(fit_indices)):
             idx = fit_indices[l]
-            standard_pos = valid_bref[l]
+            standard_pos = centered_bref[l]
             real_pos_shifted = mol.coordinates[idx] - cg
             u += np.outer(standard_pos, real_pos_shifted) / len(fit_indices)
         det = np.linalg.det(u)
@@ -442,8 +454,9 @@ class BaseLocator:
 
         rot_u = k @ np.diag([1.0, 1.0, np.sign(det)]) @ h.T
 
-        dcor = (bref[lequ - 1, :n] @ rot_u.T) + cg
-        rms = np.sqrt(np.mean(np.sum((fit_coords - dcor)**2, axis=1)))
+        dcor = ((bref[lequ - 1, :n] - reference_center) @ rot_u.T) + cg
+        fitted_present_coords = dcor[valid_template_positions]
+        rms = np.sqrt(np.mean(np.sum((fit_coords - fitted_present_coords)**2, axis=1)))
         return dcor, rms, 0
     
     def _calculate_base_frame(self, strand: int, level: int, atom_data: dict, ctx: 'CurvesContext'):
