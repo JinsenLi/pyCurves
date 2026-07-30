@@ -625,6 +625,13 @@ class MolecularStructure:
     residue_names: np.ndarray = None # munit [cite: 1, 89]
     residue_ids: np.ndarray = None   # nunit [cite: 1, 89]
     chain_ids: np.ndarray = None
+    insertion_codes: np.ndarray = None
+    altlocs: np.ndarray = None
+    occupancies: np.ndarray = None
+    model_ids: np.ndarray = None
+    source_atom_indices: np.ndarray = None
+    altloc_selection: str = "first"
+    available_altlocs: tuple = ()
     
     # Topology
     atom_types: np.ndarray = None     # imch [cite: 1, 89]
@@ -793,7 +800,7 @@ class CurvesContext:
             
             angles = np.full((self.n_strands, n3, 2), 999.0),
             
-            sugar_pucker = np.zeros((self.n_strands, n3, 2)),
+            sugar_pucker = np.full((self.n_strands, n3, 2), 999.0),
             
             # Atom indices are Python 0-based; -1 means "not found".
             atom_map = np.full((self.n_strands, n3, 15), -1, dtype=int),

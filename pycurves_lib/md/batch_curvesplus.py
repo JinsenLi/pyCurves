@@ -343,6 +343,7 @@ class BatchCurvesPlusMDAnalyzer:
         inpfile: Optional[str] = None,
         output_dir: str = ".",
         continuous_strands: bool = False,
+        altloc: Optional[str] = None,
         fit_override: Optional[bool] = None,
         comb_override: Optional[bool] = None,
         ends_override: Optional[bool] = None,
@@ -351,6 +352,7 @@ class BatchCurvesPlusMDAnalyzer:
         include_fit_quality: bool = False,
     ):
         self.topology_file = topology_file
+        self.altloc = MolecularLoader.normalize_altloc(altloc)
         self.output_dir = output_dir
         self.include_requested_grooves = include_grooves
         self.include_curvesplus_axis_steps = include_curvesplus_axis_steps
@@ -363,6 +365,7 @@ class BatchCurvesPlusMDAnalyzer:
             fit_override=fit_override,
             comb_override=comb_override,
             ends_override=ends_override,
+            altloc=self.altloc,
         )
         self.config_dict = ConfigLoader.parse_inp(
             self.inpfile,
@@ -377,7 +380,7 @@ class BatchCurvesPlusMDAnalyzer:
         )
         self.ctx = CurvesContext(self.config_dict)
         self.include_grooves = bool(getattr(self.ctx.cfg, "grv", False))
-        self.template_molecule = self._load_template_molecule(topology_file)
+        self.template_molecule = self._load_template_molecule(topology_file, self.altloc)
         self.ctx.molecule = self.template_molecule
         self.library = BaseReferenceLibrary.load("standard")
         self.constants = BaseGeometryConstants()
@@ -419,13 +422,14 @@ class BatchCurvesPlusMDAnalyzer:
             fit_override=overrides.get("fit_override"),
             comb_override=overrides.get("comb_override"),
             ends_override=overrides.get("ends_override"),
+            altloc=overrides.get("altloc"),
         )
         return runner.inpfile, list(runner.generated_inpfiles)
 
     @staticmethod
-    def _load_template_molecule(topology_file: str) -> MolecularStructure:
+    def _load_template_molecule(topology_file: str, altloc=None) -> MolecularStructure:
         holder = type("MoleculeHolder", (), {"molecule": MolecularStructure()})()
-        MolecularLoader.load(topology_file, holder)
+        MolecularLoader.load(topology_file, holder, altloc=altloc)
         return holder.molecule
 
     def _validate_supported(self) -> None:
@@ -1373,7 +1377,7 @@ class BatchCurvesPlusMDAnalyzer:
             store[:, tasks.angle_strands, tasks.angle_levels, tasks.angle_indices] = values
 
         torsions = np.full((batch, self.ctx.nst, n3, 13), 999.0, dtype=float)
-        sugar_pucker = np.zeros((batch, self.ctx.nst, n3, 2), dtype=float)
+        sugar_pucker = np.full((batch, self.ctx.nst, n3, 2), 999.0, dtype=float)
         torsions[:, :, :, 0:6] = store[:, :, :, 0:6]
         torsions[:, :, :, 6:13] = store[:, :, :, 9:16]
 
@@ -1396,14 +1400,14 @@ class BatchCurvesPlusMDAnalyzer:
                 a = (2.0 / 5.0) * np.sum(v * np.cos(theta), axis=2)
                 b = (-2.0 / 5.0) * np.sum(v * np.sin(theta), axis=2)
                 amp = np.sqrt(a * a + b * b)
-                phase = np.zeros_like(amp)
+                phase = np.full_like(amp, 999.0)
                 nonzero = valid & (amp > 0.0)
                 if np.any(nonzero):
                     cp = np.clip(a[nonzero] / amp[nonzero], -1.0, 1.0)
                     phase_nonzero = np.degrees(np.arccos(cp))
                     phase_nonzero[b[nonzero] < 0.0] = 360.0 - phase_nonzero[b[nonzero] < 0.0]
                     phase[nonzero] = phase_nonzero
-                amp_out = np.zeros_like(amp)
+                amp_out = np.full_like(amp, 999.0)
                 amp_out[valid] = amp[valid]
                 sugar_pucker[:, strands, levels, 0] = amp_out
                 sugar_pucker[:, strands, levels, 1] = phase
@@ -1415,28 +1419,46 @@ class BatchCurvesPlusMDAnalyzer:
         for strand in range(self.ctx.nst):
             for level in range(1, self.ctx.nux + 1):
                 if not self._has_level(strand, level):
+                    missing = [
+                        "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime",
+                        "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta",
+                    ]
+                    rows.append({
+                        "strand": strand + 1, "level": level,
+                        "residue_name": None, "residue_id": None, "chain_id": None,
+                        "insertion_code": None, "gap": True, "valid": False, "status": "gap",
+                        "warnings": ["topology_gap", "missing_parameter_values"],
+                        "missing_parameters": missing, "pucker": None,
+                        **{name: None for name in missing},
+                    })
                     continue
-                label = self._residue_unit_label(strand, level)
-                if label is None:
-                    continue
-                residue_name, residue_id = label
+                subunit_idx = abs(int(self.ctx.ni_map[strand, level - 1]))
+                atom_idx = int(self.template_molecule.subunit_boundaries[subunit_idx - 1])
+                residue_name = str(self.template_molecule.residue_names[atom_idx]).strip()
+                residue_id = int(self.template_molecule.residue_ids[atom_idx])
+                chain_id = str(self.template_molecule.chain_ids[atom_idx]).strip() if self.template_molecule.chain_ids is not None else ""
+                insertion_code = str(self.template_molecule.insertion_codes[atom_idx]).strip() if self.template_molecule.insertion_codes is not None else ""
                 tor = torsions[strand, level]
                 pucker = sugar_pucker[strand, level]
                 phase = self._json_number(pucker[1])
-                pucker_index = 0
+                pucker_label = None
                 if phase is not None:
                     pucker_index = int((phase % 360.0) / 36.0)
                     pucker_index = max(0, min(len(SUGAR_PUCKERS) - 1, pucker_index))
-                rows.append({
+                    pucker_label = SUGAR_PUCKERS[pucker_index]
+                row = {
                     "strand": strand + 1,
                     "level": level,
                     "residue_name": residue_name,
                     "residue_id": residue_id,
+                    "chain_id": chain_id,
+                    "insertion_code": insertion_code,
+                    "gap": False,
                     "c1_c2": self._json_number(tor[4]),
                     "c2_c3": self._json_number(tor[5]),
                     "phase": phase,
                     "amplitude": self._json_number(pucker[0]),
-                    "pucker": SUGAR_PUCKERS[pucker_index],
+                    "pucker": pucker_label,
                     "c1_prime": self._json_number(tor[0]),
                     "c2_prime": self._json_number(tor[1]),
                     "c3_prime": self._json_number(tor[2]),
@@ -1447,7 +1469,20 @@ class BatchCurvesPlusMDAnalyzer:
                     "zeta": self._json_number(tor[7]),
                     "alpha": self._json_number(tor[10]),
                     "beta": self._json_number(tor[11]),
+                }
+                parameter_names = (
+                    "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime",
+                    "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta",
+                )
+                missing_parameters = [name for name in parameter_names if row[name] is None]
+                warnings = ["missing_parameter_values"] if missing_parameters else []
+                row.update({
+                    "valid": not warnings,
+                    "status": "complete" if not warnings else "partial",
+                    "warnings": warnings,
+                    "missing_parameters": missing_parameters,
                 })
+                rows.append(row)
         return rows
 
     def _residue_unit_label(self, strand: int, level: int):
@@ -1469,7 +1504,7 @@ class BatchCurvesPlusMDAnalyzer:
             number = float(value)
         except (TypeError, ValueError):
             return None
-        return number if np.isfinite(number) else None
+        return number if np.isfinite(number) and number < 900.0 else None
 
     def _curvesplus_inter_base_pair_rows(self, values: np.ndarray) -> List[Dict]:
         return self._local_inter_base_pair_rows(values)

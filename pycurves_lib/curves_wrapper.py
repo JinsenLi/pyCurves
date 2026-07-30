@@ -34,6 +34,7 @@ class CurvesWrapper:
         inpfile: Optional[str] = None,
         output_dir: str = ".",
         continuous_strands: bool = False,
+        altloc: Optional[str] = None,
         frame_convention: str = "standard",
         axis_convention: str = "legacy",
         fit_override: Optional[bool] = None,
@@ -50,6 +51,7 @@ class CurvesWrapper:
         self.inpfile = inpfile
         self.output_dir = output_dir
         self.continuous_strands = continuous_strands
+        self.altloc = MolecularLoader.normalize_altloc(altloc)
         self.frame_convention, self.axis_convention = self.normalize_conventions(frame_convention, axis_convention)
         self.fit_override = fit_override
         self.grv_override = grv_override
@@ -80,6 +82,7 @@ class CurvesWrapper:
         path: str,
         output_dir: str = ".",
         continuous_strands: bool = False,
+        altloc: Optional[str] = None,
         frame_convention: str = "standard",
         axis_convention: str = "legacy",
     ):
@@ -91,6 +94,7 @@ class CurvesWrapper:
                 inpfile=path,
                 output_dir=output_dir,
                 continuous_strands=continuous_strands,
+                altloc=altloc,
                 frame_convention=frame_convention,
                 axis_convention=axis_convention,
             )
@@ -98,6 +102,7 @@ class CurvesWrapper:
             pdbfile=path,
             output_dir=output_dir,
             continuous_strands=continuous_strands,
+            altloc=altloc,
             frame_convention=frame_convention,
             axis_convention=axis_convention,
         )
@@ -109,6 +114,7 @@ class CurvesWrapper:
         mini: Optional[bool] = None,
         verbose: bool = False,
         continuous_strands: Optional[bool] = None,
+        altloc: Optional[str] = None,
         frame_convention: Optional[str] = None,
         axis_convention: Optional[str] = None,
     ):
@@ -118,6 +124,8 @@ class CurvesWrapper:
             self.pdbfile = pdbfile
         if continuous_strands is not None:
             self.continuous_strands = continuous_strands
+        if altloc is not None:
+            self.altloc = MolecularLoader.normalize_altloc(altloc)
         next_frame_convention = self.frame_convention if frame_convention is None else frame_convention
         next_axis_convention = self.axis_convention if axis_convention is None else axis_convention
         self.frame_convention, self.axis_convention = self.normalize_conventions(
@@ -137,7 +145,7 @@ class CurvesWrapper:
             raise ValueError("No PDB file is available. Pass pdbfile=... or include file=... in the .inp.")
 
         self.ctx = CurvesContext(self.cfg)
-        MolecularLoader.load(self.pdbfile, self.ctx)
+        MolecularLoader.load(self.pdbfile, self.ctx, altloc=self.altloc)
 
         return self._analyze_loaded_context(verbose=verbose)
 
@@ -316,6 +324,7 @@ class CurvesWrapper:
         output_dir: Optional[str] = None,
         prefix: Optional[str] = None,
         continuous_strands: bool = False,
+        altloc: Optional[str] = None,
     ) -> List[str]:
         pdbfile = pdbfile or self.pdbfile
         if pdbfile is None:
@@ -323,7 +332,8 @@ class CurvesWrapper:
 
         output_dir = output_dir or self.output_dir
         mol_holder = SimpleNamespace(molecule=MolecularStructure())
-        MolecularLoader.load(pdbfile, mol_holder)
+        selected_altloc = self.altloc if altloc is None else MolecularLoader.normalize_altloc(altloc)
+        MolecularLoader.load(pdbfile, mol_holder, altloc=selected_altloc)
         inferrer = RobustTopologyInferrer(mol_holder.molecule, pdbfile=Path(pdbfile).name)
         stem = prefix or f"{Path(pdbfile).stem}_auto"
         return inferrer.write_inp_files(

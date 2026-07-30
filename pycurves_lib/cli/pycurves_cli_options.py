@@ -9,6 +9,11 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
         help="Treat separated helices in connected components as a single continuous structure.",
     )
     parser.add_argument(
+        "--altloc",
+        help=("Alternate-conformation identifier to analyze, such as A or B. "
+              "By default Gemmi keeps the first-listed conformer, not the highest-occupancy conformer."),
+    )
+    parser.add_argument(
         "--fit",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -53,6 +58,7 @@ def pycurves_runner_kwargs(args) -> dict:
     """Return CurvesWrapper keyword arguments from shared CLI options."""
     return {
         "continuous_strands": getattr(args, "continuous_strands", False),
+        "altloc": getattr(args, "altloc", None),
         "frame_convention": getattr(args, "frame_convention", "standard"),
         "axis_convention": getattr(args, "axis_convention", "legacy"),
         "fit_override": getattr(args, "fit", None),

@@ -761,7 +761,11 @@ class RobustTopologyInferrer:
         self._collapse_opposing_internal_gap_pairs(row_1, row_2)
 
         paired_count = sum(1 for left, right in zip(row_1, row_2) if left > 0 and right > 0)
-        nu_raw = [sum(1 for subunit in row_1 if subunit > 0), partner_direction * sum(1 for subunit in row_2 if subunit > 0)]
+        # Curves uses the signed magnitude to determine how many aligned
+        # mapping columns to read. Internal zero/gap entries still occupy a
+        # column, so counting only nonzero residues can truncate the row when
+        # both strands contain gaps.
+        nu_raw = [len(row_1), partner_direction * len(row_2)]
         ni_map = np.array([row_1, row_2], dtype=int)
         pair_edges = [(candidate.first, candidate.second) for candidate in selected_pairs]
         level_by_subunit = {}

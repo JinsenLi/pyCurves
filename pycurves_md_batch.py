@@ -90,6 +90,7 @@ def run_batch(args) -> Dict:
         include_grooves=args.grooves,
         include_curvesplus_axis_steps=args.curvesplus_axis_steps,
         include_fit_quality=args.fit_quality,
+        altloc=args.altloc,
     )
 
     frame_payloads: List[Dict] = []
@@ -143,6 +144,7 @@ def run_batch(args) -> Dict:
         "analysis_options": {
             "batch_size": args.batch_size,
             "continuous_strands": args.continuous_strands,
+            "altloc": args.altloc or "first",
             "fit": True if args.fit is None else args.fit,
             "comb": True if args.comb is None else args.comb,
             "ends": False if args.ends is None else args.ends,
@@ -183,6 +185,7 @@ def analyze_trajectory_batch(
     batch_size: int = 128,
     mode: str = "per-frame",
     continuous_strands: bool = False,
+    altloc: Optional[str] = None,
     fit: Optional[bool] = None,
     grooves: Optional[bool] = None,
     comb: Optional[bool] = None,
@@ -222,6 +225,7 @@ def analyze_trajectory_batch(
         axis_convention=axis_convention,
         curvesplus_axis_steps=curvesplus_axis_steps,
         fit_quality=fit_quality,
+        altloc=altloc,
     )
     try:
         return run_batch(args)
@@ -248,6 +252,7 @@ def main() -> None:
     parser.add_argument("--step", type=int, default=1, help="Frame stride.")
     parser.add_argument("--batch-size", type=int, default=128, help="Number of selected frames processed per vectorized batch.")
     parser.add_argument("--continuous-strands", action="store_true", help="Treat connected helical components as continuous during .inp inference.")
+    parser.add_argument("--altloc", help="Alternate conformation such as A or B; default keeps Gemmi's first-listed conformer.")
     parser.add_argument("--fit", action=argparse.BooleanOptionalAction, default=None, help="Override least-squares base fitting; batch mode currently requires true.")
     parser.add_argument("--comb", action=argparse.BooleanOptionalAction, default=None, help="Override combined strand analysis; batch mode currently requires true.")
     parser.add_argument("--ends", action=argparse.BooleanOptionalAction, default=None, help="Override terminal virtual end levels; batch mode currently requires false.")

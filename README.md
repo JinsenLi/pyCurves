@@ -43,6 +43,16 @@ pycurves test_data/1A1F_b_c.pdb
 pycurves test_data/1A6Y.cif
 ```
 
+Select a specific alternate conformation when the structure contains altlocs:
+
+```bash
+pycurves test_data/4q10.cif --altloc B
+```
+
+Without `--altloc`, pyCurves follows Gemmi's
+`remove_alternative_conformations()` behavior and retains the first listed
+conformer. This is file order, not highest occupancy.
+
 Write JSON or CSV tables:
 
 ```bash
@@ -109,6 +119,8 @@ Common options:
 
 - `--format {curves,json,csv}`: choose Curves-style text, JSON, or CSV output.
 - `--output-file PATH`: write output to a file or CSV prefix.
+- `--altloc CODE`: retain blank/shared atoms plus the requested one-character
+  alternate-conformation code. If omitted, retain the first listed conformer.
 - `--frame-convention standard|legacy`: use Curves+/3DNA-style standard
   frames by default, or choose legacy Curves 5.3-compatible frames.
 - `--axis-convention legacy|curvesplus`: choose the legacy pyCurves/JAX axis or
@@ -313,6 +325,8 @@ inp_files = runner.generate_inp(prefix="1QNB_auto")
 
 JSON output uses the `pycurves-slim-v1` schema. It contains metadata plus flat
 `dataframes` records for local/global parameters, backbone, groove, curvature,
-and annotations. Gapped or uncomputed positions are kept with `null` values so
-sequence-indexed tables stay aligned. CSV output writes one file per dataframe
-using the `--output-file` value as the prefix.
+and annotations. Gapped or uncomputed backbone positions are kept with `null`
+values so sequence-indexed tables stay aligned; each row also reports `valid`,
+`status`, `warnings`, and `missing_parameters`. Residue names and chain IDs are
+stored separately. CSV output writes one file per dataframe using the
+`--output-file` value as the prefix.

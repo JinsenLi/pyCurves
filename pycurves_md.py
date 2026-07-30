@@ -41,6 +41,7 @@ class MDTrajectoryAnalyzer:
         frame_convention: str = "standard",
         axis_convention: str = "legacy",
         continuous_strands: bool = False,
+        altloc: Optional[str] = None,
         fit_override: Optional[bool] = None,
         grv_override: Optional[bool] = None,
         mini_override: Optional[bool] = None,
@@ -56,15 +57,17 @@ class MDTrajectoryAnalyzer:
             axis_convention,
         )
         self.continuous_strands = continuous_strands
+        self.altloc = MolecularLoader.normalize_altloc(altloc)
         self.fit_override = fit_override
         self.grv_override = grv_override
         self.mini_override = mini_override
         self.comb_override = comb_override
         self.ends_override = ends_override
         self.reference_topology_file = self._reference_topology(topology_file, trajectory_file, output_dir)
-        self.template_molecule = self._load_template_molecule(self.reference_topology_file)
+        self.template_molecule = self._load_template_molecule(self.reference_topology_file, self.altloc)
         self.runner_kwargs = {
             "continuous_strands": continuous_strands,
+            "altloc": self.altloc,
             "frame_convention": self.frame_convention,
             "axis_convention": self.axis_convention,
             "fit_override": fit_override,
@@ -159,6 +162,7 @@ class MDTrajectoryAnalyzer:
             },
             "analysis_options": {
                 "continuous_strands": self.continuous_strands,
+                "altloc": self.altloc or "first",
                 "fit": self.fit_override,
                 "grooves": self.grv_override,
                 "mini": effective_mini,
@@ -208,9 +212,9 @@ class MDTrajectoryAnalyzer:
                 self._write_rows_csv(f"{prefix}_{name}_frames.csv", rows)
 
     @staticmethod
-    def _load_template_molecule(topology_file: str) -> MolecularStructure:
+    def _load_template_molecule(topology_file: str, altloc=None) -> MolecularStructure:
         holder = type("MoleculeHolder", (), {"molecule": MolecularStructure()})()
-        MolecularLoader.load(topology_file, holder)
+        MolecularLoader.load(topology_file, holder, altloc=altloc)
         return holder.molecule
 
     @staticmethod
@@ -251,6 +255,12 @@ class MDTrajectoryAnalyzer:
 
     def _molecule_for_frame(self, coordinates: np.ndarray) -> MolecularStructure:
         coordinates = np.asarray(coordinates, dtype=float)
+        if coordinates.shape != self.template_molecule.coordinates.shape:
+            source_indices = self.template_molecule.source_atom_indices
+            if (source_indices is not None and coordinates.ndim == 2 and coordinates.shape[1] == 3
+                    and len(source_indices) == self.template_molecule.coordinates.shape[0]
+                    and len(source_indices) > 0 and int(np.max(source_indices)) < coordinates.shape[0]):
+                coordinates = coordinates[source_indices]
         if coordinates.shape != self.template_molecule.coordinates.shape:
             raise ValueError(
                 "Trajectory frame atom count does not match the topology molecule: "
@@ -449,6 +459,7 @@ def analyze_trajectory(
     frame_convention: str = "standard",
     axis_convention: str = "legacy",
     continuous_strands: bool = False,
+    altloc: Optional[str] = None,
     fit: Optional[bool] = None,
     grooves: Optional[bool] = None,
     mini: Optional[bool] = None,
@@ -479,6 +490,7 @@ def analyze_trajectory(
         frame_convention=frame_convention,
         axis_convention=axis_convention,
         continuous_strands=continuous_strands,
+        altloc=altloc,
         fit_override=fit,
         grv_override=grooves,
         mini_override=mini,
