@@ -1,2 +1,6 @@
 *.pyc
 __pycache__/
+/curves_source_code
+/transfer_research
+/tests
+/figures

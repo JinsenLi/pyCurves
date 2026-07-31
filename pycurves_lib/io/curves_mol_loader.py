@@ -645,6 +645,22 @@ class MolecularLoader:
                     )
                     if transform is None:
                         continue
+                    c1_distance = MolecularLoader._annotated_pair_c1_distance(
+                        pair,
+                        side,
+                        source_atoms,
+                        residues,
+                        transform,
+                    )
+                    if c1_distance is not None and not 4.0 <= c1_distance <= 25.0:
+                        warnings.warn(
+                            f"Rejected implausible symmetry mate {symmetry!r} for "
+                            f"{pair.get('pair_name', 'annotated base pair')}: "
+                            f"C1'-C1' distance is {c1_distance:.2f} A.",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        continue
                     generated[generated_key] = generated_chain
                     source_chain_atoms = [
                         atom for atom in atoms_data
@@ -682,7 +698,7 @@ class MolecularLoader:
                 return default
             return str(raw).strip().strip("'\"")
 
-        transforms = {}
+        transforms = {"exact": {}, "by_operation_number": {}}
         for row in table:
             try:
                 matrix = np.array([
@@ -704,14 +720,45 @@ class MolecularLoader:
                 return transform
 
             transform = make_transform(matrix, vector)
-            for key in (
-                value(row, "id"),
-                value(row, "name"),
-                value(row, "symmetry_operation"),
-            ):
+            operator_name = value(row, "name")
+            for key in (value(row, "id"), operator_name, value(row, "symmetry_operation")):
                 if key:
-                    transforms[key] = transform
+                    transforms["exact"][key] = transform
+            operation_number = operator_name.split("_", 1)[0]
+            if operation_number.isdigit():
+                transforms["by_operation_number"].setdefault(operation_number, transform)
         return transforms
+
+    @staticmethod
+    def _annotated_pair_c1_distance(pair, transformed_side, source_atoms, residues, transform):
+        """Return C1'-C1' distance to an identity-symmetry annotated partner."""
+        other_side = "j" if transformed_side == "i" else "i"
+        if not MolecularLoader._is_identity_symmetry(pair.get(f"{other_side}_symmetry", "")):
+            return None
+        other_residue_id = pair.get(f"{other_side}_residue_id")
+        if other_residue_id is None:
+            return None
+        other_key = (
+            str(pair.get(f"{other_side}_chain_id", "")).strip(),
+            int(other_residue_id),
+            str(pair.get(f"{other_side}_residue_name", "")).strip().upper(),
+        )
+        other_atoms = residues.get(other_key)
+        if not other_atoms:
+            return None
+
+        def c1_position(atoms):
+            for atom in atoms:
+                if MolecularLoader._clean_atom_name(atom["name"]) in {"C1'", "C1*"}:
+                    return np.asarray(atom["pos"], dtype=float)
+            return None
+
+        source_c1 = c1_position(source_atoms)
+        other_c1 = c1_position(other_atoms)
+        if source_c1 is None or other_c1 is None:
+            return None
+        transformed_c1 = np.asarray(transform(source_c1), dtype=float)
+        return float(np.linalg.norm(transformed_c1 - other_c1))
 
     @staticmethod
     def _is_identity_symmetry(symmetry: str) -> bool:
@@ -724,12 +771,18 @@ class MolecularLoader:
 
     @staticmethod
     def _cif_symmetry_transform(symmetry: str, operations, cell, operator_transforms=None):
-        explicit_transform = (operator_transforms or {}).get(str(symmetry).strip())
+        transform_maps = operator_transforms or {}
+        exact_transforms = transform_maps.get("exact", transform_maps)
+        symmetry_text = str(symmetry).strip()
+        explicit_transform = exact_transforms.get(symmetry_text)
         if explicit_transform is not None:
             return explicit_transform
 
         try:
-            op_text, translation_text = str(symmetry).split("_", 1)
+            op_text, translation_text = symmetry_text.split("_", 1)
+            explicit_transform = transform_maps.get("by_operation_number", {}).get(op_text)
+            if explicit_transform is not None:
+                return explicit_transform
             op_index = int(op_text) - 1
             translation = [int(ch) - 5 for ch in translation_text[:3]]
             operation = operations[op_index]
