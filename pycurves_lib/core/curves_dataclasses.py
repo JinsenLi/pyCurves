@@ -638,6 +638,8 @@ class MolecularStructure:
     connectivity: np.ndarray = None   # matd (kam, 7) [cite: 1, 89]
     subunit_boundaries: np.ndarray = None # ncen [cite: 1, 89]
     source_base_pairs: list = None
+    source_bonds: list = None
+    connectivity_sources: dict = None
     crystal_cell: tuple = None
     spacegroup_hm: str = ""
 

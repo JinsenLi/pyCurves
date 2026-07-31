@@ -126,6 +126,7 @@ class MolecularLoader:
             return_altlocs=True,
         )
         atoms_data = MolecularLoader._filter_unfit_modified_residues(atoms_data)
+        source_bonds = MolecularLoader._gemmi_explicit_phosphodiester_bonds(structure)
         if not atoms_data:
             raise ValueError("the first model contains no supported atom records")
 
@@ -152,6 +153,7 @@ class MolecularLoader:
             crystal_cell=crystal_cell,
             spacegroup_hm=spacegroup_hm,
             source_base_pairs=source_base_pairs,
+            source_bonds=source_bonds,
             altloc_selection=altloc,
             available_altlocs=available_altlocs,
         )
@@ -273,6 +275,7 @@ class MolecularLoader:
 
         atoms_data = MolecularLoader._filter_unfit_modified_residues(atoms_data)
         source_base_pairs = MolecularLoader._read_cif_base_pair_annotations(block)
+        source_bonds = MolecularLoader._gemmi_explicit_phosphodiester_bonds(st)
         atoms_data, source_base_pairs = MolecularLoader._append_cif_symmetry_mates(
             atoms_data,
             source_base_pairs,
@@ -287,6 +290,7 @@ class MolecularLoader:
             crystal_cell=MolecularLoader._gemmi_cell_tuple(st) if len(st) > 0 else None,
             spacegroup_hm=st.spacegroup_hm if len(st) > 0 else "",
             source_base_pairs=source_base_pairs,
+            source_bonds=source_bonds,
             altloc_selection=altloc,
             available_altlocs=available_altlocs,
         )
@@ -381,6 +385,54 @@ class MolecularLoader:
         return atoms_data
 
     @staticmethod
+    def _gemmi_explicit_phosphodiester_bonds(structure):
+        """Return explicit covalent O3'-P links declared by Gemmi's source model."""
+        if structure is None:
+            return []
+
+        allowed_types = {gemmi.ConnectionType.Covale, gemmi.ConnectionType.Unknown}
+        bonds = []
+        seen = set()
+
+        def endpoint(address):
+            residue_id = address.res_id
+            altloc = str(address.altloc)
+            if altloc in {"", " ", ".", "?"} or altloc == chr(0):
+                altloc = ""
+            return {
+                "chain_id": str(address.chain_name).strip(),
+                "res_id": int(residue_id.seqid.num),
+                "insertion_code": str(residue_id.seqid.icode).strip(),
+                "res_name": str(residue_id.name).strip().upper(),
+                "atom_name": MolecularLoader._clean_atom_name(address.atom_name),
+                "altloc": altloc,
+            }
+
+        for connection in structure.connections:
+            if connection.type not in allowed_types:
+                continue
+            first = endpoint(connection.partner1)
+            second = endpoint(connection.partner2)
+            names = {first["atom_name"], second["atom_name"]}
+            if names not in ({"O3'", "P"}, {"O3*", "P"}):
+                continue
+            key = tuple(sorted((
+                (first["chain_id"], first["res_id"], first["insertion_code"], first["res_name"], first["atom_name"]),
+                (second["chain_id"], second["res_id"], second["insertion_code"], second["res_name"], second["atom_name"]),
+            )))
+            if key in seen:
+                continue
+            seen.add(key)
+            bonds.append({
+                "first": first,
+                "second": second,
+                "source": "explicit",
+                "connection_name": str(connection.name),
+            })
+        return bonds
+
+
+    @staticmethod
     def _gemmi_cell_tuple(structure):
         cell = structure.cell
         return cell.a, cell.b, cell.c, cell.alpha, cell.beta, cell.gamma
@@ -400,6 +452,7 @@ class MolecularLoader:
         spacegroup_hm,
         source_base_pairs,
         altloc_selection=None,
+        source_bonds=(),
         available_altlocs=(),
     ):
         molecule = context.molecule
@@ -423,6 +476,7 @@ class MolecularLoader:
         molecule.altloc_selection = altloc_selection or "first"
         molecule.available_altlocs = tuple(available_altlocs)
         molecule.source_base_pairs = source_base_pairs
+        molecule.source_bonds = list(source_bonds or [])
 
     @staticmethod
     def _pdb_float(value, default):
@@ -1122,50 +1176,142 @@ class MolecularLoader:
         mol.kcen = len(boundaries) - 1
 
     @staticmethod
-    def _build_connectivity(context: 'CurvesContext', threshold=1.8):
-        """
+    def _build_connectivity(
+        context: 'CurvesContext',
+        threshold=1.8,
+        phosphodiester_threshold=2.0,
+    ):
+        """Build a covalent graph with strict, topology-independent O3'-P links.
+
+        Explicit source-file phosphodiester links are authoritative. When they
+        are absent, only same-model, same-chain nucleic-acid O3'-P pairs within
+        the tight phosphodiester cutoff may connect different residues.
         """
         mol = context.molecule
         from scipy.spatial import KDTree
+
         coords = mol.coordinates
-        tree = KDTree(coords)
-
-        pairs = tree.query_pairs(threshold)
-
         connectivity = np.zeros((len(coords), 7), dtype=int)
+        if len(coords) == 0:
+            mol.connectivity = connectivity
+            mol.connectivity_sources = {}
+            return
+
         subunit_by_atom = np.full(len(coords), -1, dtype=int)
+        subunit_is_nucleic = np.zeros(mol.kcen, dtype=bool)
         for subunit in range(mol.kcen):
             start = int(mol.subunit_boundaries[subunit])
             stop = int(mol.subunit_boundaries[subunit + 1])
             subunit_by_atom[start:stop] = subunit
+            atom_names = {
+                MolecularLoader._clean_atom_name(name)
+                for name in mol.atom_names[start:stop]
+            }
+            residue_name = str(mol.residue_names[start]).strip() if start < stop else ""
+            subunit_is_nucleic[subunit] = (
+                MolecularLoader._base_symbol(residue_name) in MolecularLoader.DNA_BASES
+                and bool(atom_names & {"C1'", "C1*"})
+            )
 
-        counts = np.zeros(len(coords), dtype=int)
+        adjacency = [set() for _ in range(len(coords))]
+        edge_sources = {}
 
-        for i, j in pairs:
-            same_subunit = subunit_by_atom[i] == subunit_by_atom[j]
-            if not same_subunit:
-                same_chain = str(mol.chain_ids[i]).strip() == str(mol.chain_ids[j]).strip()
-                adjacent_subunits = abs(int(subunit_by_atom[i]) - int(subunit_by_atom[j])) == 1
-                names = {
-                    MolecularLoader._clean_atom_name(mol.atom_names[i]),
-                    MolecularLoader._clean_atom_name(mol.atom_names[j]),
-                }
-                is_phosphodiester = names in ({"O3'", "P"}, {"O3*", "P"})
-                if not (same_chain and adjacent_subunits and is_phosphodiester):
-                    continue
-            if mol.model_ids is not None and mol.model_ids[i] != mol.model_ids[j]:
+        def add_edge(first, second, source):
+            if first == second or first < 0 or second < 0:
+                return
+            edge = tuple(sorted((int(first), int(second))))
+            adjacency[edge[0]].add(edge[1])
+            adjacency[edge[1]].add(edge[0])
+            if source == "explicit" or edge not in edge_sources:
+                edge_sources[edge] = source
+
+        atom_lookup = {}
+        atom_lookup_without_name = {}
+        for atom_idx in range(len(coords)):
+            insertion = str(mol.insertion_codes[atom_idx]).strip() if mol.insertion_codes is not None else ""
+            residue_name = str(mol.residue_names[atom_idx]).strip().upper()
+            atom_name = MolecularLoader._clean_atom_name(mol.atom_names[atom_idx])
+            short_key = (
+                str(mol.chain_ids[atom_idx]).strip(),
+                int(mol.residue_ids[atom_idx]),
+                insertion,
+                atom_name,
+            )
+            atom_lookup.setdefault(short_key + (residue_name,), []).append(atom_idx)
+            atom_lookup_without_name.setdefault(short_key, []).append(atom_idx)
+
+        def resolve_endpoint(endpoint):
+            short_key = (
+                str(endpoint.get("chain_id", "")).strip(),
+                int(endpoint.get("res_id", 0)),
+                str(endpoint.get("insertion_code", "")).strip(),
+                MolecularLoader._clean_atom_name(endpoint.get("atom_name", "")),
+            )
+            residue_name = str(endpoint.get("res_name", "")).strip().upper()
+            matches = atom_lookup.get(short_key + (residue_name,), []) if residue_name else []
+            if not matches:
+                matches = atom_lookup_without_name.get(short_key, [])
+            return int(matches[0]) if matches else -1
+
+        for bond in getattr(mol, "source_bonds", None) or []:
+            first = resolve_endpoint(bond.get("first", {}))
+            second = resolve_endpoint(bond.get("second", {}))
+            if first < 0 or second < 0:
+                continue
+            if mol.model_ids is not None and mol.model_ids[first] != mol.model_ids[second]:
+                continue
+            names = {
+                MolecularLoader._clean_atom_name(mol.atom_names[first]),
+                MolecularLoader._clean_atom_name(mol.atom_names[second]),
+            }
+            if names in ({"O3'", "P"}, {"O3*", "P"}):
+                add_edge(first, second, "explicit")
+
+        tree = KDTree(coords)
+        spatial_cutoff = max(float(threshold), float(phosphodiester_threshold))
+        for first, second in sorted(tree.query_pairs(spatial_cutoff)):
+            if mol.model_ids is not None and mol.model_ids[first] != mol.model_ids[second]:
                 continue
 
-            if counts[i] < 6:
-                connectivity[i, counts[i]] = j + 1
-                counts[i] += 1
-            if counts[j] < 6:
-                connectivity[j, counts[j]] = i + 1
-                counts[j] += 1
+            distance = float(np.linalg.norm(coords[first] - coords[second]))
+            same_subunit = subunit_by_atom[first] == subunit_by_atom[second]
+            if same_subunit:
+                if distance <= threshold:
+                    add_edge(first, second, "distance_inferred")
+                continue
 
-        connectivity[:, 6] = counts
+            if distance > phosphodiester_threshold:
+                continue
+            first_subunit = int(subunit_by_atom[first])
+            second_subunit = int(subunit_by_atom[second])
+            if first_subunit < 0 or second_subunit < 0:
+                continue
+            if not (subunit_is_nucleic[first_subunit] and subunit_is_nucleic[second_subunit]):
+                continue
+            if str(mol.chain_ids[first]).strip() != str(mol.chain_ids[second]).strip():
+                continue
+            names = {
+                MolecularLoader._clean_atom_name(mol.atom_names[first]),
+                MolecularLoader._clean_atom_name(mol.atom_names[second]),
+            }
+            if names in ({"O3'", "P"}, {"O3*", "P"}):
+                add_edge(first, second, "phosphodiester_inferred")
+
+        for atom_idx, neighbors in enumerate(adjacency):
+            ordered = sorted(
+                neighbors,
+                key=lambda neighbor: (
+                    edge_sources.get(tuple(sorted((atom_idx, neighbor)))) != "explicit",
+                    neighbor,
+                ),
+            )
+            count = min(len(ordered), 6)
+            if count:
+                connectivity[atom_idx, :count] = np.asarray(ordered[:count], dtype=int) + 1
+            connectivity[atom_idx, 6] = count
 
         mol.connectivity = connectivity
+        mol.connectivity_sources = edge_sources
 
     def _identify_base_atoms(self, strand: int, level: int, ctx: 'CurvesContext'):
         mol = ctx.molecule

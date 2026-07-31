@@ -73,6 +73,7 @@ SUGAR_C1_ATOMS = ("C1'", "C1*")
 def annotate_context(ctx) -> Dict[str, List[Dict[str, Any]]]:
     """Build pyCurves-native annotations for noncanonical and modified bases."""
     base_fit_quality = list(getattr(ctx, "annotations", {}).get("base_fit_quality", []))
+    backbone_links = list(getattr(ctx, "annotations", {}).get("backbone_links", []))
     source_base_pairs = _source_base_pair_annotations(ctx)
     source_by_level = {
         int(row["mapped_level"]): row
@@ -94,6 +95,7 @@ def annotate_context(ctx) -> Dict[str, List[Dict[str, Any]]]:
         "base_fit_quality": base_fit_quality,
         "skipped_shape_parameters": skipped,
         "noncanonical_warnings": warnings,
+        "backbone_links": backbone_links,
     }
     ctx.annotations.update(annotations)
     # Older output paths used these lists to suppress unsupported/noncanonical

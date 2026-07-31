@@ -727,10 +727,11 @@ class RobustTopologyInferrer:
         ]
         anchors.sort(key=lambda item: primary_position[item[0]])
 
-        partner_positions = [partner_position[partner_subunit] for _, partner_subunit, _ in anchors]
-        partner_direction = -1
-        if len(partner_positions) >= 2:
-            partner_direction = 1 if partner_positions[-1] > partner_positions[0] else -1
+        partner_direction = self._select_partner_direction(
+            anchors,
+            primary_position,
+            partner_position,
+        )
 
         anchors = self._drop_isolated_register_outliers(
             anchors,
@@ -817,6 +818,48 @@ class RobustTopologyInferrer:
             pair_geometry_markers=pair_geometry_markers,
             glycosidic_conformation_markers=glycosidic_conformation_markers,
         )
+
+    @staticmethod
+    def _partner_orientation_scores(
+        anchors: Sequence[Tuple[int, int, BasePairCandidate]],
+        primary_position: Dict[int, int],
+        partner_position: Dict[int, int],
+    ) -> Dict[int, float]:
+        """Score both partner orientations from local register consistency.
+
+        A reciprocal residual score makes each consecutive anchor vote for the
+        orientation whose partner displacement best matches its primary-strand
+        displacement. Large register jumps and circular wraparound steps have
+        bounded influence instead of allowing the two endpoints to decide the
+        whole strand orientation.
+        """
+        scores = {-1: 0.0, 1: 0.0}
+        for previous, current in zip(anchors, anchors[1:]):
+            primary_step = primary_position[current[0]] - primary_position[previous[0]]
+            partner_step = partner_position[current[1]] - partner_position[previous[1]]
+            if primary_step <= 0 or partner_step == 0:
+                continue
+
+            scale = float(max(1, primary_step))
+            for direction in (-1, 1):
+                normalized_residual = abs(partner_step - direction * primary_step) / scale
+                scores[direction] += 1.0 / (1.0 + normalized_residual)
+        return scores
+
+    @classmethod
+    def _select_partner_direction(
+        cls,
+        anchors: Sequence[Tuple[int, int, BasePairCandidate]],
+        primary_position: Dict[int, int],
+        partner_position: Dict[int, int],
+    ) -> int:
+        """Return the best-scoring orientation, preferring antiparallel ties."""
+        scores = cls._partner_orientation_scores(
+            anchors,
+            primary_position,
+            partner_position,
+        )
+        return max((-1, 1), key=lambda direction: scores[direction])
 
     def _hoogsteen_marker_subunit(self, candidate: BasePairCandidate) -> int:
         """Return the base that uses the Hoogsteen edge in a marked pair."""

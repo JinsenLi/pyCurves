@@ -692,6 +692,25 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "residue": row.get("residue_name"),
                 "parent_base": row.get("parent_base"),
             })
+        for row in annotations.get("backbone_links", []):
+            relation = row.get("topology_relation", "")
+            if relation == "sequential":
+                continue
+            rows.append({
+                "annotation_type": "backbone_link",
+                "severity": "warn" if row.get("topology_discontinuity") else "info",
+                "level": row.get("level"),
+                "location": f"strand {row.get('strand')} level {row.get('level')}",
+                "code": relation,
+                "message": (
+                    f"O3'-P link {row.get('source_residue_id')} -> "
+                    f"{row.get('target_residue_id')} follows molecular connectivity."
+                ),
+                "source_subunit": row.get("source_subunit"),
+                "target_subunit": row.get("target_subunit"),
+                "bond_source": row.get("bond_source"),
+                "distance": row.get("distance"),
+            })
         return rows
 
     def _noncanonical_base_pair_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:

@@ -58,9 +58,10 @@ class BackboneAnalyzer:
        
     def _find_all_atoms(self, ctx):
         mol = ctx.molecule
+        backbone_links = ctx.annotations.setdefault("backbone_links", [])
+        backbone_links.clear()
 
         for k in range(ctx.n_strands):
-            forward = (ctx.idr[k] == 1)
 
             for i in range(ctx.ng[k], ctx.nr[k] + 1):
                 if ctx.li[i, k] < -2:
@@ -96,24 +97,24 @@ class BackboneAnalyzer:
                 if c5 >= 0:
                     self._match_neighbors(ctx, k, i, c5, {"O5'": 13, "O5*": 13})
 
-                if (forward and i < ctx.nr[k]) or ((not forward) and i > ctx.ng[k]):
-                    o3 = ctx.backbone.atom_map[k, i, 7]
-                    if o3 >= 0:
-                        p_idx = self._find_neighbor_by_name(mol, o3, {"P"})
-                        if p_idx >= 0:
-                            ctx.backbone.atom_map[k, i, 8] = p_idx
+                o3 = ctx.backbone.atom_map[k, i, 7]
+                if o3 >= 0:
+                    p_idx = self._find_neighbor_by_name(mol, o3, {"P"})
+                    if p_idx >= 0:
+                        ctx.backbone.atom_map[k, i, 8] = p_idx
+                        self._record_backbone_link(ctx, k, i, o3, p_idx)
 
-                            o5_next = self._find_neighbor_by_name(mol, p_idx, {"O5'", "O5*"})
-                            if o5_next >= 0:
-                                ctx.backbone.atom_map[k, i, 9] = o5_next
+                        o5_next = self._find_neighbor_by_name(mol, p_idx, {"O5'", "O5*"})
+                        if o5_next >= 0:
+                            ctx.backbone.atom_map[k, i, 9] = o5_next
 
-                                c5_next = self._find_neighbor_by_name(mol, o5_next, {"C5'", "C5*"})
-                                if c5_next >= 0:
-                                    ctx.backbone.atom_map[k, i, 10] = c5_next
+                            c5_next = self._find_neighbor_by_name(mol, o5_next, {"C5'", "C5*"})
+                            if c5_next >= 0:
+                                ctx.backbone.atom_map[k, i, 10] = c5_next
 
-                                    c4_next = self._find_neighbor_by_name(mol, c5_next, {"C4'", "C4*"})
-                                    if c4_next >= 0:
-                                        ctx.backbone.atom_map[k, i, 11] = c4_next
+                                c4_next = self._find_neighbor_by_name(mol, c5_next, {"C4'", "C4*"})
+                                if c4_next >= 0:
+                                    ctx.backbone.atom_map[k, i, 11] = c4_next
                 #print(ctx.backbone.atom_map[k, i])
                 #print(ctx.molecule.atom_names[ ctx.backbone.atom_map[k, i] ])
 
@@ -226,6 +227,96 @@ class BackboneAnalyzer:
                 return nb0
         return -1
         
+    def _record_backbone_link(self, ctx, strand, level, o3_idx, p_idx):
+        """Record how a graph-derived phosphodiester link relates to the map."""
+        mol = ctx.molecule
+        source_subunit = self._subunit_for_atom(mol, o3_idx)
+        target_subunit = self._subunit_for_atom(mol, p_idx)
+
+        mapped_row = np.asarray(ctx.ni_map[strand], dtype=int)
+        target_matches = np.flatnonzero(mapped_row == target_subunit)
+        target_level = int(target_matches[0] + 1) if len(target_matches) else None
+        direction = int(ctx.idr[strand])
+        expected_level = int(level + direction)
+        expected_subunit = None
+        if 1 <= expected_level <= len(mapped_row):
+            mapped = int(mapped_row[expected_level - 1])
+            expected_subunit = mapped if mapped > 0 else None
+
+        wraps_topology = (
+            direction > 0
+            and level == int(ctx.nr[strand])
+            and target_level == int(ctx.ng[strand])
+        ) or (
+            direction < 0
+            and level == int(ctx.ng[strand])
+            and target_level == int(ctx.nr[strand])
+        )
+        if self._is_chain_closure(mol, source_subunit, target_subunit):
+            relation = "circular_closure"
+        elif target_level == expected_level:
+            relation = "sequential"
+        elif wraps_topology:
+            relation = "topology_wraparound"
+        elif target_level is None:
+            relation = "outside_topology"
+        else:
+            relation = "topology_discontinuity"
+
+        edge = tuple(sorted((int(o3_idx), int(p_idx))))
+        bond_source = (getattr(mol, "connectivity_sources", None) or {}).get(edge, "unknown")
+        ctx.annotations.setdefault("backbone_links", []).append({
+            "strand": int(strand + 1),
+            "level": int(level),
+            "source_subunit": int(source_subunit),
+            "target_subunit": int(target_subunit),
+            "target_level": target_level,
+            "expected_target_subunit": expected_subunit,
+            "source_chain_id": str(mol.chain_ids[o3_idx]).strip(),
+            "target_chain_id": str(mol.chain_ids[p_idx]).strip(),
+            "source_residue_id": int(mol.residue_ids[o3_idx]),
+            "target_residue_id": int(mol.residue_ids[p_idx]),
+            "distance": float(np.linalg.norm(mol.coordinates[o3_idx] - mol.coordinates[p_idx])),
+            "bond_source": bond_source,
+            "topology_relation": relation,
+            "topology_discontinuity": relation in {"outside_topology", "topology_discontinuity"},
+        })
+
+    @staticmethod
+    def _subunit_for_atom(mol, atom_idx):
+        boundaries = np.asarray(mol.subunit_boundaries, dtype=int)
+        if atom_idx < 0 or atom_idx >= int(boundaries[-1]):
+            return 0
+        return int(np.searchsorted(boundaries, atom_idx, side="right"))
+
+    @staticmethod
+    def _is_chain_closure(mol, source_subunit, target_subunit):
+        """True only for a last-to-first nucleic residue link in one chain."""
+        boundaries = np.asarray(mol.subunit_boundaries, dtype=int)
+        if source_subunit <= 0 or target_subunit <= 0:
+            return False
+        source_start = int(boundaries[source_subunit - 1])
+        target_start = int(boundaries[target_subunit - 1])
+        source_chain = str(mol.chain_ids[source_start]).strip()
+        if source_chain != str(mol.chain_ids[target_start]).strip():
+            return False
+
+        chain_subunits = []
+        for subunit in range(1, len(boundaries)):
+            start = int(boundaries[subunit - 1])
+            stop = int(boundaries[subunit])
+            if str(mol.chain_ids[start]).strip() != source_chain:
+                continue
+            atom_names = {str(name).strip().upper() for name in mol.atom_names[start:stop]}
+            if atom_names & {"C1'", "C1*"}:
+                chain_subunits.append(subunit)
+        return bool(
+            chain_subunits
+            and source_subunit == chain_subunits[-1]
+            and target_subunit == chain_subunits[0]
+        )
+
+
     @staticmethod
     def torp(p1, p2, p3, p4=None):
         """
