@@ -306,6 +306,11 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         base_base = []
         if ctx.cfg.comb and ctx.nst > 1:
             for partner_strand in range(1, ctx.nst):
+                base_base_by_level = (
+                    dict(calc._global_base_base_values_by_level(partner_strand))
+                    if not curvesplus_axis and partner_strand == 1
+                    else {}
+                )
                 for sequence_index, level in enumerate(primary_levels, start=1):
                     has_pair = calc._has_level(0, level) and calc._has_level(partner_strand, level)
                     duplex = calc._duplex_id(0, partner_strand, level)
@@ -323,7 +328,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                         continue
                 
                     base_base.append(_nullable_parameter_record(
-                        calc._global_base_base_values(partner_strand, level) if has_pair else None,
+                        base_base_by_level.get(level) if has_pair else None,
                         BASE_BASE_PARAMETERS,
                         partner_strand=partner_strand + 1,
                         sequence_index=sequence_index,

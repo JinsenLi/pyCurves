@@ -418,11 +418,8 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             and str(getattr(self.ctx.cfg, "axis_convention", "legacy")).lower() == "curvesplus"
         )
 
-    def _global_base_base_values(self, partner_strand: int, level: int):
-        """Return Section D global base-base values for strand 0 with partner_strand."""
-        if self._use_curvesplus_axis_convention() or getattr(self.ctx, "axis_reference_uses_continuity", False):
-            return self._local_base_base_values(partner_strand, level)
-
+    def _instantaneous_global_base_base_values(self, partner_strand: int, level: int):
+        """Return the current-level terms used to build Curves Section D."""
         if not (self._has_level(0, level) and self._has_level(partner_strand, level)):
             return None
 
@@ -448,6 +445,58 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             buc_val = diff_ang(p.helical[partner_strand, level, 3], p.helical[0, level, 3])
 
         return np.array([shr_val, str_val, stg, buc_val, pro_val, opn], dtype=float)
+
+    def _curves_global_base_base_values_by_level(self, partner_strand: int):
+        """Yield Curves Section D values, including cumulative stagger/opening.
+
+        Curves adds the current helical-coordinate differences before testing
+        whether the preceding pair is missing.  Consequently, the first valid
+        pair after a break is reported with zero stagger and opening, and
+        accumulation resumes at the following pair.
+        """
+        _, _, iste, iene = self._axis_bounds(0)
+        stagger = 0.0
+        opening = 0.0
+
+        for level in range(iste, iene + 1):
+            values = self._instantaneous_global_base_base_values(partner_strand, level)
+            if values is None:
+                continue
+
+            values = values.copy()
+            stagger += values[2]
+            opening += values[5]
+            if level > iste and (
+                not self._has_level(0, level - 1)
+                or not self._has_level(partner_strand, level - 1)
+            ):
+                stagger = 0.0
+                opening = 0.0
+
+            values[2] = stagger
+            values[5] = opening
+            yield level, values
+
+    def _global_base_base_values_by_level(self, partner_strand: int):
+        """Yield the Section D values selected by the active convention."""
+        if self._use_curvesplus_axis_convention() or getattr(
+            self.ctx, "axis_reference_uses_continuity", False
+        ):
+            _, _, iste, iene = self._axis_bounds(0)
+            for level in range(iste, iene + 1):
+                values = self._local_base_base_values(partner_strand, level)
+                if values is not None:
+                    yield level, values
+            return
+
+        yield from self._curves_global_base_base_values_by_level(partner_strand)
+
+    def _global_base_base_values(self, partner_strand: int, level: int):
+        """Return Section D global base-base values for one level."""
+        for current_level, values in self._global_base_base_values_by_level(partner_strand):
+            if current_level == level:
+                return values
+        return None
 
     def _local_base_base_values(self, partner_strand: int, level: int):
         """Return local intra-base-pair values from the two fitted base frames.
@@ -969,12 +1018,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             print("  |D| Global Base-Base Parameters |")
             print("  ---------------------------------")
             
-            def diff_ang(a, b):
-                """Fortran-compatible implementation."""
-                res = a - b
-                if abs(res) > 180.0:
-                    res -= math.copysign(360.0, res)
-                return res
 
             for k in range(1, nst):
                 print(f"\n  Strand 1 with strand {k+1} ...")
@@ -983,7 +1026,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                 
                 nav = 0
                 hela = np.zeros(6)
-                stg, opn = 0.0, 0.0
+                base_base_by_level = dict(self._curves_global_base_base_values_by_level(k))
 
                 for i in range(self.optimizer.iste, self.optimizer.iene + 1):
                     idx_1 = 0
@@ -999,30 +1042,16 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                         res_name_k, _, res_num_k = self._residue_label(k, i)
                         duplex_id = f"{res_name_1}{res_num_1:3d}-{res_name_k}{res_num_k:3d}"
 
-                        if i > self.optimizer.iste:
-                            if self.ctx.li[i-1, 0] < -1 or self.ctx.li[i-1, k] < -1:
-                                stg, opn = 0.0, 0.0
-                        
-                        stg += p.helical[0, i, 2] - p.helical[k, i, 2]
-                        opn += p.helical[0, i, 5] - p.helical[k, i, 5]
-
-                        str_val = p.helical[0, i, 1] + p.helical[k, i, 1] # Stretch
-                        pro_val = diff_ang(p.helical[0, i, 4], -p.helical[k, i, 4]) # Propeller
-
-                        if self.ctx.idr[0] >= self.ctx.idr[k]:
-                            shr_val = p.helical[0, i, 0] - p.helical[k, i, 0] # Shear
-                            buc_val = diff_ang(p.helical[0, i, 3], p.helical[k, i, 3]) # Buckle
-                        else:
-                            shr_val = p.helical[k, i, 0] - p.helical[0, i, 0]
-                            buc_val = diff_ang(p.helical[k, i, 3], p.helical[0, i, 3])
-
-                        if not self._all_finite([shr_val, str_val, stg, buc_val, pro_val, opn]):
+                        values = base_base_by_level.get(i)
+                        if values is None or not self._all_finite(values):
                             print(f"  {i:3d})      -")
                             continue
 
+                        shr_val, str_val, stg, buc_val, pro_val, opn = values
+
                         nav += 1
 
-                        hela += [shr_val, str_val, stg, buc_val, pro_val, opn]
+                        hela += values
                         
                         print(f"  {i:3d}) {duplex_id} {shr_val:8.2f} {str_val:8.2f} {stg:8.2f} "
                               f"{buc_val:8.2f} {pro_val:8.2f} {opn:8.2f} {self.bcod[i, 0]:5d} {self.tcod[i, 0]:5d}")
