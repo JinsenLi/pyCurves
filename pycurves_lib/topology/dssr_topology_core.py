@@ -16,7 +16,7 @@ from pycurves_lib.io.dssr_json import (
     DSSRUnit,
     matched_pair_identities,
 )
-from pycurves_lib.topology.topology_inferrer import InferredTopology, RobustTopologyInferrer
+from pycurves_lib.topology.topology_inferrer import InferredTopology
 
 
 _VALID_LW_TAG = re.compile(r"^[ct][WHS][WHS]$", re.IGNORECASE)
@@ -94,9 +94,6 @@ class DSSRTopologyBuilder:
             if tag:
                 pair_geometry_markers[(1, level)] = tag
 
-        inferrer = RobustTopologyInferrer(self.molecule, pdbfile=Path(self.pdbfile).name)
-        inferrer._collect_residues()
-        glycosidic_markers = inferrer._glycosidic_markers_for_map(ni_map)
         topology = InferredTopology(
             pdbfile=Path(self.pdbfile).name,
             output_prefix=Path(self.pdbfile).stem,
@@ -115,7 +112,6 @@ class DSSRTopologyBuilder:
             fit=True,
             grv=len(oriented.resolved) >= 4,
             pair_geometry_markers=pair_geometry_markers,
-            glycosidic_conformation_markers=glycosidic_markers,
         )
 
         source_rows, mapping_warnings = self._source_base_pair_rows(unit)

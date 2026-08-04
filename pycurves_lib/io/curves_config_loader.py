@@ -40,7 +40,6 @@ class ConfigLoader:
             current_idx,
             hoogsteen_markers,
             pair_geometry_markers,
-            glycosidic_conformation_markers,
         ) = ConfigLoader._parse_strand_maps(
             data_lines,
             strand_count,
@@ -88,7 +87,6 @@ class ConfigLoader:
             "ni_map": subunit_map,
             "hoogsteen_markers": hoogsteen_markers,
             "pair_geometry_markers": pair_geometry_markers,
-            "glycosidic_conformation_markers": glycosidic_conformation_markers,
             "config": cfg,
         }
 
@@ -208,23 +206,22 @@ class ConfigLoader:
         seen_kinds = set()
         for tag in raw_tags:
             normalized = tag.strip().lower().replace("_", "").replace("-", "")
+            # Older pyCurves builds emitted glycosidic-conformation annotations.
+            # They never affect shape calculations, so accept them as no-ops to
+            # keep existing user-authored .inp files readable.
+            if normalized in {"syn", "anti"}:
+                continue
             if normalized in {"h", "hoog", "hoogsteen"}:
                 tag_info = {"kind": "hoogsteen", "tag": "Hoog"}
-            elif normalized in {"syn", "anti"}:
-                tag_info = {
-                    "kind": "glycosidic_conformation",
-                    "glycosidic_conformation": normalized,
-                    "tag": normalized,
-                }
             else:
                 tag_info = ConfigLoader._parse_lw_geometry_tag(normalized)
             if tag_info is None:
                 raise ValueError(
                     f"Unknown Curves topology tag [{tag}] in token {token!r}; "
-                    "supported tags are [syn], [anti], [Hoog], and Leontis-Westhof-style "
+                    "supported tags are [Hoog] and Leontis-Westhof-style "
                     "geometry tags like [cWW], [tWH], and [cSS]."
                 )
-            kind_group = "pair_geometry" if tag_info["kind"] in {"lw", "hoogsteen"} else tag_info["kind"]
+            kind_group = "pair_geometry"
             if kind_group in seen_kinds:
                 raise ValueError(f"Duplicate {kind_group.replace('_', ' ')} tag in token {token!r}.")
             seen_kinds.add(kind_group)
@@ -287,7 +284,6 @@ class ConfigLoader:
         maps = []
         hoogsteen_markers = set()
         pair_geometry_markers = {}
-        glycosidic_conformation_markers = {}
         current_idx = 1
         range_style = any(":" in line for line in data_lines[1:1 + strand_count])
 
@@ -307,7 +303,6 @@ class ConfigLoader:
                             mapped_unit,
                             hoogsteen_markers,
                             pair_geometry_markers,
-                            glycosidic_conformation_markers,
                         )
                 maps.append(mapping)
                 current_idx += 1
@@ -316,7 +311,6 @@ class ConfigLoader:
                 current_idx,
                 hoogsteen_markers,
                 pair_geometry_markers,
-                glycosidic_conformation_markers,
             )
 
         level_count = max(abs(value) for value in signed_strand_lengths)
@@ -338,7 +332,6 @@ class ConfigLoader:
                             mapped_unit,
                             hoogsteen_markers,
                             pair_geometry_markers,
-                            glycosidic_conformation_markers,
                         )
                 current_idx += 1
             maps.append(mapping[:level_count])
@@ -347,7 +340,6 @@ class ConfigLoader:
             current_idx,
             hoogsteen_markers,
             pair_geometry_markers,
-            glycosidic_conformation_markers,
         )
 
     @staticmethod
@@ -358,7 +350,6 @@ class ConfigLoader:
         mapped_unit: int,
         hoogsteen_markers: set,
         pair_geometry_markers: dict,
-        glycosidic_conformation_markers: dict,
     ) -> None:
         if not tag_infos or mapped_unit == 0:
             return
@@ -372,10 +363,6 @@ class ConfigLoader:
                 marker["level"] = level
                 pair_geometry_markers[(strand, level)] = marker
                 continue
-            if tag_info.get("kind") == "glycosidic_conformation":
-                glycosidic_conformation_markers[(strand, level)] = tag_info[
-                    "glycosidic_conformation"
-                ]
 
     @staticmethod
     def _initialize_helical_input_defaults(

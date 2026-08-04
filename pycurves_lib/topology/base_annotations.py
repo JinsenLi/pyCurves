@@ -19,7 +19,6 @@ CANONICAL_WC_CONTACTS = {
     ("A", "U"): (("N1", "N3"), ("N6", "O4")),
     ("G", "C"): (("N1", "N3"), ("N2", "O2"), ("O6", "N4")),
 }
-SYN_CHI_LIMIT = 90.0
 
 # Edge buckets are the only chemistry vocabulary used by pyCurves frame
 # construction.  Pyrimidine C-H is folded into H for internal use.
@@ -127,7 +126,6 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
             or row.get("has_modified_base")
             or row.get("geometry_flag")
             or row.get("frame_mode") == "contact_geometry"
-            or row.get("syn_orientation_reversal")
         )
     ]
     source_unusual = [
@@ -163,15 +161,6 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
                 notes.append(f"gly={row['glycosidic_orientation']}")
             if row.get("strand_direction") and not geometry_label:
                 notes.append(f"dir={row['strand_direction']}")
-            if row.get("syn_orientation_reversal"):
-                conformation_1 = row.get("glycosidic_conformation_1") or "?"
-                conformation_2 = row.get("glycosidic_conformation_2") or "?"
-                notes.extend([
-                    f"chi={conformation_1}/{conformation_2}",
-                    f"LW-default={row.get('lw_default_strand_orientation') or '?'}",
-                    f"local={row.get('effective_local_orientation') or '?'}",
-                    f"frame={row.get('partner_frame_transform') or '?'}",
-                ])
             if row.get("frame_mode") == "contact_geometry":
                 notes.append("contact_geometry_frames")
             if row.get("contact_confidence"):
@@ -397,15 +386,9 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "edge_2": contact_geometry.get("edge_2", ""),
             "edge_pair": contact_geometry.get("edge_pair", ""),
             "glycosidic_orientation": contact_geometry.get("glycosidic_orientation", ""),
-            "glycosidic_conformation_1": contact_geometry.get("glycosidic_conformation_1", ""),
-            "glycosidic_conformation_2": contact_geometry.get("glycosidic_conformation_2", ""),
-            "lw_default_strand_orientation": contact_geometry.get("lw_default_strand_orientation", ""),
             "lw_strand_orientation": contact_geometry.get("lw_strand_orientation", ""),
-            "syn_orientation_reversal": contact_geometry.get("syn_orientation_reversal", False),
-            "effective_local_orientation": contact_geometry.get("effective_local_orientation", ""),
             "strand_direction": contact_geometry.get("strand_direction", ""),
             "topology_strand_direction": contact_geometry.get("topology_strand_direction", ""),
-            "partner_frame_transform": contact_geometry.get("partner_frame_transform", ""),
             "frame_mode": frame_mode,
             "contact_atom_pairs": contact_geometry.get("contact_atom_pairs", []),
             "contact_count": contact_geometry.get("contact_count", 0),
@@ -474,12 +457,6 @@ def _contact_geometry_for_pair(
         edge_1_ambiguous = False
         edge_2_ambiguous = False
     edge_pair = f"{edge_1}/{edge_2}" if edge_1 and edge_2 else ""
-    glycosidic_conformation_1 = _residue_glycosidic_conformation(
-        ctx, strand_1, level, base_1, atom_map_1
-    )
-    glycosidic_conformation_2 = _residue_glycosidic_conformation(
-        ctx, strand_2, level, base_2, atom_map_2
-    )
     topology_strand_direction = _strand_direction(ctx, strand_1, strand_2)
     manual_glycosidic_orientation = manual_geometry.get("glycosidic_orientation", "")
     canonical_contact_orientation = _canonical_watson_contact_orientation(
@@ -494,15 +471,10 @@ def _contact_geometry_for_pair(
         manual_geometry.get("lw_strand_orientation")
         or manual_geometry.get("strand_direction")
     )
-    lw_default_strand_orientation = manual_lw_strand_orientation or infer_lw_strand_orientation(
+    lw_strand_orientation = manual_lw_strand_orientation or infer_lw_strand_orientation(
         glycosidic_orientation,
         edge_1,
         edge_2,
-    )
-    effective_local_orientation, syn_orientation_reversal = effective_lw_strand_orientation(
-        lw_default_strand_orientation,
-        glycosidic_conformation_1,
-        glycosidic_conformation_2,
     )
 
     has_reliable_contacts = (
@@ -533,16 +505,6 @@ def _contact_geometry_for_pair(
     else:
         frame_mode = "fitted_fallback"
 
-    # The syn-adjusted orientation describes how the LW family relates to the
-    # covalent strand topology. It must not be applied again to fitted or
-    # contact-geometry axes: the observed syn rotation is already present in
-    # those coordinates. Select the partner-frame branch from the LW family.
-    frame_orientation = lw_default_strand_orientation
-    partner_frame_transform = {
-        "parallel": "direct",
-        "antiparallel": "yz_inverted",
-    }.get(frame_orientation, "")
-
     if manual_requested:
         confidence = "manual_inp_geometry"
     elif has_reliable_contacts:
@@ -565,24 +527,14 @@ def _contact_geometry_for_pair(
         "edge_pair": edge_pair,
         "orientation": manual_geometry.get("orientation", ""),
         "glycosidic_orientation": glycosidic_orientation,
-        "glycosidic_conformation_1": glycosidic_conformation_1,
-        "glycosidic_conformation_2": glycosidic_conformation_2,
-        "lw_default_strand_orientation": lw_default_strand_orientation,
-        # Backward-compatible field for the default anti/anti LW table value.
-        "lw_strand_orientation": lw_default_strand_orientation,
-        "syn_orientation_reversal": syn_orientation_reversal,
-        "effective_local_orientation": effective_local_orientation,
-        # Backward-compatible alias used by frame consumers; this is effective local orientation.
-        "strand_direction": effective_local_orientation,
+        "lw_strand_orientation": lw_strand_orientation,
+        "strand_direction": lw_strand_orientation,
         "strand_direction_source": (
-            "lw_geometry_plus_single_syn"
-            if syn_orientation_reversal
-            else manual_geometry.get("strand_direction_source", "")
+            manual_geometry.get("strand_direction_source", "")
             if manual_lw_strand_orientation
-            else "inferred_from_contact_geometry" if lw_default_strand_orientation else ""
+            else "inferred_from_contact_geometry" if lw_strand_orientation else ""
         ),
         "topology_strand_direction": topology_strand_direction,
-        "partner_frame_transform": partner_frame_transform,
         "frame_mode": frame_mode,
         "contact_atom_pairs": contacts,
         "contact_count": len(contacts),
@@ -686,54 +638,6 @@ def _strand_direction(ctx, strand_1: int, strand_2: int) -> str:
         return "unknown"
 
 
-def infer_glycosidic_conformation(base: str, atom_map: Dict[str, np.ndarray]) -> str:
-    """Return syn/anti from the conventional glycosidic chi torsion."""
-    normalized_base = parent_base_name(base)
-    purine = normalized_base in {"A", "G", "I", "P", "R"}
-    o4 = _first_atom_point(atom_map, ("O4'", "O4*", "O1'", "O1*"))
-    c1 = _first_atom_point(atom_map, SUGAR_C1_ATOMS)
-    gly = atom_map.get("N9" if purine else "N1")
-    ring = atom_map.get("C4" if purine else "C2")
-    if o4 is None or c1 is None or gly is None or ring is None:
-        return ""
-    chi = _dihedral_degrees(o4, c1, gly, ring)
-    if chi is None:
-        return ""
-    return "syn" if abs(chi) < SYN_CHI_LIMIT else "anti"
-
-
-def effective_lw_strand_orientation(
-    lw_default_orientation: str,
-    conformation_1: str,
-    conformation_2: str,
-) -> Tuple[str, bool]:
-    """Apply the Leontis-Westhof single-syn reversal to the anti/anti table value."""
-    default = str(lw_default_orientation or "").strip().lower()
-    if default not in {"parallel", "antiparallel"}:
-        return "", False
-    first = str(conformation_1 or "anti").strip().lower()
-    second = str(conformation_2 or "anti").strip().lower()
-    single_syn = (first == "syn") ^ (second == "syn")
-    if not single_syn:
-        return default, False
-    reversed_orientation = "parallel" if default == "antiparallel" else "antiparallel"
-    return reversed_orientation, True
-
-
-def _residue_glycosidic_conformation(
-    ctx,
-    zero_based_strand: int,
-    level: int,
-    base: str,
-    atom_map: Dict[str, np.ndarray],
-) -> str:
-    markers = getattr(ctx, "glycosidic_conformation_markers", {}) or {}
-    explicit = markers.get((zero_based_strand + 1, level))
-    if explicit in {"syn", "anti"}:
-        return explicit
-    return infer_glycosidic_conformation(base, atom_map)
-
-
 def infer_lw_strand_orientation(
     glycosidic_orientation: str,
     edge_1: str,
@@ -772,41 +676,6 @@ def _canonical_watson_contact_orientation(
         if distance is not None and distance <= EDGE_CONTACT_CUTOFF:
             matches += 1
     return "cis" if matches >= 2 else ""
-
-
-def _first_atom_point(
-    atom_map: Dict[str, np.ndarray],
-    atom_names: Tuple[str, ...],
-) -> Optional[np.ndarray]:
-    for atom_name in atom_names:
-        point = atom_map.get(atom_name)
-        if point is not None:
-            return point
-    return None
-
-
-def _dihedral_degrees(
-    p1: np.ndarray,
-    p2: np.ndarray,
-    p3: np.ndarray,
-    p4: np.ndarray,
-) -> Optional[float]:
-    first = np.asarray(p1, dtype=float)
-    second = np.asarray(p2, dtype=float)
-    third = np.asarray(p3, dtype=float)
-    fourth = np.asarray(p4, dtype=float)
-    b0 = -(second - first)
-    b1 = third - second
-    b2 = fourth - third
-    norm_b1 = float(np.linalg.norm(b1))
-    if norm_b1 <= 1.0e-10:
-        return None
-    b1 /= norm_b1
-    v = b0 - np.dot(b0, b1) * b1
-    w = b2 - np.dot(b2, b1) * b1
-    if float(np.linalg.norm(v)) <= 1.0e-10 or float(np.linalg.norm(w)) <= 1.0e-10:
-        return None
-    return float(np.degrees(np.arctan2(np.dot(np.cross(b1, v), w), np.dot(v, w))))
 
 
 def _glycosidic_orientation(

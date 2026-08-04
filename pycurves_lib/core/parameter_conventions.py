@@ -6,11 +6,7 @@ from typing import Optional
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from pycurves_lib.topology.base_annotations import (
-    BASE_EDGE_ATOMS,
-    effective_lw_strand_orientation,
-    infer_lw_strand_orientation,
-)
+from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS, infer_lw_strand_orientation
 
 EQUIVALENT_AXIS_SIGN_FLIPS = (
     np.diag([1.0, 1.0, 1.0]),
@@ -700,7 +696,7 @@ class StandardParameterConvention(LegacyParameterConvention):
         """Choose signed-equivalent frames that describe one step smoothly.
 
         A fitted base or base-pair frame has determinant-preserving 180-degree
-        sign equivalents. Syn/Hoogsteen steps can otherwise report the sign
+        sign equivalents. Noncanonical/Hoogsteen steps can otherwise report the sign
         jump as a nearly 180-degree local rotation. Select the equivalent pair
         with the smallest relative rotation, then prefer the forward-rise
         solution when the rotation score is tied.
@@ -773,45 +769,22 @@ class StandardParameterConvention(LegacyParameterConvention):
         annotation = self._base_pair_annotation(calc, partner_strand, level)
         annotated_geometry = (annotation or {}).get("contact_geometry") or {}
         pair_geometry = contact_geometry or annotated_geometry
-        partner_frame_transform = str(pair_geometry.get("partner_frame_transform") or "").lower()
-        effective_orientation = str(pair_geometry.get("effective_local_orientation") or "").lower()
-        lw_default_orientation = str(
-            pair_geometry.get("lw_default_strand_orientation")
-            or pair_geometry.get("lw_strand_orientation")
-            or ""
-        ).lower()
-        if not lw_default_orientation:
-            lw_default_orientation = infer_lw_strand_orientation(
+        lw_strand_orientation = str(pair_geometry.get("lw_strand_orientation") or "").lower()
+        if not lw_strand_orientation:
+            lw_strand_orientation = infer_lw_strand_orientation(
                 pair_geometry.get("glycosidic_orientation", ""),
                 pair_geometry.get("edge_1", ""),
                 pair_geometry.get("edge_2", ""),
             )
-        if not effective_orientation and lw_default_orientation:
-            effective_orientation, _ = effective_lw_strand_orientation(
-                lw_default_orientation,
-                pair_geometry.get("glycosidic_conformation_1", "anti"),
-                pair_geometry.get("glycosidic_conformation_2", "anti"),
-            )
-        if not effective_orientation:
-            effective_orientation = str(pair_geometry.get("strand_direction") or "").lower()
+        if not lw_strand_orientation:
+            lw_strand_orientation = str(pair_geometry.get("strand_direction") or "").lower()
         first = self._base_frame(calc, 0, level)
         other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        # LW orientation controls the coordinate-frame branch. A single-syn
-        # reversal is topology metadata; the fitted/contact frame already
-        # contains that rotation, so applying it here would double-count syn.
-        if lw_default_orientation == "antiparallel":
+        if lw_strand_orientation == "antiparallel":
             other = self._inverted_partner_frame(other)
-        elif lw_default_orientation == "parallel":
-            other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
-        elif partner_frame_transform == "yz_inverted":
-            other = self._inverted_partner_frame(other)
-        elif partner_frame_transform == "direct":
-            other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
-        elif effective_orientation == "antiparallel":
-            other = self._inverted_partner_frame(other)
-        elif effective_orientation == "parallel":
+        elif lw_strand_orientation == "parallel":
             other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())
         else:
             prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)
