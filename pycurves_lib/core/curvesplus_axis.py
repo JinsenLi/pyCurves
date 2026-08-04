@@ -133,21 +133,6 @@ class CurvesPlusAxisMixin:
                         break
         return upm
 
-    def _curvesplus_axis_parameter_frames(self, upm, uvw):
-        axis_upm = upm.copy()
-        nux = self.ctx.n_levels
-        for level in range(1, nux + 1):
-            if not (
-                np.all(np.isfinite(axis_upm[level]))
-                and np.all(np.isfinite(uvw[level, 2]))
-                and np.all(np.isfinite(uvw[level, 3]))
-            ):
-                continue
-            if np.dot(axis_upm[level, 2], uvw[level, 2]) < 0.0:
-                axis_upm[level, 1] *= -1.0
-                axis_upm[level, 2] *= -1.0
-        return axis_upm
-
     def _curvesplus_smoothed_axis(self, ref, upm):
         nux = self.ctx.n_levels
         nst = self.ctx.nst

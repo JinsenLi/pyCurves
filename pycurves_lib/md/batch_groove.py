@@ -38,13 +38,6 @@ def _norm3(vector: np.ndarray) -> float:
     return math.sqrt(float(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]))
 
 
-def _unit1(vector: np.ndarray) -> np.ndarray:
-    norm = _norm3(vector)
-    if not np.isfinite(norm) or norm <= 1e-12:
-        return np.zeros(3, dtype=float)
-    return vector / norm
-
-
 def _cross3(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     out = np.empty(3, dtype=float)
     out[0] = left[1] * right[2] - left[2] * right[1]

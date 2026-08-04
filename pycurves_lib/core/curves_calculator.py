@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.spatial.transform import Rotation
 import math
 from pycurves_lib.data.modified_bases import parent_base_name
 from pycurves_lib.core.curves_groove import GrooveAnalysisMixin
@@ -731,38 +730,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         base_1, _, res_id_1 = first
         base_2, _, res_id_2 = other
         return f"{base_1}{res_id_1:3d}-{base_2}{res_id_2:3d}"
-
-    def _base_pair_displacement(self, first_strand: int, other_strand: int, level: int):
-        p = self.ctx.params
-        first = p.frames[first_strand, level]
-        other = p.frames[other_strand, level]
-
-        x_axis = first[0] + other[0]
-        x_axis /= np.linalg.norm(x_axis)
-
-        y_axis = first[1] - other[1]
-        y_axis /= np.linalg.norm(y_axis)
-
-        z_axis = np.cross(x_axis, y_axis)
-        z_axis /= np.linalg.norm(z_axis)
-        y_axis = np.cross(z_axis, x_axis)
-
-        delta = first[3] - other[3]
-        return (
-            float(np.dot(x_axis, delta)),
-            float(np.dot(y_axis, delta)),
-            float(np.dot(z_axis, delta)),
-        )
-
-    def _base_pair_opening(self, first_strand: int, other_strand: int, level: int) -> float:
-        first = self.ctx.params.frames[first_strand, level, :3, :]
-        other = self.ctx.params.frames[other_strand, level, :3, :].copy()
-
-        other[1] *= -1.0
-        other[2] *= -1.0
-
-        rotation = Rotation.from_matrix(first @ other.T)
-        return float(-rotation.as_euler("zyx", degrees=True)[0])
 
     @staticmethod
     def _all_finite(values) -> bool:

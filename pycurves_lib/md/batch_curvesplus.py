@@ -248,74 +248,6 @@ def _rigid_body_values_and_middle_frame_batch(
     return values, middle_axes, (first_origin + second_origin) / 2.0
 
 
-def _step_aligned_values_batch(
-    previous_axes: np.ndarray,
-    previous_origin: np.ndarray,
-    current_axes: np.ndarray,
-    current_origin: np.ndarray,
-    degrees_per_radian: float,
-) -> np.ndarray:
-    batch = previous_axes.shape[0]
-    best_score = np.full(batch, -np.inf, dtype=float)
-    best_forward = np.zeros(batch, dtype=bool)
-    best_prev_x = np.full(batch, -np.inf, dtype=float)
-    best_curr_x = np.full(batch, -np.inf, dtype=float)
-    best_rise = np.full(batch, -np.inf, dtype=float)
-    best_values = np.full((batch, 6), np.nan, dtype=float)
-
-    previous_candidates = np.einsum("fij,bjk->fbik", SIGN_FLIPS, previous_axes)
-    current_candidates = np.einsum("fij,bjk->fbik", SIGN_FLIPS, current_axes)
-    p_axes = np.repeat(previous_candidates, len(SIGN_FLIPS), axis=0)
-    c_axes = np.tile(current_candidates, (len(SIGN_FLIPS), 1, 1, 1))
-
-    candidate_scores = np.einsum("cbij,cbij->cb", p_axes, c_axes)
-    max_score = np.max(candidate_scores, axis=0)
-    candidate_prev_x = np.einsum("cbi,bi->cb", p_axes[:, :, 0, :], previous_axes[:, 0, :])
-    candidate_curr_x = np.einsum("cbi,bi->cb", c_axes[:, :, 0, :], current_axes[:, 0, :])
-
-    for candidate_index in range(p_axes.shape[0]):
-        score = candidate_scores[candidate_index]
-        score_tied = np.abs(score - max_score) <= 1e-8
-        if not np.any(score_tied):
-            continue
-
-        values = _rigid_body_values_batch(
-            p_axes[candidate_index, score_tied],
-            previous_origin[score_tied],
-            c_axes[candidate_index, score_tied],
-            current_origin[score_tied],
-            degrees_per_radian,
-            translation_sign=1.0,
-            rotation_sign=1.0,
-        )
-        forward = values[:, 2] >= -1e-8
-        prev_x = candidate_prev_x[candidate_index, score_tied]
-        curr_x = candidate_curr_x[candidate_index, score_tied]
-        rise = values[:, 2]
-
-        subset = np.flatnonzero(score_tied)
-        better = score[score_tied] > best_score[subset] + 1e-8
-        tied = np.abs(score[score_tied] - best_score[subset]) <= 1e-8
-        better |= tied & (forward & ~best_forward[subset])
-        tied_forward = tied & (forward == best_forward[subset])
-        better |= tied_forward & (prev_x > best_prev_x[subset] + 1e-8)
-        tied_prev = tied_forward & (np.abs(prev_x - best_prev_x[subset]) <= 1e-8)
-        better |= tied_prev & (curr_x > best_curr_x[subset] + 1e-8)
-        tied_curr = tied_prev & (np.abs(curr_x - best_curr_x[subset]) <= 1e-8)
-        better |= tied_curr & (rise > best_rise[subset])
-
-        target = subset[better]
-        best_score[target] = score[target]
-        best_forward[target] = forward[better]
-        best_prev_x[target] = prev_x[better]
-        best_curr_x[target] = curr_x[better]
-        best_rise[target] = rise[better]
-        best_values[target] = values[better]
-
-    best_values[:, 3:] = _wrap_180(best_values[:, 3:])
-    return best_values
-
-
 def _parameter_row(values: Optional[Sequence[float]], names: Sequence[str], **metadata) -> Dict:
     row = dict(metadata)
     if values is None:
@@ -1256,15 +1188,6 @@ class BatchCurvesPlusMDAnalyzer:
         if np.any(~small):
             point[~small] += np.cross(axis[~small], half_perp[~small]) / np.tan(theta[~small, None] / 2.0)
         return axis, point
-
-    def _curvesplus_axis_parameter_frames(self, upm: np.ndarray, uvw: np.ndarray) -> np.ndarray:
-        axis_upm = upm.copy()
-        for level in range(1, self.ctx.nux + 1):
-            dot = np.sum(axis_upm[:, level, 2, :] * uvw[:, level, 2, :], axis=1)
-            flip = dot < 0.0
-            axis_upm[flip, level, 1, :] *= -1.0
-            axis_upm[flip, level, 2, :] *= -1.0
-        return axis_upm
 
     def _curvesplus_inversion_flags(self, upm: np.ndarray) -> np.ndarray:
         batch = upm.shape[0]

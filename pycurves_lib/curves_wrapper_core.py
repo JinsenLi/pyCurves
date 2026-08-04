@@ -140,7 +140,7 @@ class CurvesWrapper:
         self.cfg = self._load_config(mini_override=mini_override)
 
         if self.pdbfile is None:
-            self.pdbfile = self._pdbfile_from_config(self.cfg) or self._pdbfile_from_inp(self.inpfile)
+            self.pdbfile = self._pdbfile_from_inp(self.inpfile)
         if self.pdbfile is None:
             raise ValueError("No PDB file is available. Pass pdbfile=... or include file=... in the .inp.")
 
@@ -375,12 +375,6 @@ class CurvesWrapper:
             # legacy minimizer while still using legacy base frames.
             frame = "standard"
         return frame, axis
-
-    @staticmethod
-    def _pdbfile_from_config(cfg) -> Optional[str]:
-        # ConfigLoader currently does not preserve namelist file=..., so this is
-        # a placeholder for future structured namelist support.
-        return None
 
     @staticmethod
     def _pdbfile_from_inp(inpfile: str) -> Optional[str]:

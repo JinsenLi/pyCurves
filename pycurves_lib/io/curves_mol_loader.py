@@ -1312,37 +1312,3 @@ class MolecularLoader:
 
         mol.connectivity = connectivity
         mol.connectivity_sources = edge_sources
-
-    def _identify_base_atoms(self, strand: int, level: int, ctx: 'CurvesContext'):
-        mol = ctx.molecule
-        start_idx = mol.subunit_boundaries[level]
-        end_idx = mol.subunit_boundaries[level + 1]
-
-        res_name = mol.residue_names[start_idx].strip().upper()
-        is_purine = any(p in res_name for p in ['A', 'G', 'ADE', 'GUA'])
-
-        indices = {}
-        for i in range(start_idx, end_idx):
-            name = mol.atom_names[i]
-
-            if name in ["C1'", "C1*"]:
-                indices['v1_ref'] = i
-
-            if is_purine:
-                if name == 'N9':
-                    indices['base_origin_ref'] = i
-                if name == 'C4':
-                    indices['v2_ref'] = i
-                if name == 'C8':
-                    indices['v3_ref'] = i
-            else:
-                if name == 'N1':
-                    indices['base_origin_ref'] = i
-                if name == 'C2':
-                    indices['v2_ref'] = i
-                if name == 'C6':
-                    indices['v3_ref'] = i
-
-        if len(indices) < 4:
-            return None
-        return indices
