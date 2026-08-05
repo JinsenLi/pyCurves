@@ -34,10 +34,6 @@ def _unit(values: np.ndarray, fallback=None) -> np.ndarray:
     return out
 
 
-def _norm3(vector: np.ndarray) -> float:
-    return math.sqrt(float(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]))
-
-
 def _cross3(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     out = np.empty(3, dtype=float)
     out[0] = left[1] * right[2] - left[2] * right[1]
