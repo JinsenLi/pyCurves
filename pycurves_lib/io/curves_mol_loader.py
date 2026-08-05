@@ -1,4 +1,5 @@
 import gzip
+import re
 from typing import TYPE_CHECKING
 import warnings
 
@@ -654,15 +655,15 @@ class MolecularLoader:
         if not source_base_pairs or len(structure) == 0:
             return atoms_data, source_base_pairs
 
-        try:
-            spacegroup = gemmi.find_spacegroup_by_name(structure.spacegroup_hm)
-            operations = list(spacegroup.operations())
-        except Exception:
-            return atoms_data, source_base_pairs
-        if not operations:
-            return atoms_data, source_base_pairs
-
         operator_transforms = MolecularLoader._cif_operator_transforms(block) if block is not None else {}
+        symmetry_operations = MolecularLoader._cif_space_group_operations(block) if block is not None else {}
+        operations = []
+        try:
+            spacegroup = structure.find_spacegroup() or gemmi.find_spacegroup_by_name(structure.spacegroup_hm)
+            if spacegroup is not None:
+                operations = list(spacegroup.operations())
+        except Exception:
+            pass
 
         residues = {}
         for atom in atoms_data:
@@ -670,10 +671,12 @@ class MolecularLoader:
             residues.setdefault(key, []).append(atom)
 
         generated = {}
+        rejected = set()
+        used_chain_ids = {str(atom["chain_id"]).strip() for atom in atoms_data}
         expanded_atoms = list(atoms_data)
         for pair in source_base_pairs:
             for side in ("i", "j"):
-                symmetry = pair.get(f"{side}_symmetry", "")
+                symmetry = str(pair.get(f"{side}_symmetry", "")).strip()
                 if MolecularLoader._is_identity_symmetry(symmetry):
                     continue
                 chain_id = str(pair.get(f"{side}_chain_id", "")).strip()
@@ -683,46 +686,67 @@ class MolecularLoader:
                     continue
 
                 source_key = (chain_id, int(residue_id), residue_name)
-                source_atoms = residues.get(source_key)
-                if not source_atoms:
+                if not residues.get(source_key):
                     continue
 
                 generated_key = (chain_id, symmetry)
-                generated_chain = generated.get(generated_key)
-                if generated_chain is None:
+                if generated_key in rejected:
+                    continue
+                generated_entry = generated.get(generated_key)
+                if generated_entry is None:
                     generated_chain = MolecularLoader._generated_symmetry_chain(chain_id, symmetry)
+                    base_generated_chain = generated_chain
+                    suffix = 2
+                    while generated_chain in used_chain_ids:
+                        generated_chain = f"{base_generated_chain}_{suffix}"
+                        suffix += 1
+
                     c1_probes = MolecularLoader._annotated_symmetry_c1_probes(
                         source_base_pairs,
                         chain_id,
                         symmetry,
                         residues,
                     )
-                    transform = MolecularLoader._cif_symmetry_transform(
+                    transform, resolution = MolecularLoader._cif_symmetry_transform(
                         symmetry,
                         operations,
                         structure.cell,
                         operator_transforms,
+                        symmetry_operations=symmetry_operations,
                         probes=c1_probes,
+                        return_details=True,
                     )
                     if transform is None:
-                        continue
-                    c1_distance = MolecularLoader._annotated_pair_c1_distance(
-                        pair,
-                        side,
-                        source_atoms,
-                        residues,
-                        transform,
-                    )
-                    if c1_distance is not None and not 4.0 <= c1_distance <= 25.0:
+                        rejected.add(generated_key)
                         warnings.warn(
-                            f"Rejected implausible symmetry mate {symmetry!r} for "
-                            f"{pair.get('pair_name', 'annotated base pair')}: "
-                            f"C1'-C1' distance is {c1_distance:.2f} A.",
+                            f"Could not resolve symmetry mate {symmetry!r} for chain {chain_id!r}: "
+                            f"{resolution.get('reason', 'unresolved symmetry code')}.",
                             RuntimeWarning,
                             stacklevel=2,
                         )
                         continue
-                    generated[generated_key] = generated_chain
+
+                    distances = MolecularLoader._cif_symmetry_probe_distances(transform, c1_probes)
+                    if c1_probes and (
+                        len(distances) != len(c1_probes)
+                        or any(not 4.0 <= distance <= 25.0 for distance in distances)
+                    ):
+                        rejected.add(generated_key)
+                        distance_text = (
+                            f"{min(distances):.2f}-{max(distances):.2f} A"
+                            if distances else "unavailable"
+                        )
+                        warnings.warn(
+                            f"Rejected inconsistent symmetry mate {symmetry!r} for chain {chain_id!r}: "
+                            f"annotated C1'-C1' distances are {distance_text}.",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        continue
+
+                    generated_entry = (generated_chain, resolution)
+                    generated[generated_key] = generated_entry
+                    used_chain_ids.add(generated_chain)
                     source_chain_atoms = [
                         atom for atom in atoms_data
                         if str(atom["chain_id"]).strip() == chain_id
@@ -736,13 +760,84 @@ class MolecularLoader:
                             "pos": pos,
                         })
 
+                generated_chain, resolution = generated_entry
                 pair[f"{side}_generated_chain_id"] = generated_chain
+                pair[f"{side}_symmetry_resolution"] = resolution.get("source", "")
+                pair[f"{side}_symmetry_recovery"] = bool(resolution.get("recovery", False))
 
         return expanded_atoms, source_base_pairs
 
     @staticmethod
+    def _cif_space_group_operations(block):
+        """Read official symmetry-operation IDs and algebraic operators from mmCIF."""
+        if block is None:
+            return {}
+
+        operations = {}
+        conflicted_ids = set()
+
+        def add_operation(operation_id, expression):
+            if operation_id in conflicted_ids:
+                return
+            try:
+                operation = gemmi.Op(expression)
+            except Exception:
+                return
+            previous = operations.get(operation_id)
+            if previous is not None and previous != operation:
+                operations.pop(operation_id, None)
+                conflicted_ids.add(operation_id)
+                return
+            operations.setdefault(operation_id, operation)
+
+        def read_category(category, id_tag, operation_tag):
+            table = block.find_mmcif_category(category)
+            if not table:
+                return
+            for row in table:
+                try:
+                    operation_id = str(row[id_tag]).strip().strip("'\"")
+                    expression = str(row[operation_tag]).strip().strip("'\"")
+                except Exception:
+                    continue
+                if not operation_id or operation_id in {".", "?"}:
+                    continue
+                if not expression or expression in {".", "?"}:
+                    continue
+                add_operation(operation_id, expression)
+
+        read_category(
+            '_space_group_symop.',
+            '_space_group_symop.id',
+            '_space_group_symop.operation_xyz',
+        )
+        read_category(
+            '_symmetry_equiv.',
+            '_symmetry_equiv.id',
+            '_symmetry_equiv.pos_as_xyz',
+        )
+
+        for id_tag, operation_tag in (
+            ('_symmetry_equiv_pos_site_id', '_symmetry_equiv_pos_as_xyz'),
+            ('_symmetry_equiv.id', '_symmetry_equiv.pos_as_xyz'),
+        ):
+            try:
+                operation_ids = list(block.find_values(id_tag))
+                expressions = list(block.find_values(operation_tag))
+            except Exception:
+                continue
+            for operation_id, expression in zip(operation_ids, expressions):
+                operation_id = str(operation_id).strip().strip("'\"")
+                expression = str(expression).strip().strip("'\"")
+                if not operation_id or expression in {"", ".", "?"}:
+                    continue
+                add_operation(operation_id, expression)
+
+        return operations
+
+    @staticmethod
     def _cif_operator_transforms(block):
-        """Read explicit Cartesian assembly/crystal operator matrices from mmCIF."""
+        """Read explicit Cartesian crystal-operator matrices from mmCIF."""
         if block is None:
             return {}
         table = block.find_mmcif_category('_pdbx_struct_oper_list.')
@@ -759,8 +854,18 @@ class MolecularLoader:
                 return default
             return str(raw).strip().strip("'\"")
 
+        crystal_types = {
+            "identity operation",
+            "crystal symmetry operation",
+            "2d crystal symmetry operation",
+            "3d crystal symmetry operation",
+        }
         transforms = {"exact": {}, "by_operation_number": {}}
+        exact_specs = {}
+        conflicted_names = set()
         for row in table:
+            if value(row, "type").lower() not in crystal_types:
+                continue
             try:
                 matrix = np.array([
                     [float(value(row, "matrix[1][1]")), float(value(row, "matrix[1][2]")), float(value(row, "matrix[1][3]"))],
@@ -782,12 +887,23 @@ class MolecularLoader:
 
             transform = make_transform(matrix, vector)
             operator_name = value(row, "name")
-            for key in (value(row, "id"), operator_name, value(row, "symmetry_operation")):
-                if key:
-                    transforms["exact"][key] = transform
-            operation_number = operator_name.split("_", 1)[0]
-            if operation_number.isdigit():
-                transforms["by_operation_number"].setdefault(operation_number, transform)
+            parsed_name = MolecularLoader._parse_cif_symmetry_code(operator_name)
+            if not parsed_name or not parsed_name["standard"] or "_" not in operator_name:
+                continue
+            transforms["by_operation_number"].setdefault(
+                parsed_name["operation_id"],
+                [],
+            ).append(transform)
+            spec = tuple(np.round(np.concatenate((matrix.ravel(), vector)), 12))
+            if operator_name in conflicted_names:
+                continue
+            previous_spec = exact_specs.get(operator_name)
+            if previous_spec is not None and previous_spec != spec:
+                transforms["exact"].pop(operator_name, None)
+                conflicted_names.add(operator_name)
+                continue
+            exact_specs[operator_name] = spec
+            transforms["exact"][operator_name] = transform
         return transforms
 
     @staticmethod
@@ -869,8 +985,55 @@ class MolecularLoader:
         return probes
 
     @staticmethod
+    def _parse_cif_symmetry_code(symmetry: str):
+        """Parse a standard symop code or identify a recoverable nonstandard suffix."""
+        text = str(symmetry).strip()
+        standard_match = re.fullmatch(
+            r"([1-9]|[1-9][0-9]|1[0-8][0-9]|19[0-2])(?:_([1-9][1-9][1-9]))?",
+            text,
+        )
+        if standard_match:
+            operation_id = standard_match.group(1)
+            suffix = standard_match.group(2) or "555"
+            translation = tuple(int(value) - 5 for value in suffix)
+            return {
+                "text": text,
+                "operation_id": operation_id,
+                "suffix": suffix,
+                "translations": [translation],
+                "standard": True,
+                "bare": standard_match.group(2) is None,
+            }
+
+        if "_" not in text:
+            return None
+        operation_id, suffix = text.split("_", 1)
+        if not operation_id.isdigit() or not 1 <= int(operation_id) <= 192:
+            return None
+        translations = MolecularLoader._cif_lattice_translations(suffix)
+        if not translations:
+            return None
+        return {
+            "text": text,
+            "operation_id": operation_id,
+            "suffix": suffix,
+            "translations": translations,
+            "standard": False,
+            "bare": False,
+        }
+
+    @staticmethod
     def _is_identity_symmetry(symmetry: str) -> bool:
-        return str(symmetry).strip() in {"", ".", "?", "1_555"}
+        text = str(symmetry).strip()
+        if text in {"", ".", "?"}:
+            return True
+        parsed = MolecularLoader._parse_cif_symmetry_code(text)
+        return bool(
+            parsed
+            and parsed["standard"]
+            and parsed["operation_id"] == "1"
+            and parsed["translations"] == [(0, 0, 0)]
+        )
 
     @staticmethod
     def _generated_symmetry_chain(chain_id: str, symmetry: str) -> str:
@@ -879,11 +1042,11 @@ class MolecularLoader:
 
     @staticmethod
     def _cif_lattice_translations(translation_text: str):
-        """Decode the three offset-5 lattice indices in an NDB symmetry code.
+        """Decode an extended compact offset-5 suffix for recovery only.
 
-        Most codes use one digit per axis (``555``). The NDB tables also emit
-        compact variable-width values such as ``7510``, which means
-        ``7,5,10`` rather than ``7,5,1``.
+        Standard symop suffixes contain exactly three digits from 1 through 9.
+        This decoder exists for malformed deposited values such as ``7510``;
+        callers must disambiguate the result using coordinate geometry.
         """
         text = str(translation_text).strip()
         if not text or not text.isdigit():
@@ -908,18 +1071,65 @@ class MolecularLoader:
 
     @staticmethod
     def _cif_crystal_transform(operation, translation, cell):
-        """Build a Cartesian transform from a fractional operation and lattice shift."""
+        """Build a Cartesian transform with Gemmi from an operation and lattice shift."""
+        cartesian_operation = cell.op_as_transform(operation)
+        lattice_shift = cell.orthogonalize(gemmi.Fractional(*translation))
+
         def transform(position):
-            frac = cell.fractionalize(gemmi.Position(*position))
-            xyz = operation.apply_to_xyz([frac.x, frac.y, frac.z])
-            out = cell.orthogonalize(gemmi.Fractional(
-                xyz[0] + translation[0],
-                xyz[1] + translation[1],
-                xyz[2] + translation[2],
-            ))
-            return [out.x, out.y, out.z]
+            out = cartesian_operation.apply(gemmi.Position(*position))
+            return [
+                out.x + lattice_shift.x,
+                out.y + lattice_shift.y,
+                out.z + lattice_shift.z,
+            ]
 
         return transform
+
+    @staticmethod
+    def _cif_probe_consensus_translation(operation, cell, probes):
+        """Use Gemmi PBC search to find one lattice shift shared by all probes."""
+        if not probes:
+            return None
+        unshifted_transform = MolecularLoader._cif_crystal_transform(
+            operation,
+            (0, 0, 0),
+            cell,
+        )
+        shifts = []
+        try:
+            for source, target in probes:
+                unshifted = unshifted_transform(source)
+                nearest = cell.find_nearest_pbc_image(
+                    gemmi.Position(*target),
+                    gemmi.Position(*unshifted),
+                    0,
+                )
+                shifts.append(tuple(int(value) for value in nearest.pbc_shift))
+        except Exception:
+            return None
+        return shifts[0] if shifts and all(shift == shifts[0] for shift in shifts) else None
+
+    @staticmethod
+    def _cif_symmetry_probe_distances(transform, probes):
+        distances = []
+        try:
+            for source, target in probes or []:
+                transformed = np.asarray(transform(source), dtype=float)
+                distances.append(float(np.linalg.norm(transformed - np.asarray(target, dtype=float))))
+        except Exception:
+            return []
+        return distances
+
+    @staticmethod
+    def _cif_transform_fingerprint(transform):
+        positions = ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0])
+        try:
+            transformed = np.asarray([transform(position) for position in positions], dtype=float)
+        except Exception:
+            return None
+        if transformed.shape != (4, 3) or not np.all(np.isfinite(transformed)):
+            return None
+        return tuple(np.round(transformed.ravel(), 7))
 
     @staticmethod
     def _cif_symmetry_transform(
@@ -927,54 +1137,27 @@ class MolecularLoader:
         operations,
         cell,
         operator_transforms=None,
+        symmetry_operations=None,
         probes=None,
+        return_details=False,
     ):
-        """Resolve an NDB symmetry code, using annotated C1' geometry when available.
+        """Resolve a symop code authoritatively, with fail-closed geometric recovery."""
+        parsed = MolecularLoader._parse_cif_symmetry_code(symmetry)
+        details = {
+            "symmetry": str(symmetry).strip(),
+            "source": "",
+            "recovery": False,
+            "standard_code": bool(parsed and parsed["standard"]),
+            "probe_count": 0,
+            "reason": "",
+        }
 
-        NDB/PDB operation numbers are not guaranteed to use Gemmi's operation
-        ordering. Candidate space-group operations are therefore evaluated
-        against the annotated base-pair C1' positions. Explicit mmCIF
-        Cartesian operators remain candidates and take precedence on ties.
-        """
-        transform_maps = operator_transforms or {}
-        exact_transforms = transform_maps.get("exact", transform_maps)
-        symmetry_text = str(symmetry).strip()
-        explicit_transform = exact_transforms.get(symmetry_text)
-        candidates = []
-        if explicit_transform is not None:
-            candidates.append((0, explicit_transform))
+        def finish(transform, **updates):
+            details.update(updates)
+            return (transform, details) if return_details else transform
 
-        try:
-            op_text, translation_text = symmetry_text.split("_", 1)
-            op_index = int(op_text) - 1
-        except Exception:
-            return candidates[0][1] if candidates else None
-
-        operation_transform = transform_maps.get("by_operation_number", {}).get(op_text)
-        if operation_transform is not None:
-            candidates.append((1, operation_transform))
-
-        translations = MolecularLoader._cif_lattice_translations(translation_text)
-        operation_list = list(operations)
-        if translations and operation_list:
-            operation_order = []
-            if 0 <= op_index < len(operation_list):
-                operation_order.append(op_index)
-            operation_order.extend(index for index in range(len(operation_list)) if index != op_index)
-            for index in operation_order:
-                priority = 2 if index == op_index else 3
-                for translation in translations:
-                    candidates.append((
-                        priority,
-                        MolecularLoader._cif_crystal_transform(
-                            operation_list[index],
-                            translation,
-                            cell,
-                        ),
-                    ))
-
-        if not candidates:
-            return None
+        if parsed is None:
+            return finish(None, reason="invalid symop syntax")
 
         valid_probes = []
         for source, target in probes or []:
@@ -987,26 +1170,185 @@ class MolecularLoader:
                 and np.all(np.isfinite(target))
             ):
                 valid_probes.append((source, target))
+        details["probe_count"] = len(valid_probes)
+
+        operation_id = parsed["operation_id"]
+        official_operation = (symmetry_operations or {}).get(operation_id)
+        if official_operation is not None and parsed["standard"]:
+            transform = MolecularLoader._cif_crystal_transform(
+                official_operation,
+                parsed["translations"][0],
+                cell,
+            )
+            return finish(
+                transform,
+                source="space_group_symop",
+                recovery=False,
+                translation=parsed["translations"][0],
+            )
+
+        transform_maps = operator_transforms or {}
+        exact_transforms = transform_maps.get("exact", transform_maps)
+        explicit_transform = exact_transforms.get(parsed["text"])
+        if explicit_transform is not None and parsed["standard"]:
+            return finish(
+                explicit_transform,
+                source="pdbx_struct_oper_list_exact",
+                recovery=False,
+                translation=parsed["translations"][0],
+            )
+
         if not valid_probes:
-            return candidates[0][1]
+            return finish(
+                None,
+                reason="no authoritative operator and no C1' probes for recovery",
+            )
 
-        def candidate_score(candidate):
-            priority, transform = candidate
-            try:
-                distances = np.asarray([
-                    np.linalg.norm(np.asarray(transform(source), dtype=float) - target)
-                    for source, target in valid_probes
-                ], dtype=float)
-            except Exception:
-                return (float("inf"), float("inf"), float("inf"), priority)
-            if not np.all(np.isfinite(distances)):
-                return (float("inf"), float("inf"), float("inf"), priority)
-            implausible = int(np.count_nonzero((distances < 4.0) | (distances > 25.0)))
-            atypical = int(np.count_nonzero((distances < 7.0) | (distances > 14.0)))
-            squared_error = float(np.mean(np.square(distances - 10.5)))
-            return (implausible, atypical, squared_error, priority)
+        candidates = []
 
-        return min(candidates, key=candidate_score)[1]
+        def add_candidate(transform, source, priority, translation=None, operation_number=None):
+            if transform is None:
+                return
+            candidates.append({
+                "transform": transform,
+                "source": source,
+                "priority": int(priority),
+                "translation": translation,
+                "operation_number": operation_number,
+            })
+
+        if official_operation is not None:
+            translations = list(parsed["translations"])
+            consensus = MolecularLoader._cif_probe_consensus_translation(
+                official_operation,
+                cell,
+                valid_probes,
+            )
+            if consensus is not None and consensus not in translations:
+                translations.append(consensus)
+            for translation in translations:
+                add_candidate(
+                    MolecularLoader._cif_crystal_transform(official_operation, translation, cell),
+                    "space_group_symop_recovery",
+                    0,
+                    translation,
+                    operation_id,
+                )
+
+        if explicit_transform is not None:
+            add_candidate(
+                explicit_transform,
+                "pdbx_struct_oper_list_exact_recovery",
+                1,
+            )
+
+        by_operation_number = transform_maps.get("by_operation_number", {}).get(operation_id, [])
+        if callable(by_operation_number):
+            by_operation_number = [by_operation_number]
+        for transform in by_operation_number:
+            add_candidate(
+                transform,
+                "pdbx_struct_oper_list_operation_recovery",
+                2,
+                operation_number=operation_id,
+            )
+
+        try:
+            operation_list = list(operations)
+        except Exception:
+            operation_list = []
+        declared_index = int(operation_id) - 1
+        for index, operation in enumerate(operation_list):
+            translations = list(parsed["translations"])
+            if not parsed["standard"]:
+                consensus = MolecularLoader._cif_probe_consensus_translation(
+                    operation,
+                    cell,
+                    valid_probes,
+                )
+                if consensus is not None and consensus not in translations:
+                    translations.append(consensus)
+            for translation in translations:
+                add_candidate(
+                    MolecularLoader._cif_crystal_transform(operation, translation, cell),
+                    "gemmi_geometry_recovery",
+                    3 if index == declared_index else 4,
+                    translation,
+                    index + 1,
+                )
+
+        unique_candidates = {}
+        for candidate in candidates:
+            fingerprint = MolecularLoader._cif_transform_fingerprint(candidate["transform"])
+            if fingerprint is None:
+                continue
+            previous = unique_candidates.get(fingerprint)
+            if previous is None or candidate["priority"] < previous["priority"]:
+                unique_candidates[fingerprint] = candidate
+
+        plausible = []
+        for candidate in unique_candidates.values():
+            distances = MolecularLoader._cif_symmetry_probe_distances(
+                candidate["transform"],
+                valid_probes,
+            )
+            if len(distances) != len(valid_probes):
+                continue
+            distance_array = np.asarray(distances, dtype=float)
+            if np.any((distance_array < 4.0) | (distance_array > 25.0)):
+                continue
+            atypical = int(np.count_nonzero((distance_array < 7.0) | (distance_array > 14.0)))
+            squared_error = float(np.mean(np.square(distance_array - 10.5)))
+            candidate = dict(candidate)
+            candidate.update({
+                "distances": distances,
+                "atypical": atypical,
+                "squared_error": squared_error,
+            })
+            plausible.append(candidate)
+
+        if not plausible:
+            return finish(
+                None,
+                recovery=True,
+                reason="no candidate transform satisfies every C1' probe",
+            )
+
+        plausible.sort(key=lambda candidate: (
+            candidate["atypical"],
+            candidate["squared_error"],
+            candidate["priority"],
+        ))
+        winner = plausible[0]
+        margin = None
+        if len(plausible) > 1:
+            runner_up = plausible[1]
+            margin = float(runner_up["squared_error"] - winner["squared_error"])
+            decisive = (
+                winner["atypical"] < runner_up["atypical"]
+                or margin >= 0.25
+            )
+            if not decisive:
+                return finish(
+                    None,
+                    recovery=True,
+                    reason=(
+                        "ambiguous geometry recovery; the two best transforms "
+                        f"differ by only {margin:.3f} A^2"
+                    ),
+                    candidate_count=len(plausible),
+                )
+
+        return finish(
+            winner["transform"],
+            source=winner["source"],
+            recovery=True,
+            translation=winner.get("translation"),
+            operation_number=winner.get("operation_number"),
+            candidate_count=len(plausible),
+            score=winner["squared_error"],
+            margin=margin,
+        )
 
     @staticmethod
     def _append_detected_crystal_mates(atoms_data, source_base_pairs, crystal_cell, spacegroup_hm):
