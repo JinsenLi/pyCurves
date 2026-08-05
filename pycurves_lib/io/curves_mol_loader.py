@@ -691,11 +691,18 @@ class MolecularLoader:
                 generated_chain = generated.get(generated_key)
                 if generated_chain is None:
                     generated_chain = MolecularLoader._generated_symmetry_chain(chain_id, symmetry)
+                    c1_probes = MolecularLoader._annotated_symmetry_c1_probes(
+                        source_base_pairs,
+                        chain_id,
+                        symmetry,
+                        residues,
+                    )
                     transform = MolecularLoader._cif_symmetry_transform(
                         symmetry,
                         operations,
                         structure.cell,
                         operator_transforms,
+                        probes=c1_probes,
                     )
                     if transform is None:
                         continue
@@ -786,6 +793,21 @@ class MolecularLoader:
     @staticmethod
     def _annotated_pair_c1_distance(pair, transformed_side, source_atoms, residues, transform):
         """Return C1'-C1' distance to an identity-symmetry annotated partner."""
+        positions = MolecularLoader._annotated_pair_c1_positions(
+            pair,
+            transformed_side,
+            source_atoms,
+            residues,
+        )
+        if positions is None:
+            return None
+        source_c1, other_c1 = positions
+        transformed_c1 = np.asarray(transform(source_c1), dtype=float)
+        return float(np.linalg.norm(transformed_c1 - other_c1))
+
+    @staticmethod
+    def _annotated_pair_c1_positions(pair, transformed_side, source_atoms, residues):
+        """Return source and identity-partner C1' positions for a symmetry pair."""
         other_side = "j" if transformed_side == "i" else "i"
         if not MolecularLoader._is_identity_symmetry(pair.get(f"{other_side}_symmetry", "")):
             return None
@@ -811,8 +833,40 @@ class MolecularLoader:
         other_c1 = c1_position(other_atoms)
         if source_c1 is None or other_c1 is None:
             return None
-        transformed_c1 = np.asarray(transform(source_c1), dtype=float)
-        return float(np.linalg.norm(transformed_c1 - other_c1))
+        return source_c1, other_c1
+
+    @staticmethod
+    def _annotated_symmetry_c1_probes(source_base_pairs, chain_id, symmetry, residues):
+        """Collect all C1' probes that can disambiguate one annotated symmetry mate."""
+        probes = []
+        clean_chain = str(chain_id).strip()
+        clean_symmetry = str(symmetry).strip()
+        for pair in source_base_pairs:
+            for side in ("i", "j"):
+                if str(pair.get(f"{side}_symmetry", "")).strip() != clean_symmetry:
+                    continue
+                if str(pair.get(f"{side}_chain_id", "")).strip() != clean_chain:
+                    continue
+                residue_id = pair.get(f"{side}_residue_id")
+                if residue_id is None:
+                    continue
+                source_key = (
+                    clean_chain,
+                    int(residue_id),
+                    str(pair.get(f"{side}_residue_name", "")).strip().upper(),
+                )
+                source_atoms = residues.get(source_key)
+                if not source_atoms:
+                    continue
+                positions = MolecularLoader._annotated_pair_c1_positions(
+                    pair,
+                    side,
+                    source_atoms,
+                    residues,
+                )
+                if positions is not None:
+                    probes.append(positions)
+        return probes
 
     @staticmethod
     def _is_identity_symmetry(symmetry: str) -> bool:
@@ -824,25 +878,37 @@ class MolecularLoader:
         return f"{chain_id}_sym{clean}"
 
     @staticmethod
-    def _cif_symmetry_transform(symmetry: str, operations, cell, operator_transforms=None):
-        transform_maps = operator_transforms or {}
-        exact_transforms = transform_maps.get("exact", transform_maps)
-        symmetry_text = str(symmetry).strip()
-        explicit_transform = exact_transforms.get(symmetry_text)
-        if explicit_transform is not None:
-            return explicit_transform
+    def _cif_lattice_translations(translation_text: str):
+        """Decode the three offset-5 lattice indices in an NDB symmetry code.
 
-        try:
-            op_text, translation_text = symmetry_text.split("_", 1)
-            explicit_transform = transform_maps.get("by_operation_number", {}).get(op_text)
-            if explicit_transform is not None:
-                return explicit_transform
-            op_index = int(op_text) - 1
-            translation = [int(ch) - 5 for ch in translation_text[:3]]
-            operation = operations[op_index]
-        except Exception:
-            return None
+        Most codes use one digit per axis (``555``). The NDB tables also emit
+        compact variable-width values such as ``7510``, which means
+        ``7,5,10`` rather than ``7,5,1``.
+        """
+        text = str(translation_text).strip()
+        if not text or not text.isdigit():
+            return []
 
+        encoded = []
+        for first_end in range(1, len(text) - 1):
+            for second_end in range(first_end + 1, len(text)):
+                parts = (text[:first_end], text[first_end:second_end], text[second_end:])
+                if any(len(part) > 1 and part.startswith("0") for part in parts):
+                    continue
+                values = tuple(int(part) for part in parts)
+                if all(0 <= value <= 10 for value in values):
+                    encoded.append(values)
+
+        translations = []
+        for values in encoded:
+            translation = tuple(value - 5 for value in values)
+            if translation not in translations:
+                translations.append(translation)
+        return translations
+
+    @staticmethod
+    def _cif_crystal_transform(operation, translation, cell):
+        """Build a Cartesian transform from a fractional operation and lattice shift."""
         def transform(position):
             frac = cell.fractionalize(gemmi.Position(*position))
             xyz = operation.apply_to_xyz([frac.x, frac.y, frac.z])
@@ -854,6 +920,93 @@ class MolecularLoader:
             return [out.x, out.y, out.z]
 
         return transform
+
+    @staticmethod
+    def _cif_symmetry_transform(
+        symmetry: str,
+        operations,
+        cell,
+        operator_transforms=None,
+        probes=None,
+    ):
+        """Resolve an NDB symmetry code, using annotated C1' geometry when available.
+
+        NDB/PDB operation numbers are not guaranteed to use Gemmi's operation
+        ordering. Candidate space-group operations are therefore evaluated
+        against the annotated base-pair C1' positions. Explicit mmCIF
+        Cartesian operators remain candidates and take precedence on ties.
+        """
+        transform_maps = operator_transforms or {}
+        exact_transforms = transform_maps.get("exact", transform_maps)
+        symmetry_text = str(symmetry).strip()
+        explicit_transform = exact_transforms.get(symmetry_text)
+        candidates = []
+        if explicit_transform is not None:
+            candidates.append((0, explicit_transform))
+
+        try:
+            op_text, translation_text = symmetry_text.split("_", 1)
+            op_index = int(op_text) - 1
+        except Exception:
+            return candidates[0][1] if candidates else None
+
+        operation_transform = transform_maps.get("by_operation_number", {}).get(op_text)
+        if operation_transform is not None:
+            candidates.append((1, operation_transform))
+
+        translations = MolecularLoader._cif_lattice_translations(translation_text)
+        operation_list = list(operations)
+        if translations and operation_list:
+            operation_order = []
+            if 0 <= op_index < len(operation_list):
+                operation_order.append(op_index)
+            operation_order.extend(index for index in range(len(operation_list)) if index != op_index)
+            for index in operation_order:
+                priority = 2 if index == op_index else 3
+                for translation in translations:
+                    candidates.append((
+                        priority,
+                        MolecularLoader._cif_crystal_transform(
+                            operation_list[index],
+                            translation,
+                            cell,
+                        ),
+                    ))
+
+        if not candidates:
+            return None
+
+        valid_probes = []
+        for source, target in probes or []:
+            source = np.asarray(source, dtype=float)
+            target = np.asarray(target, dtype=float)
+            if (
+                source.shape == (3,)
+                and target.shape == (3,)
+                and np.all(np.isfinite(source))
+                and np.all(np.isfinite(target))
+            ):
+                valid_probes.append((source, target))
+        if not valid_probes:
+            return candidates[0][1]
+
+        def candidate_score(candidate):
+            priority, transform = candidate
+            try:
+                distances = np.asarray([
+                    np.linalg.norm(np.asarray(transform(source), dtype=float) - target)
+                    for source, target in valid_probes
+                ], dtype=float)
+            except Exception:
+                return (float("inf"), float("inf"), float("inf"), priority)
+            if not np.all(np.isfinite(distances)):
+                return (float("inf"), float("inf"), float("inf"), priority)
+            implausible = int(np.count_nonzero((distances < 4.0) | (distances > 25.0)))
+            atypical = int(np.count_nonzero((distances < 7.0) | (distances > 14.0)))
+            squared_error = float(np.mean(np.square(distances - 10.5)))
+            return (implausible, atypical, squared_error, priority)
+
+        return min(candidates, key=candidate_score)[1]
 
     @staticmethod
     def _append_detected_crystal_mates(atoms_data, source_base_pairs, crystal_cell, spacegroup_hm):
