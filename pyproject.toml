@@ -62,4 +62,6 @@ include = ["pycurves_lib*"]
 "pycurves_lib.data" = [
   "modified_to_change_data.json",
   "reference/*.lib",
+  "reference/*.json",
+  "reference/*.LICENSE.txt",
 ]

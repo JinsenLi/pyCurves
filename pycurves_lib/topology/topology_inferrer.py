@@ -13,6 +13,10 @@ from pycurves_lib.io.base_reference import (
     relative_base_frame_geometry,
 )
 from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS, EDGE_ORDER
+from pycurves_lib.topology.lw_exemplars import (
+    LWClassification,
+    get_lw_exemplar_library,
+)
 from pycurves_lib.data.modified_bases import parent_base_name
 
 
@@ -26,12 +30,12 @@ BASE_ATOMS = {
     "U": {"N1", "C2", "O2", "N3", "C4", "O4", "C5", "C6"},
 }
 HBOND_ATOMS = {
-    "A": {"N1", "N6", "N7", "N3", "C2", "C8"},
-    "G": {"N1", "N2", "O6", "N7", "N3", "C2", "C8"},
-    "C": {"N3", "N4", "O2", "C5", "C6"},
-    "T": {"N3", "O4", "O2", "C5", "C6", "C7"},
-    "U": {"N3", "O4", "O2", "C5", "C6"},
-    "I": {"N1", "O6", "N7", "N3", "C2", "C8"},
+    "A": {"N1", "N6", "N7", "N3", "C2", "C8", "O2'", "O2*"},
+    "G": {"N1", "N2", "O6", "N7", "N3", "C2", "C8", "O2'", "O2*"},
+    "C": {"N3", "N4", "O2", "C5", "C6", "O2'", "O2*"},
+    "T": {"N3", "O4", "O2", "C5", "C6", "C7", "O2'", "O2*"},
+    "U": {"N3", "O4", "O2", "C5", "C6", "O2'", "O2*"},
+    "I": {"N1", "O6", "N7", "N3", "C2", "C8", "O2'", "O2*"},
 }
 GLYCOSIDIC_ATOMS = {
     "A": "N9",
@@ -118,6 +122,7 @@ class BasePairCandidate:
     atom_pairs: Tuple[Tuple[str, str, float], ...]
     is_hoogsteen: bool = False
     fitted_geometry: Optional[Dict[str, object]] = None
+    lw_classification: Optional[LWClassification] = None
 
 
 @dataclass
@@ -196,6 +201,7 @@ class RobustTopologyInferrer:
         self.residues: Dict[int, ResidueNode] = {}
         self.reference_library = BaseReferenceLibrary.load("standard")
         self.frame_fitter = BaseFrameFitter(self.reference_library)
+        self.lw_exemplar_library = get_lw_exemplar_library()
         self.strands: List[List[int]] = []
         self.complexes: List[List[int]] = []
         self.pair_edges: List[Tuple[int, int]] = []
@@ -340,6 +346,18 @@ class RobustTopologyInferrer:
             normal_angle_cutoff=FITTED_PAIR_NORMAL_ANGLE_CUTOFF,
         )
 
+    def _lw_classification(
+        self,
+        residue_1: ResidueNode,
+        residue_2: ResidueNode,
+    ) -> Optional[LWClassification]:
+        return self.lw_exemplar_library.classify_fits(
+            residue_1.base,
+            residue_1.fitted_geometry,
+            residue_2.base,
+            residue_2.fitted_geometry,
+        )
+
     def _trace_strands(self) -> None:
         ordered = sorted(self.residues.values(), key=lambda r: r.subunit)
         strands = []
@@ -464,6 +482,7 @@ class RobustTopologyInferrer:
                     residue_1 = self.residues[left]
                     residue_2 = self.residues[right]
                     fitted_geometry = self._fitted_pair_geometry(residue_1, residue_2)
+                    lw_classification = self._lw_classification(residue_1, residue_2)
                     center_distance = float(np.linalg.norm(residue_1.center - residue_2.center))
                     score = self._base_pair_candidate_score(
                         "source_annotated",
@@ -483,6 +502,7 @@ class RobustTopologyInferrer:
                         atom_pairs=(),
                         is_hoogsteen=bool(row.get("is_hoogsteen")),
                         fitted_geometry=fitted_geometry,
+                        lw_classification=lw_classification,
                     ))
         return candidates
 
@@ -496,7 +516,13 @@ class RobustTopologyInferrer:
         residue_1 = self.residues[first]
         residue_2 = self.residues[second]
         fitted_geometry = self._fitted_pair_geometry(residue_1, residue_2)
-        if fitted_geometry is not None and not bool(fitted_geometry["eligible"]):
+        lw_classification = self._lw_classification(residue_1, residue_2)
+        confident_lw = bool(lw_classification and lw_classification.confident)
+        if (
+            fitted_geometry is not None
+            and not bool(fitted_geometry["eligible"])
+            and not confident_lw
+        ):
             return None
         atom_map_1 = self._atom_map(residue_1)
         atom_map_2 = self._atom_map(residue_2)
@@ -510,11 +536,16 @@ class RobustTopologyInferrer:
         elif len(generic_matches) >= 2:
             pair_family = "hbonded_noncanonical"
             matches = generic_matches
+        elif confident_lw and generic_matches:
+            # Sugar-edge and other valid LW families may have only one
+            # recoverable heavy-atom contact in an experimental model.
+            pair_family = "lw_exemplar"
+            matches = generic_matches
         else:
             return None
 
         center_distance = float(np.linalg.norm(residue_1.center - residue_2.center))
-        if center_distance > 9.0:
+        if center_distance > 9.0 and not confident_lw:
             return None
         plane_offset = self._base_pair_plane_offset(residue_1, residue_2)
         if (
@@ -541,6 +572,7 @@ class RobustTopologyInferrer:
             atom_pairs=tuple(matches),
             is_hoogsteen=pair_family == "hoogsteen_like",
             fitted_geometry=fitted_geometry,
+            lw_classification=lw_classification,
         )
 
     @staticmethod
@@ -562,6 +594,7 @@ class RobustTopologyInferrer:
             "source_annotated": -200.0,
             "watson_crick_or_wobble": -120.0,
             "hoogsteen_like": -90.0,
+            "lw_exemplar": -80.0,
             "hbonded_noncanonical": -50.0,
         }.get(pair_family, -20.0)
         return family_priority - 2.0 * hbond_count + mean_distance + 0.05 * center_distance
@@ -920,15 +953,30 @@ class RobustTopologyInferrer:
         if (
             candidate.fitted_geometry is not None
             and not bool(candidate.fitted_geometry["eligible"])
+            and not (
+                candidate.lw_classification is not None
+                and candidate.lw_classification.confident
+            )
         ):
             return None
         atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
+
+        lw_classification = candidate.lw_classification
+        if lw_classification is not None and lw_classification.confident:
+            tag = lw_classification.tag
+            edge_1 = lw_classification.edge_1
+            edge_2 = lw_classification.edge_2
+            orientation = tag[0]
+        else:
+            tag = ""
 
         # Relative standard-frame pose is stronger evidence than a vote over
         # shared edge atoms. This is especially important for mismatches:
         # non-complementary identity does not make a cWW pose trans-WW/cSW.
         fitted_cww = self._is_fitted_cww_pose(candidate.fitted_geometry)
-        if fitted_cww:
+        if tag:
+            pass
+        elif fitted_cww:
             edge_1 = edge_2 = "W"
             orientation = "c"
         else:
@@ -974,7 +1022,8 @@ class RobustTopologyInferrer:
             # chemically named Hoogsteen patterns.
             if not (confident_trans_ww or confident_named_hoogsteen):
                 return None
-        tag = self._lw_tag_for_edges(edge_1, edge_2, orientation)
+        if not tag:
+            tag = self._lw_tag_for_edges(edge_1, edge_2, orientation)
         measured_noncanonical = (edge_1, edge_2) != ("W", "W") or orientation == "t"
         should_write = (
             candidate.is_hoogsteen

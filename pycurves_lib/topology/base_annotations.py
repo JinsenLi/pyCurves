@@ -11,6 +11,10 @@ from pycurves_lib.io.base_reference import (
     relative_base_frame_geometry,
 )
 from pycurves_lib.data.modified_bases import is_modified_base, parent_base_name
+from pycurves_lib.topology.lw_exemplars import (
+    LWClassification,
+    get_lw_exemplar_library,
+)
 
 WC_PAIRS = {("A", "T"), ("T", "A"), ("A", "U"), ("U", "A"), ("G", "C"), ("C", "G")}
 WOBBLE_PAIRS = {("G", "U"), ("U", "G"), ("I", "C"), ("C", "I"), ("I", "U"), ("U", "I"), ("I", "A"), ("A", "I")}
@@ -32,32 +36,32 @@ BASE_EDGE_ATOMS = {
     "A": {
         "W": {"N1", "N6"},
         "H": {"N6", "N7", "C8"},
-        "S": {"N3", "C2"},
+        "S": {"N3", "C2", "O2'", "O2*"},
     },
     "G": {
         "W": {"N1", "N2", "O6"},
         "H": {"O6", "N7", "C8"},
-        "S": {"N2", "N3", "C2"},
+        "S": {"N2", "N3", "C2", "O2'", "O2*"},
     },
     "I": {
         "W": {"N1", "O6"},
         "H": {"O6", "N7", "C8"},
-        "S": {"N3", "C2"},
+        "S": {"N3", "C2", "O2'", "O2*"},
     },
     "C": {
         "W": {"O2", "N3", "N4"},
         "H": {"C5", "C6"},
-        "S": {"O2", "C2"},
+        "S": {"O2", "C2", "O2'", "O2*"},
     },
     "T": {
         "W": {"O2", "N3", "O4"},
         "H": {"C5", "C6", "C7"},
-        "S": {"O2", "C2"},
+        "S": {"O2", "C2", "O2'", "O2*"},
     },
     "U": {
         "W": {"O2", "N3", "O4"},
         "H": {"C5", "C6"},
-        "S": {"O2", "C2"},
+        "S": {"O2", "C2", "O2'", "O2*"},
     },
 }
 EDGE_ORDER = {"W": 0, "H": 1, "S": 2}
@@ -499,6 +503,27 @@ def _standard_fitted_pair_geometry(
     return relative_base_frame_geometry(fit_1, fit_2)
 
 
+def _lw_exemplar_classification(
+    ctx,
+    residue_1: Dict[str, Any],
+    residue_2: Dict[str, Any],
+) -> Optional[LWClassification]:
+    fit_1 = _standard_base_fit_for_residue(ctx, residue_1)
+    fit_2 = _standard_base_fit_for_residue(ctx, residue_2)
+    if fit_1 is None or fit_2 is None:
+        return None
+    library = getattr(ctx, "_annotation_lw_exemplar_library", None)
+    if library is None:
+        library = get_lw_exemplar_library()
+        setattr(ctx, "_annotation_lw_exemplar_library", library)
+    return library.classify_fits(
+        parent_base_name(residue_1["residue_name"]),
+        fit_1,
+        parent_base_name(residue_2["residue_name"]),
+        fit_2,
+    )
+
+
 def _contact_geometry_for_pair(
     ctx,
     strand_1: int,
@@ -522,11 +547,20 @@ def _contact_geometry_for_pair(
     edge_2, edge_2_score, edge_2_ambiguous = _dominant_edge(base_2, contact_atoms_2)
     fitted_geometry = _standard_fitted_pair_geometry(ctx, residue_1, residue_2)
     fitted_cww = is_fitted_cww_pose(fitted_geometry)
+    lw_classification = _lw_exemplar_classification(ctx, residue_1, residue_2)
+    confident_exemplar = bool(
+        lw_classification is not None and lw_classification.confident
+    )
     manual_geometry = dict(manual_geometry or {})
     manual_requested = bool(manual_geometry)
     if manual_requested:
         edge_1 = str(manual_geometry.get("edge_1", "")).upper()
         edge_2 = str(manual_geometry.get("edge_2", "")).upper()
+        edge_1_ambiguous = False
+        edge_2_ambiguous = False
+    elif confident_exemplar:
+        edge_1 = lw_classification.edge_1
+        edge_2 = lw_classification.edge_2
         edge_1_ambiguous = False
         edge_2_ambiguous = False
     elif fitted_cww:
@@ -541,6 +575,7 @@ def _contact_geometry_for_pair(
     )
     glycosidic_orientation = (
         manual_glycosidic_orientation
+        or (lw_classification.glycosidic_orientation if confident_exemplar else "")
         or ("cis" if fitted_cww else "")
         or canonical_contact_orientation
         or _glycosidic_orientation(base_1, base_2, atom_map_1, atom_map_2, contacts)
@@ -589,9 +624,13 @@ def _contact_geometry_for_pair(
         and edge_1 == edge_2 == "W"
         and glycosidic_orientation == "trans"
     )
-    lw_family_confident = bool(manual_requested or fitted_cww or fitted_trans_ww)
+    lw_family_confident = bool(
+        manual_requested or confident_exemplar or fitted_cww or fitted_trans_ww
+    )
     if manual_requested:
         confidence = "manual_inp_geometry"
+    elif confident_exemplar:
+        confidence = "fitted_lw_exemplar"
     elif fitted_cww:
         confidence = "fitted_standard_frames"
     elif has_reliable_contacts:
@@ -629,9 +668,14 @@ def _contact_geometry_for_pair(
         "geometry_source": (
             "inp"
             if (manual_requested or marked_hoogsteen)
-            else "fitted_standard_frames" if fitted_cww else "coordinates"
+            else "fitted_lw_exemplar"
+            if confident_exemplar
+            else "fitted_standard_frames"
+            if fitted_cww
+            else "coordinates"
         ),
         "lw_family_confident": lw_family_confident,
+        "lw_exemplar": lw_classification.as_dict() if lw_classification else {},
         "fitted_pair_geometry": fitted_geometry or {},
         "edge_score_1": edge_1_score,
         "edge_score_2": edge_2_score,
