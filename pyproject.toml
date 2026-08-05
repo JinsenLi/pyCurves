@@ -30,7 +30,6 @@ all = [
   "ijson>=3.2",
   "matplotlib>=3.7",
   "python-dateutil>=2.8",
-  "biopython>=1.81",
 ]
 dev = [
   "build>=1.0",
@@ -53,7 +52,6 @@ py-modules = [
   "pycurves_md_plot",
   "pycurves_viewer",
   "pycurves_pymol",
-  "process_dna",
 ]
 include-package-data = true
 

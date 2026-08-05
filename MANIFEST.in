@@ -1,3 +1,0 @@
-include readme.md
-recursive-include pycurves_lib/data *.json *.lib
-
