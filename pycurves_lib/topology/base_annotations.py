@@ -4,6 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from pycurves_lib.io.base_reference import (
+    BaseFrameFitter,
+    BaseReferenceLibrary,
+    is_fitted_cww_pose,
+    relative_base_frame_geometry,
+)
 from pycurves_lib.data.modified_bases import is_modified_base, parent_base_name
 
 WC_PAIRS = {("A", "T"), ("T", "A"), ("A", "U"), ("U", "A"), ("G", "C"), ("C", "G")}
@@ -71,6 +77,9 @@ SUGAR_C1_ATOMS = ("C1'", "C1*")
 
 def annotate_context(ctx) -> Dict[str, List[Dict[str, Any]]]:
     """Build pyCurves-native annotations for noncanonical and modified bases."""
+    # Coordinates may change between trajectory frames even when the topology
+    # context is reused, so never retain fitted annotation geometry here.
+    setattr(ctx, "_annotation_standard_base_fit_cache", {})
     base_fit_quality = list(getattr(ctx, "annotations", {}).get("base_fit_quality", []))
     backbone_links = list(getattr(ctx, "annotations", {}).get("backbone_links", []))
     source_base_pairs = _source_base_pair_annotations(ctx)
@@ -242,6 +251,10 @@ def render_section_l(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
 def base_pair_geometry_tag(row: Dict[str, Any]) -> str:
     """Return a compact cWW/tWH-style tag when edge and orientation are known."""
     manual_tag = str(row.get("manual_geometry_tag") or "").strip()
+    if manual_tag:
+        return manual_tag
+    if "lw_family_confident" in row and not bool(row.get("lw_family_confident")):
+        return ""
     orientation = str(row.get("glycosidic_orientation") or "").strip().lower()
     prefix = {"cis": "c", "trans": "t"}.get(orientation, "")
 
@@ -342,7 +355,7 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             pair_subtype = contact_geometry.get("edge_pair") or subtype
             confidence = "heuristic_geometry"
             method = "identity_and_base_pair_geometry"
-        elif contact_geometry.get("edge_pair") and (
+        elif contact_geometry.get("lw_family_confident") and contact_geometry.get("edge_pair") and (
             family == "mismatch"
             or (
                 contact_geometry.get("edge_1") == "W"
@@ -393,6 +406,7 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "contact_atom_pairs": contact_geometry.get("contact_atom_pairs", []),
             "contact_count": contact_geometry.get("contact_count", 0),
             "contact_confidence": contact_geometry.get("confidence", ""),
+            "lw_family_confident": bool(contact_geometry.get("lw_family_confident")),
             "manual_geometry_tag": contact_geometry.get("manual_geometry_tag", ""),
             "contact_geometry": contact_geometry,
             "source_pair_number": source_pair.get("pair_number") if source_pair else None,
@@ -428,6 +442,63 @@ def _geometry_flag(ctx, strand_1: int, strand_2: int, level: int, contact_geomet
     return ""
 
 
+
+def _standard_base_fit_for_residue(ctx, residue: Dict[str, Any]) -> Optional[Dict[str, object]]:
+    """Fit one mapped residue for annotation, independent of calculation convention."""
+    try:
+        subunit = int(residue["subunit"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    cache = getattr(ctx, "_annotation_standard_base_fit_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(ctx, "_annotation_standard_base_fit_cache", cache)
+    if subunit in cache:
+        return cache[subunit]
+
+    result = None
+    try:
+        mol = ctx.molecule
+        boundaries = np.asarray(mol.subunit_boundaries, dtype=int)
+        start = int(boundaries[subunit - 1])
+        end = int(boundaries[subunit])
+        residue_atoms: Dict[str, int] = {}
+        for atom_idx in range(start, end):
+            atom_name = str(mol.atom_names[atom_idx]).strip().upper()
+            residue_atoms.setdefault(atom_name, atom_idx)
+
+        library = getattr(ctx, "_annotation_standard_base_library", None)
+        fitter = getattr(ctx, "_annotation_standard_base_fitter", None)
+        if library is None or fitter is None:
+            library = BaseReferenceLibrary.load("standard")
+            fitter = BaseFrameFitter(library)
+            setattr(ctx, "_annotation_standard_base_library", library)
+            setattr(ctx, "_annotation_standard_base_fitter", fitter)
+
+        base = parent_base_name(residue["residue_name"])
+        template = library.template_for_base(base)
+        if template is not None:
+            result = fitter.fit(template, residue_atoms, mol.coordinates)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        result = None
+
+    cache[subunit] = result
+    return result
+
+
+def _standard_fitted_pair_geometry(
+    ctx,
+    residue_1: Dict[str, Any],
+    residue_2: Dict[str, Any],
+) -> Optional[Dict[str, object]]:
+    fit_1 = _standard_base_fit_for_residue(ctx, residue_1)
+    fit_2 = _standard_base_fit_for_residue(ctx, residue_2)
+    if fit_1 is None or fit_2 is None:
+        return None
+    return relative_base_frame_geometry(fit_1, fit_2)
+
+
 def _contact_geometry_for_pair(
     ctx,
     strand_1: int,
@@ -449,11 +520,17 @@ def _contact_geometry_for_pair(
     contact_atoms_2 = [item["atom_2"] for item in contacts]
     edge_1, edge_1_score, edge_1_ambiguous = _dominant_edge(base_1, contact_atoms_1)
     edge_2, edge_2_score, edge_2_ambiguous = _dominant_edge(base_2, contact_atoms_2)
+    fitted_geometry = _standard_fitted_pair_geometry(ctx, residue_1, residue_2)
+    fitted_cww = is_fitted_cww_pose(fitted_geometry)
     manual_geometry = dict(manual_geometry or {})
     manual_requested = bool(manual_geometry)
     if manual_requested:
         edge_1 = str(manual_geometry.get("edge_1", "")).upper()
         edge_2 = str(manual_geometry.get("edge_2", "")).upper()
+        edge_1_ambiguous = False
+        edge_2_ambiguous = False
+    elif fitted_cww:
+        edge_1 = edge_2 = "W"
         edge_1_ambiguous = False
         edge_2_ambiguous = False
     edge_pair = f"{edge_1}/{edge_2}" if edge_1 and edge_2 else ""
@@ -464,6 +541,7 @@ def _contact_geometry_for_pair(
     )
     glycosidic_orientation = (
         manual_glycosidic_orientation
+        or ("cis" if fitted_cww else "")
         or canonical_contact_orientation
         or _glycosidic_orientation(base_1, base_2, atom_map_1, atom_map_2, contacts)
     )
@@ -484,29 +562,38 @@ def _contact_geometry_for_pair(
         and not edge_1_ambiguous
         and not edge_2_ambiguous
     )
-    has_manual_frame_contacts = manual_requested and bool(edge_1) and bool(edge_2) and len(contacts) >= MIN_CONTACT_FRAME_PAIRS
-    has_usable_edge_geometry = has_reliable_contacts or has_manual_frame_contacts
-    observed_watson_crick = (
-        has_usable_edge_geometry
-        and edge_1 == "W"
-        and edge_2 == "W"
-        and glycosidic_orientation == "cis"
-    )
-    watson_watson_geometry = has_usable_edge_geometry and edge_1 == "W" and edge_2 == "W"
+    # An explicit LW tag in the input is authoritative even if the raw
+    # coordinate contact finder cannot recover two short atom pairs. The frame
+    # builder can fall back to the complete atoms belonging to those edges.
+    has_manual_frame_geometry = manual_requested and bool(edge_1) and bool(edge_2)
     forced_noncanonical = bool(source_hoogsteen or marked_hoogsteen)
-    if canonical_identity and observed_watson_crick and not forced_noncanonical:
-        frame_mode = "legacy_canonical"
-    elif canonical_identity and not has_usable_edge_geometry and not forced_noncanonical:
-        frame_mode = "legacy_canonical"
-    elif watson_watson_geometry:
+    if has_manual_frame_geometry:
+        # WW families already have a stable standard fitted construction.
+        frame_mode = "fitted_fallback" if edge_1 == edge_2 == "W" else "contact_geometry"
+    elif manual_requested:
         frame_mode = "fitted_fallback"
-    elif has_usable_edge_geometry:
+    elif marked_hoogsteen and has_reliable_contacts and edge_1 != edge_2:
+        # Preserve the legacy explicit [Hoog] instruction when its edge can be
+        # recovered, although new generated inputs use a precise LW tag.
         frame_mode = "contact_geometry"
+    elif canonical_identity and not forced_noncanonical:
+        frame_mode = "legacy_canonical"
     else:
+        # Coordinate-only/source annotations remain descriptive. They must not
+        # silently replace the standard fitted calculation frames.
         frame_mode = "fitted_fallback"
 
+    fitted_trans_ww = bool(
+        fitted_geometry
+        and fitted_geometry.get("eligible")
+        and edge_1 == edge_2 == "W"
+        and glycosidic_orientation == "trans"
+    )
+    lw_family_confident = bool(manual_requested or fitted_cww or fitted_trans_ww)
     if manual_requested:
         confidence = "manual_inp_geometry"
+    elif fitted_cww:
+        confidence = "fitted_standard_frames"
     elif has_reliable_contacts:
         confidence = "edge_contacts"
     elif contacts:
@@ -539,6 +626,13 @@ def _contact_geometry_for_pair(
         "contact_atom_pairs": contacts,
         "contact_count": len(contacts),
         "confidence": confidence,
+        "geometry_source": (
+            "inp"
+            if (manual_requested or marked_hoogsteen)
+            else "fitted_standard_frames" if fitted_cww else "coordinates"
+        ),
+        "lw_family_confident": lw_family_confident,
+        "fitted_pair_geometry": fitted_geometry or {},
         "edge_score_1": edge_1_score,
         "edge_score_2": edge_2_score,
         "edge_1_ambiguous": edge_1_ambiguous,

@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import gemmi
 import numpy as np
 
 
@@ -294,6 +295,74 @@ class BaseReferenceLibrary:
         return np.zeros(3, dtype=float)
 
 
+def relative_base_frame_geometry(
+    first_fit: Dict[str, object],
+    second_fit: Dict[str, object],
+    *,
+    origin_distance_cutoff: float = 15.0,
+    vertical_separation_cutoff: float = 2.5,
+    normal_angle_cutoff: float = 65.0,
+) -> Optional[Dict[str, object]]:
+    """Return convention-independent descriptors between two fitted bases."""
+    try:
+        origin_1 = np.asarray(first_fit["origin"], dtype=float)
+        origin_2 = np.asarray(second_fit["origin"], dtype=float)
+        axes_1 = np.asarray(first_fit["axes"], dtype=float)
+        axes_2 = np.asarray(second_fit["axes"], dtype=float)
+        rmsd_1 = float(first_fit["rmsd"])
+        rmsd_2 = float(second_fit["rmsd"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (
+        origin_1.shape != (3,)
+        or origin_2.shape != (3,)
+        or axes_1.shape != (3, 3)
+        or axes_2.shape != (3, 3)
+        or not np.all(np.isfinite(origin_1))
+        or not np.all(np.isfinite(origin_2))
+        or not np.all(np.isfinite(axes_1))
+        or not np.all(np.isfinite(axes_2))
+    ):
+        return None
+
+    delta = origin_2 - origin_1
+    origin_distance = float(np.linalg.norm(delta))
+    vertical_separation = max(
+        abs(float(np.dot(delta, axes_1[2]))),
+        abs(float(np.dot(delta, axes_2[2]))),
+    )
+    normal_dot = float(np.clip(abs(np.dot(axes_1[2], axes_2[2])), 0.0, 1.0))
+    normal_angle = float(np.degrees(np.arccos(normal_dot)))
+    return {
+        "origin_distance": origin_distance,
+        "vertical_separation": vertical_separation,
+        "normal_angle": normal_angle,
+        "x_axis_dot": float(np.dot(axes_1[0], axes_2[0])),
+        "y_axis_dot": float(np.dot(axes_1[1], axes_2[1])),
+        "z_axis_dot": float(np.dot(axes_1[2], axes_2[2])),
+        "fit_rmsd_1": rmsd_1,
+        "fit_rmsd_2": rmsd_2,
+        "eligible": (
+            origin_distance <= origin_distance_cutoff
+            and vertical_separation <= vertical_separation_cutoff
+            and normal_angle <= normal_angle_cutoff
+        ),
+    }
+
+
+def is_fitted_cww_pose(fitted_geometry: Optional[Dict[str, object]]) -> bool:
+    """Return whether relative standard frames give a confident cWW pose."""
+    if not fitted_geometry or not bool(fitted_geometry.get("eligible")):
+        return False
+    # In standard cWW geometry, x axes are parallel while y and z axes are
+    # antiparallel. The margin tolerates about 32 degrees of deformation.
+    return (
+        float(fitted_geometry["x_axis_dot"]) >= 0.85
+        and float(fitted_geometry["y_axis_dot"]) <= -0.85
+        and float(fitted_geometry["z_axis_dot"]) <= -0.85
+    )
+
+
 class BaseFrameFitter:
     """Fit a residue to a standard base and return the mapped reference frame."""
 
@@ -328,24 +397,36 @@ class BaseFrameFitter:
 
         reference = np.asarray(reference_coords, dtype=float)
         observed = np.asarray(coordinates[fit_indices], dtype=float)
-        ref_centroid = reference.mean(axis=0)
-        obs_centroid = observed.mean(axis=0)
-        ref_shifted = reference - ref_centroid
-        obs_shifted = observed - obs_centroid
+        try:
+            # Gemmi returns the transform that superposes the second position
+            # list onto the first, so this maps reference -> observed.
+            superposition = gemmi.superpose_positions(
+                [gemmi.Position(*position) for position in observed],
+                [gemmi.Position(*position) for position in reference],
+            )
+        except Exception:
+            return None
+        if superposition.count != len(fit_indices):
+            return None
 
-        covariance = ref_shifted.T @ obs_shifted
-        u_mat, _, vt_mat = np.linalg.svd(covariance)
-        handedness = np.sign(np.linalg.det(vt_mat.T @ u_mat.T))
-        if handedness == 0.0:
-            handedness = 1.0
-        rotation = vt_mat.T @ np.diag([1.0, 1.0, handedness]) @ u_mat.T
+        rotation = np.asarray(superposition.transform.mat.tolist(), dtype=float)
+        translation = np.asarray(superposition.transform.vec.tolist(), dtype=float)
+        if (
+            rotation.shape != (3, 3)
+            or translation.shape != (3,)
+            or not np.all(np.isfinite(rotation))
+            or not np.all(np.isfinite(translation))
+        ):
+            return None
 
-        fitted = ref_shifted @ rotation.T + obs_centroid
+        fitted = reference @ rotation.T + translation
         residual = observed - fitted
+        # Keep pyCurves' historical per-atom Euclidean RMSD. Gemmi's SupResult
+        # reports the QCP/PyMOL convention normalized by 3N instead of N.
         rms = float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
 
         reference_origin = self.library.reference_origin_for_base(template)
-        origin = (reference_origin - ref_centroid) @ rotation.T + obs_centroid
+        origin = reference_origin @ rotation.T + translation
         reference_axes = template.reference_axes
         x_axis = reference_axes[0] @ rotation.T
         y_axis = reference_axes[1] @ rotation.T
@@ -356,7 +437,7 @@ class BaseFrameFitter:
         z_axis = self._unit(np.cross(x_axis, y_axis))
         y_axis = self._unit(np.cross(z_axis, x_axis))
 
-        all_fitted = (template.coordinates - ref_centroid) @ rotation.T + obs_centroid
+        all_fitted = template.coordinates @ rotation.T + translation
         fitted_by_atom = dict(zip(template.atom_names, all_fitted))
 
         return {
@@ -366,6 +447,8 @@ class BaseFrameFitter:
             "rmsd": rms,
             "fit_atom_names": used_names,
             "fit_indices": fit_indices,
+            "rotation": rotation,
+            "translation": translation,
         }
 
     @staticmethod

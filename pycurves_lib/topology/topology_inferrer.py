@@ -6,6 +6,12 @@ import networkx as nx
 import numpy as np
 
 from pycurves_lib.core.curves_dataclasses import MolecularStructure
+from pycurves_lib.io.base_reference import (
+    BaseFrameFitter,
+    BaseReferenceLibrary,
+    is_fitted_cww_pose,
+    relative_base_frame_geometry,
+)
 from pycurves_lib.topology.base_annotations import BASE_EDGE_ATOMS, EDGE_ORDER
 from pycurves_lib.data.modified_bases import parent_base_name
 
@@ -44,6 +50,9 @@ HBOND_DISTANCE_CUTOFF = 3.8
 HBOND_PREFILTER_DISTANCE = 11.0
 BASE_PAIR_PLANE_OFFSET_CUTOFF = 3.2
 PAIR_GEOMETRY_PLANE_OFFSET_CUTOFF = 2.0
+FITTED_PAIR_ORIGIN_DISTANCE_CUTOFF = 15.0
+FITTED_PAIR_VERTICAL_SEPARATION_CUTOFF = 2.5
+FITTED_PAIR_NORMAL_ANGLE_CUTOFF = 65.0
 GLYCOSIDIC_SIDE_EPSILON = 0.25
 SUSPICIOUS_BACKBONE_GAP_DISTANCE = 8.5
 REGISTER_GAP_CENTER_CUTOFF = 7.8
@@ -93,6 +102,7 @@ class ResidueNode:
     center: np.ndarray
     sugar_center: np.ndarray
     hbond_center: np.ndarray
+    fitted_geometry: Optional[Dict[str, object]] = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +117,7 @@ class BasePairCandidate:
     pair_family: str
     atom_pairs: Tuple[Tuple[str, str, float], ...]
     is_hoogsteen: bool = False
+    fitted_geometry: Optional[Dict[str, object]] = None
 
 
 @dataclass
@@ -183,6 +194,8 @@ class RobustTopologyInferrer:
         self.mol = mol
         self.pdbfile = pdbfile or ""
         self.residues: Dict[int, ResidueNode] = {}
+        self.reference_library = BaseReferenceLibrary.load("standard")
+        self.frame_fitter = BaseFrameFitter(self.reference_library)
         self.strands: List[List[int]] = []
         self.complexes: List[List[int]] = []
         self.pair_edges: List[Tuple[int, int]] = []
@@ -284,6 +297,16 @@ class RobustTopologyInferrer:
                 hbond_indices = base_indices
             hbond_center = np.mean(self.mol.coordinates[hbond_indices], axis=0)
 
+            residue_atoms: Dict[str, int] = {}
+            for offset, atom_name in enumerate(atom_names):
+                residue_atoms.setdefault(atom_name, start + offset)
+            template = self.reference_library.template_for_base(base)
+            fitted_geometry = (
+                self.frame_fitter.fit(template, residue_atoms, self.mol.coordinates)
+                if template is not None
+                else None
+            )
+
             chain = ""
             if self.mol.chain_ids is not None:
                 chain = str(self.mol.chain_ids[start]).strip()
@@ -298,7 +321,24 @@ class RobustTopologyInferrer:
                 center=center,
                 sugar_center=sugar_center,
                 hbond_center=hbond_center,
+                fitted_geometry=fitted_geometry,
             )
+
+    def _fitted_pair_geometry(
+        self,
+        residue_1: ResidueNode,
+        residue_2: ResidueNode,
+    ) -> Optional[Dict[str, object]]:
+        """Describe a pair in standard fitted base frames."""
+        if residue_1.fitted_geometry is None or residue_2.fitted_geometry is None:
+            return None
+        return relative_base_frame_geometry(
+            residue_1.fitted_geometry,
+            residue_2.fitted_geometry,
+            origin_distance_cutoff=FITTED_PAIR_ORIGIN_DISTANCE_CUTOFF,
+            vertical_separation_cutoff=FITTED_PAIR_VERTICAL_SEPARATION_CUTOFF,
+            normal_angle_cutoff=FITTED_PAIR_NORMAL_ANGLE_CUTOFF,
+        )
 
     def _trace_strands(self) -> None:
         ordered = sorted(self.residues.values(), key=lambda r: r.subunit)
@@ -423,6 +463,7 @@ class RobustTopologyInferrer:
                     seen.add(key)
                     residue_1 = self.residues[left]
                     residue_2 = self.residues[right]
+                    fitted_geometry = self._fitted_pair_geometry(residue_1, residue_2)
                     center_distance = float(np.linalg.norm(residue_1.center - residue_2.center))
                     score = self._base_pair_candidate_score(
                         "source_annotated",
@@ -441,6 +482,7 @@ class RobustTopologyInferrer:
                         pair_family="source_annotated",
                         atom_pairs=(),
                         is_hoogsteen=bool(row.get("is_hoogsteen")),
+                        fitted_geometry=fitted_geometry,
                     ))
         return candidates
 
@@ -453,6 +495,9 @@ class RobustTopologyInferrer:
     ) -> Optional[BasePairCandidate]:
         residue_1 = self.residues[first]
         residue_2 = self.residues[second]
+        fitted_geometry = self._fitted_pair_geometry(residue_1, residue_2)
+        if fitted_geometry is not None and not bool(fitted_geometry["eligible"]):
+            return None
         atom_map_1 = self._atom_map(residue_1)
         atom_map_2 = self._atom_map(residue_2)
 
@@ -495,6 +540,7 @@ class RobustTopologyInferrer:
             pair_family=pair_family,
             atom_pairs=tuple(matches),
             is_hoogsteen=pair_family == "hoogsteen_like",
+            fitted_geometry=fitted_geometry,
         )
 
     @staticmethod
@@ -871,36 +917,63 @@ class RobustTopologyInferrer:
     ) -> Optional[Tuple[int, int, str]]:
         residue_1 = self.residues[candidate.first]
         residue_2 = self.residues[candidate.second]
+        if (
+            candidate.fitted_geometry is not None
+            and not bool(candidate.fitted_geometry["eligible"])
+        ):
+            return None
         atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
-        if not atom_pairs:
-            return None
 
-        edge_1 = self._dominant_edge_for_atoms(
-            residue_1.base,
-            [atom_1 for atom_1, _, _ in atom_pairs],
-        )
-        edge_2 = self._dominant_edge_for_atoms(
-            residue_2.base,
-            [atom_2 for _, atom_2, _ in atom_pairs],
-        )
-        if not edge_1 or not edge_2:
-            return None
+        # Relative standard-frame pose is stronger evidence than a vote over
+        # shared edge atoms. This is especially important for mismatches:
+        # non-complementary identity does not make a cWW pose trans-WW/cSW.
+        fitted_cww = self._is_fitted_cww_pose(candidate.fitted_geometry)
+        if fitted_cww:
+            edge_1 = edge_2 = "W"
+            orientation = "c"
+        else:
+            if not atom_pairs:
+                return None
+            edge_1 = self._dominant_edge_for_atoms(
+                residue_1.base,
+                [atom_1 for atom_1, _, _ in atom_pairs],
+            )
+            edge_2 = self._dominant_edge_for_atoms(
+                residue_2.base,
+                [atom_2 for _, atom_2, _ in atom_pairs],
+            )
+            if not edge_1 or not edge_2:
+                return None
 
-        pattern_matches, pattern_family = self._pattern_hbond_matches(
-            residue_1.base,
-            residue_2.base,
-            self._atom_map(residue_1),
-            self._atom_map(residue_2),
-        )
-        canonical_watson_contacts = (
-            edge_1 == edge_2 == "W"
-            and pattern_family == "watson_crick_or_wobble"
-            and len(pattern_matches) >= 2
-        )
-        orientation = "c" if canonical_watson_contacts else (
-            self._measured_glycosidic_orientation(candidate, atom_pairs)
-            or self._lw_orientation_from_edges(edge_1, edge_2, strand_direction)
-        )
+            pattern_matches, pattern_family = self._pattern_hbond_matches(
+                residue_1.base,
+                residue_2.base,
+                self._atom_map(residue_1),
+                self._atom_map(residue_2),
+            )
+            canonical_watson_contacts = (
+                edge_1 == edge_2 == "W"
+                and pattern_family == "watson_crick_or_wobble"
+                and len(pattern_matches) >= 2
+            )
+            orientation = "c" if canonical_watson_contacts else (
+                self._measured_glycosidic_orientation(candidate, atom_pairs)
+                or self._lw_orientation_from_edges(edge_1, edge_2, strand_direction)
+            )
+            confident_trans_ww = (
+                edge_1 == edge_2 == "W"
+                and orientation == "t"
+                and candidate.fitted_geometry is not None
+                and bool(candidate.fitted_geometry.get("eligible"))
+            )
+            confident_named_hoogsteen = (
+                candidate.is_hoogsteen or candidate.pair_family == "hoogsteen_like"
+            )
+            # Generic close-contact edge votes remain advisory. The supported
+            # authoritative cases are fitted cWW, fitted/observed tWW, and
+            # chemically named Hoogsteen patterns.
+            if not (confident_trans_ww or confident_named_hoogsteen):
+                return None
         tag = self._lw_tag_for_edges(edge_1, edge_2, orientation)
         measured_noncanonical = (edge_1, edge_2) != ("W", "W") or orientation == "t"
         should_write = (
@@ -928,6 +1001,10 @@ class RobustTopologyInferrer:
         generic_matches = self._generic_hbond_matches(residue_1, residue_2, atom_map_1, atom_map_2)
         matches = pattern_matches if len(pattern_matches) >= len(generic_matches) else generic_matches
         return tuple(matches)
+
+    @staticmethod
+    def _is_fitted_cww_pose(fitted_geometry: Optional[Dict[str, object]]) -> bool:
+        return is_fitted_cww_pose(fitted_geometry)
 
     @staticmethod
     def _dominant_edge_for_atoms(base: str, atom_names: Sequence[str]) -> str:
