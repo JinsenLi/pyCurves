@@ -37,6 +37,26 @@ HBOND_ATOMS = {
     "U": {"N3", "O4", "O2", "C5", "C6", "O2'", "O2*"},
     "I": {"N1", "O6", "N7", "N3", "C2", "C8", "O2'", "O2*"},
 }
+BASE_HBOND_DONORS = {
+    "A": {"N6"},
+    "G": {"N1", "N2"},
+    "I": {"N1"},
+    "C": {"N4"},
+    "T": {"N3"},
+    "U": {"N3"},
+}
+BASE_HBOND_ACCEPTORS = {
+    "A": {"N1", "N3", "N7"},
+    "G": {"O6", "N3", "N7"},
+    "I": {"O6", "N3", "N7"},
+    "C": {"O2", "N3"},
+    "T": {"O2", "O4"},
+    "U": {"O2", "O4"},
+}
+for _base in tuple(BASE_HBOND_DONORS):
+    # Ribose O2' may act as either donor or acceptor in sugar-edge pairs.
+    BASE_HBOND_DONORS[_base].update({"O2'", "O2*"})
+    BASE_HBOND_ACCEPTORS[_base].update({"O2'", "O2*"})
 GLYCOSIDIC_ATOMS = {
     "A": "N9",
     "G": "N9",
@@ -405,6 +425,50 @@ class RobustTopologyInferrer:
                 return self.mol.coordinates[atom_idx]
         return None
 
+    def coordinate_pair_candidates(
+        self,
+        *,
+        one_to_one: bool = True,
+    ) -> List[BasePairCandidate]:
+        """Detect current-coordinate pairs without source-table assistance."""
+        self._collect_residues()
+        self._trace_strands()
+        grouped: Dict[Tuple[int, int], List[BasePairCandidate]] = {}
+        for i, first_strand in enumerate(self.strands):
+            for j in range(i + 1, len(self.strands)):
+                second_strand = self.strands[j]
+                candidates = []
+                for first in first_strand:
+                    for second in second_strand:
+                        residue_1 = self.residues[first]
+                        residue_2 = self.residues[second]
+                        if (
+                            np.linalg.norm(
+                                residue_1.hbond_center - residue_2.hbond_center
+                            )
+                            > HBOND_PREFILTER_DISTANCE
+                        ):
+                            continue
+                        candidate = self._score_base_pair(
+                            first, second, i, j, donor_acceptor_only=True
+                        )
+                        if candidate is not None:
+                            candidates.append(candidate)
+                if candidates:
+                    grouped[(i, j)] = candidates
+
+        if not one_to_one:
+            return [
+                candidate
+                for candidates in grouped.values()
+                for candidate in candidates
+            ]
+        return [
+            candidate
+            for candidates in grouped.values()
+            for candidate in self._select_one_to_one_pairs(candidates)
+        ]
+
     def _find_base_pair_candidates(self) -> List[BasePairCandidate]:
         """Return one-to-one H-bonded base pairs for each strand pair."""
         strand_of = {
@@ -503,6 +567,8 @@ class RobustTopologyInferrer:
         second: int,
         first_strand: int,
         second_strand: int,
+        *,
+        donor_acceptor_only: bool = False,
     ) -> Optional[BasePairCandidate]:
         residue_1 = self.residues[first]
         residue_2 = self.residues[second]
@@ -519,7 +585,10 @@ class RobustTopologyInferrer:
         atom_map_2 = self._atom_map(residue_2)
 
         pattern_matches, pattern_family = self._pattern_hbond_matches(residue_1.base, residue_2.base, atom_map_1, atom_map_2)
-        generic_matches = self._generic_hbond_matches(residue_1, residue_2, atom_map_1, atom_map_2)
+        generic_matches = self._generic_hbond_matches(
+            residue_1, residue_2, atom_map_1, atom_map_2,
+            donor_acceptor_only=donor_acceptor_only,
+        )
 
         if len(pattern_matches) >= 2:
             pair_family = pattern_family
@@ -653,14 +722,27 @@ class RobustTopologyInferrer:
         residue_2: ResidueNode,
         atom_map_1: Dict[str, np.ndarray],
         atom_map_2: Dict[str, np.ndarray],
+        *,
+        donor_acceptor_only: bool = False,
     ) -> List[Tuple[str, str, float]]:
         close_contacts = []
+        donors_1 = BASE_HBOND_DONORS.get(residue_1.base, set())
+        acceptors_1 = BASE_HBOND_ACCEPTORS.get(residue_1.base, set())
+        donors_2 = BASE_HBOND_DONORS.get(residue_2.base, set())
+        acceptors_2 = BASE_HBOND_ACCEPTORS.get(residue_2.base, set())
         for atom_1 in HBOND_ATOMS.get(residue_1.base, set()):
             if atom_1 not in atom_map_1:
                 continue
             for atom_2 in HBOND_ATOMS.get(residue_2.base, set()):
                 if atom_2 not in atom_map_2:
                     continue
+                if donor_acceptor_only:
+                    compatible = (
+                        (atom_1 in donors_1 and atom_2 in acceptors_2)
+                        or (atom_1 in acceptors_1 and atom_2 in donors_2)
+                    )
+                    if not compatible:
+                        continue
                 distance = float(np.linalg.norm(atom_map_1[atom_1] - atom_map_2[atom_2]))
                 if distance <= HBOND_DISTANCE_CUTOFF:
                     close_contacts.append((atom_1, atom_2, distance))

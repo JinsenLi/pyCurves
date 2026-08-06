@@ -13,8 +13,8 @@ import numpy as np
 from pycurves_lib.data.modified_bases import parent_base_name
 from pycurves_lib.topology.base_annotations import (
     annotate_context,
-    base_pair_geometry_annotation,
-    base_pair_geometry_tag,
+    base_pair_observed_geometry_annotation,
+    base_pair_observed_geometry_tag,
     render_section_m,
 )
 from pycurves_lib.io.curves_visualization_payload import VisualizationPayloadMixin
@@ -529,6 +529,9 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             if hasattr(calc, "groove_params") and calc.groove_params:
                 records["groove"] = self._groove_records(calc.groove_params)
 
+        records["base_pair_observations"] = self._base_pair_observation_records(
+            annotations
+        )
         records["annotations"] = self._slim_annotation_records(annotations)
         records["noncanonical_base_pairs"] = self._noncanonical_base_pair_records(annotations)
 
@@ -648,9 +651,62 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             })
         return rows, summary
 
+    @staticmethod
+    def _base_pair_rows(
+        annotations: Dict[str, List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        return annotations.get(
+            "frame_base_pair_observations",
+            annotations.get("base_pair_annotations", []),
+        )
+
+    def _base_pair_observation_records(
+        self,
+        annotations: Dict[str, List[Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        """Return one compact record for each reference or newly observed pair."""
+        rows: List[Dict[str, Any]] = []
+        for row in self._base_pair_rows(annotations):
+            rows.append({
+                "pair_id": row.get("pair_id", ""),
+                "reference_pair": bool(row.get("reference_pair", True)),
+                "level": row.get("level"),
+                "strand_1": row.get("strand_1"),
+                "strand_2": row.get("strand_2"),
+                "subunit_1": row.get("subunit_1"),
+                "subunit_2": row.get("subunit_2"),
+                "residue_1": row.get("residue_1"),
+                "residue_2": row.get("residue_2"),
+                "base_1": row.get("base_1"),
+                "base_2": row.get("base_2"),
+                "pair_status": row.get("pair_status", "uncertain"),
+                "identity_class": row.get(
+                    "identity_class", row.get("pair_family", "")
+                ),
+                "observed_lw_family": base_pair_observed_geometry_tag(row),
+                "reference_lw_family": row.get("reference_lw_family", ""),
+                "pairing_mode": row.get("pairing_mode", ""),
+                "candidate_mode": row.get("candidate_mode", ""),
+                "classification_status": row.get(
+                    "classification_status", "unassigned"
+                ),
+                "evidence_source": row.get("evidence_source", ""),
+                "diagnostic_flags": list(row.get("diagnostic_flags") or []),
+                "contact_confidence": row.get("contact_confidence", ""),
+                "contact_count": self._contact_count(row),
+                "reference_pairing_mode": row.get(
+                    "reference_pairing_mode", ""
+                ),
+                "reference_classification_status": row.get(
+                    "reference_classification_status", ""
+                ),
+            })
+        return rows
+
+
     def _slim_annotation_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        for row in annotations.get("base_pair_annotations", []):
+        for row in self._base_pair_rows(annotations):
             if not self._is_reportable_base_pair_annotation(row):
                 continue
             rows.append({
@@ -660,8 +716,15 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "location": f"level {row.get('level')}",
                 "code": row.get("pair_family", ""),
                 "message": row.get("pair_subtype", ""),
-                "geometry_annotation": base_pair_geometry_annotation(row),
-                "leontis_westhof": base_pair_geometry_tag(row),
+                "pairing_mode": row.get("pairing_mode", ""),
+                "pair_status": row.get("pair_status", "uncertain"),
+                "geometry_annotation": base_pair_observed_geometry_annotation(row),
+                "leontis_westhof": base_pair_observed_geometry_tag(row),
+                "reference_lw_family": row.get("reference_lw_family", ""),
+                "candidate_mode": row.get("candidate_mode", ""),
+                "classification_status": row.get("classification_status", "unassigned"),
+                "diagnostic_flags": list(row.get("diagnostic_flags") or []),
+                "evidence_source": row.get("evidence_source", ""),
                 "residue_1": row.get("residue_1"),
                 "residue_2": row.get("residue_2"),
                 "base_1": row.get("base_1"),
@@ -711,7 +774,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
     def _noncanonical_base_pair_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        for row in annotations.get("base_pair_annotations", []):
+        for row in self._base_pair_rows(annotations):
             if not self._is_noncanonical_base_pair(row):
                 continue
             rows.append({
@@ -724,8 +787,15 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "base_2": row.get("base_2"),
                 "pair_family": row.get("pair_family", ""),
                 "pair_subtype": row.get("pair_subtype", ""),
-                "geometry_annotation": base_pair_geometry_annotation(row),
-                "leontis_westhof": base_pair_geometry_tag(row),
+                "pairing_mode": row.get("pairing_mode", ""),
+                "pair_status": row.get("pair_status", "uncertain"),
+                "geometry_annotation": base_pair_observed_geometry_annotation(row),
+                "leontis_westhof": base_pair_observed_geometry_tag(row),
+                "reference_lw_family": row.get("reference_lw_family", ""),
+                "candidate_mode": row.get("candidate_mode", ""),
+                "classification_status": row.get("classification_status", "unassigned"),
+                "diagnostic_flags": list(row.get("diagnostic_flags") or []),
+                "evidence_source": row.get("evidence_source", ""),
                 "edge_pair": row.get("edge_pair", ""),
                 "edge_1": row.get("edge_1", ""),
                 "edge_2": row.get("edge_2", ""),
@@ -737,7 +807,6 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "contact_confidence": row.get("contact_confidence", ""),
                 "contact_count": self._contact_count(row),
                 "source_pair_number": row.get("source_pair_number"),
-                "geometry_flag": row.get("geometry_flag", ""),
                 "manual_geometry_tag": row.get("manual_geometry_tag", ""),
                 "shape_parameters_supported": row.get("shape_parameters_supported", True),
                 "shape_skip_reason": row.get("shape_skip_reason", ""),
@@ -751,7 +820,9 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             or row.get("is_mismatch")
             or row.get("has_modified_base")
             or row.get("pair_family") not in {"watson_crick", ""}
-            or row.get("geometry_flag")
+            or row.get("diagnostic_flags")
+            or row.get("candidate_mode")
+            or row.get("pair_status") != "present"
             or row.get("frame_mode") == "contact_geometry"
         )
 
@@ -761,7 +832,9 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             row.get("is_hoogsteen")
             or row.get("is_mismatch")
             or row.get("pair_family") not in {"watson_crick", ""}
-            or row.get("geometry_flag")
+            or row.get("diagnostic_flags")
+            or row.get("candidate_mode")
+            or row.get("pair_status") != "present"
             or row.get("frame_mode") == "contact_geometry"
         )
 
@@ -786,7 +859,12 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
     def _annotations(self) -> Dict[str, List[Dict[str, Any]]]:
         if self._annotation_cache is None:
+            frame_observations = getattr(
+                self.runner.ctx, "annotations", {}
+            ).get("frame_base_pair_observations")
             self._annotation_cache = annotate_context(self.runner.ctx)
+            if frame_observations is not None:
+                self._annotation_cache["frame_base_pair_observations"] = frame_observations
         return self._annotation_cache
 
     def _header(self, header_name: str) -> str:

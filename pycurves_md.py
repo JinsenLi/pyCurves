@@ -31,6 +31,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
         mini_override: Optional[bool] = None,
         comb_override: Optional[bool] = None,
         ends_override: Optional[bool] = None,
+        topology_mode: str = "reference",
         dssr_json: Optional[str] = None,
         dssr_unit: Optional[str] = None,
     ):
@@ -51,6 +52,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
                 mini_override=mini_override,
                 comb_override=comb_override,
                 ends_override=ends_override,
+                topology_mode=topology_mode,
             )
             self.dssr_json = None
             self.dssr_unit = None
@@ -89,6 +91,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
             mini_override=mini_override,
             comb_override=comb_override,
             ends_override=ends_override,
+            topology_mode=topology_mode,
         )
         self.reference_runner = dssr_runner
         self.inpfile = dssr_runner.inpfile
@@ -125,6 +128,7 @@ def analyze_trajectory(
     mini: Optional[bool] = None,
     comb: Optional[bool] = None,
     ends: Optional[bool] = None,
+    topology_mode: str = "reference",
     verbose: bool = False,
     warm_start: bool = True,
     axis_continuity: bool = True,
@@ -150,6 +154,7 @@ def analyze_trajectory(
         mini_override=mini,
         comb_override=comb,
         ends_override=ends,
+        topology_mode=topology_mode,
         dssr_json=dssr_json,
         dssr_unit=dssr_unit,
     )

@@ -20,6 +20,7 @@ from pycurves_lib.cli.pycurves_cli_options import (
     pycurves_runner_kwargs,
 )
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
+from pycurves_lib.topology.frame_annotations import infer_frame_pair_observations
 from pycurves_lib.md.trajectory_statistics import (
     backbone_conformer_population_tables,
     circular_degree_summary,
@@ -46,6 +47,7 @@ class MDTrajectoryAnalyzer:
         mini_override: Optional[bool] = None,
         comb_override: Optional[bool] = None,
         ends_override: Optional[bool] = None,
+        topology_mode: str = "reference",
     ):
         self.topology_file = topology_file
         self.trajectory_file = trajectory_file
@@ -61,6 +63,11 @@ class MDTrajectoryAnalyzer:
         self.mini_override = mini_override
         self.comb_override = comb_override
         self.ends_override = ends_override
+        topology_mode = str(topology_mode).strip().lower()
+        if topology_mode not in {"reference", "annotate"}:
+            raise ValueError("topology_mode must be one of: reference, annotate")
+        self.topology_mode = topology_mode
+
         self.reference_topology_file = self._reference_topology(topology_file, trajectory_file, output_dir)
         self.template_molecule = self._load_template_molecule(self.reference_topology_file, self.altloc)
         self.runner_kwargs = {
@@ -115,6 +122,13 @@ class MDTrajectoryAnalyzer:
                 prev_opt_helical=prev_helical if warm_start else None,
                 axis_sign_reference=axis_sign_reference if axis_continuity else None,
             )
+            if self.topology_mode == "annotate":
+                reference_rows = runner.ctx.annotations.get(
+                    "base_pair_annotations", []
+                )
+                runner.ctx.annotations["frame_base_pair_observations"] = (
+                    infer_frame_pair_observations(molecule, reference_rows)
+                )
             effective_mini = bool(runner.ctx.cfg.mini)
 
             if warm_start and effective_mini and hasattr(runner, 'ctx') and hasattr(runner.ctx, 'params') and hasattr(runner.ctx.params, 'helical'):
@@ -167,6 +181,7 @@ class MDTrajectoryAnalyzer:
                 "comb": self.comb_override,
                 "ends": self.ends_override,
                 "axis_convention": self.axis_convention,
+                "topology_mode": self.topology_mode,
             },
             "selection": {
                 **selection,
@@ -461,6 +476,7 @@ def analyze_trajectory(
     mini: Optional[bool] = None,
     comb: Optional[bool] = None,
     ends: Optional[bool] = None,
+    topology_mode: str = "reference",
     verbose: bool = False,
     warm_start: bool = True,
     axis_continuity: bool = True,
@@ -491,6 +507,7 @@ def analyze_trajectory(
         mini_override=mini,
         comb_override=comb,
         ends_override=ends,
+        topology_mode=topology_mode,
     )
     return analyzer.run(
         frame_selector=frame_selector,
@@ -517,6 +534,15 @@ def main() -> None:
     parser.add_argument("--step", type=int, default=1, help="Frame stride.")
     add_pycurves_analysis_options(parser)
     parser.add_argument(
+        "--topology-mode",
+        choices=["reference", "annotate"],
+        default="reference",
+        help=(
+            "Use the reference pair map only, or infer coordinate-supported "
+            "pair presence and pairing mode independently for every frame."
+        ),
+    )
+    parser.add_argument(
         "--no-warm-start",
         action="store_true",
         help="Do not seed each frame's optimizer from the previous frame. Slower, but useful for diagnosing axis branch flips.",
@@ -535,6 +561,7 @@ def main() -> None:
         trajectory_file=args.trajectory,
         inpfile=args.inp,
         output_dir=args.output_dir,
+        topology_mode=args.topology_mode,
         **pycurves_runner_kwargs(args),
     )
     try:

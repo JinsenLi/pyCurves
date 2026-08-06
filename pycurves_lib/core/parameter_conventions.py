@@ -818,10 +818,8 @@ class StandardParameterConvention(LegacyParameterConvention):
         if edge_1 != "W" or edge_2 != "W":
             return False
         return bool(
-            annotation.get("is_mismatch")
-            or annotation.get("is_hoogsteen")
-            or annotation.get("pair_family") not in {"watson_crick", ""}
-            or annotation.get("geometry_flag")
+            annotation.get("identity_class") not in {"watson_crick", ""}
+            or annotation.get("calculation_is_hoogsteen")
         )
 
     def _uses_contact_geometry_pair(self, calc, partner_strand: int, level: int) -> bool:
@@ -845,7 +843,7 @@ class StandardParameterConvention(LegacyParameterConvention):
         base_pairs = getattr(calc.ctx, "annotations", {}).get("base_pair_annotations", [])
         strands = {1, partner_strand + 1}
         for bp in base_pairs:
-            if not bp.get("is_hoogsteen") or bp.get("level") != level:
+            if not bp.get("calculation_is_hoogsteen") or bp.get("level") != level:
                 continue
             annotated = {int(bp.get("strand_1", 0)), int(bp.get("strand_2", 0))}
             if annotated == strands:
@@ -857,7 +855,7 @@ class StandardParameterConvention(LegacyParameterConvention):
         strand_id = strand + 1
         base_pairs = getattr(calc.ctx, "annotations", {}).get("base_pair_annotations", [])
         for bp in base_pairs:
-            if not bp.get("is_hoogsteen") or bp.get("level") != level:
+            if not bp.get("calculation_is_hoogsteen") or bp.get("level") != level:
                 continue
             strands = {int(bp.get("strand_1", 0)), int(bp.get("strand_2", 0))}
             if strand_id in strands:

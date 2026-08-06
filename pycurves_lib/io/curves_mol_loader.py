@@ -621,7 +621,14 @@ class MolecularLoader:
         for row in table:
             hbond_type_12 = value(row, "hbond_type_12")
             hbond_type_28 = value(row, "hbond_type_28")
-            is_hoogsteen = hbond_type_12 == "3" or hbond_type_28 in {"23", "24"}
+            hbond_type_leontis_westhof = value(
+                row, "hbond_type_leontis_westhof"
+            )
+            is_hoogsteen = (
+                hbond_type_28 in {"23", "24"}
+                or hbond_type_leontis_westhof.lower()
+                in {"chw", "cwh", "thw", "twh"}
+            )
             rows.append({
                 "source": "mmcif_ndb_struct_na_base_pair",
                 "pair_number": int_value(row, "pair_number"),
@@ -635,6 +642,7 @@ class MolecularLoader:
                 "j_residue_name": value(row, "j_label_comp_id"),
                 "j_symmetry": value(row, "j_symmetry"),
                 "hbond_type_28": hbond_type_28,
+                "hbond_type_leontis_westhof": hbond_type_leontis_westhof,
                 "hbond_type_12": hbond_type_12,
                 "shear": float_value(row, "shear"),
                 "stretch": float_value(row, "stretch"),

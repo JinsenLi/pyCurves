@@ -140,12 +140,12 @@ without BFGS minimization.
 
 ## Non-Canonical Pairing
 
-pyCurves detects base-pair identity, interacting edges, and cis/trans orientation
-so that the right local frames and strand-direction signs can be used in shape
-calculations. Canonical Watson-Crick pairs keep the selected canonical frame
-convention; by default this is the Curves+/3DNA-compatible standard frame.
-Non-canonical pairs use contact-geometry frames only when the observed
-edge/contact evidence is strong enough.
+pyCurves reports base-pair identity, interacting edges, and cis/trans
+orientation separately from the geometry used for shape calculations. Canonical
+Watson-Crick pairs keep the selected canonical frame convention; by default this
+is the Curves+/3DNA-compatible standard frame. Explicit `.inp` LW tags and
+authoritative reference annotations may select non-canonical calculation
+frames, but a coordinate-only observation never changes a calculated parameter.
 
 Generated `.inp` files can carry editable geometry tags such as `[cWW]`,
 `[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are still reported as
@@ -153,10 +153,13 @@ mismatches even when they have a clear edge-contact geometry. Pair geometry in
 `.inp` files is represented exclusively by explicit three-character LW tags.
 
 The annotation report is part of the Curves text output, and annotation records
-are always included in JSON/CSV results. They include the detected pair class,
-observed edge/orientation tag, source mmCIF pair records when available, and
-warnings for source pairs that do not belong to the current generated `.inp`
-topology.
+are always included in JSON/CSV results. Pair presence is `present`, `absent`,
+or `uncertain`. `pairing_mode` uses controlled values: `watson_crick`,
+`hoogsteen`, `reverse_hoogsteen`, `wobble`, or `other`. Uncertain calls do
+not enter that field: for example, Section M renders `candidate_mode=hoogsteen`
+with `classification_status=possible` as “possible Hoogsteen.” Records keep
+`observed_lw_family` separate from `reference_lw_family`, and retain
+diagnostic flags and evidence provenance.
 
 ## MD Trajectories
 
@@ -171,6 +174,20 @@ Run trajectory summaries:
 ```bash
 pycurves-md topology.pdb trajectory.xtc --mode summary --frames 1000:5000:10 --output-file dynamics.json
 ```
+
+To annotate transient pairing independently in every analyzed frame, use:
+
+```bash
+pycurves-md topology.pdb trajectory.xtc --topology-mode annotate --mode both --output-file pairing_dynamics.json
+```
+
+`--topology-mode reference` is the default and keeps the reference pair map.
+`annotate` reruns coordinate-only pair detection after parameter calculation,
+reports missing reference pairs as absent, and adds newly detected pairs with
+`reference_pair=false`. The compact `base_pair_observations` table contains
+pair presence and pairing mode; detailed geometry remains available elsewhere
+in the JSON. This mode is currently implemented only in `pycurves-md`, not
+`pycurves-md-batch`.
 
 Summary tables report numeric columns as `*_mean` and `*_stddev`. Angular columns
 use a circular mean and the resultant-length standard deviation
