@@ -38,7 +38,6 @@ class ConfigLoader:
         (
             expanded_maps,
             current_idx,
-            hoogsteen_markers,
             pair_geometry_markers,
         ) = ConfigLoader._parse_strand_maps(
             data_lines,
@@ -85,7 +84,6 @@ class ConfigLoader:
             "nr": active_end_levels,
             "li_map": initial_level_status,
             "ni_map": subunit_map,
-            "hoogsteen_markers": hoogsteen_markers,
             "pair_geometry_markers": pair_geometry_markers,
             "config": cfg,
         }
@@ -211,15 +209,12 @@ class ConfigLoader:
             # keep existing user-authored .inp files readable.
             if normalized in {"syn", "anti"}:
                 continue
-            if normalized in {"h", "hoog", "hoogsteen"}:
-                tag_info = {"kind": "hoogsteen", "tag": "Hoog"}
-            else:
-                tag_info = ConfigLoader._parse_lw_geometry_tag(normalized)
+            tag_info = ConfigLoader._parse_lw_geometry_tag(normalized)
             if tag_info is None:
                 raise ValueError(
                     f"Unknown Curves topology tag [{tag}] in token {token!r}; "
-                    "supported tags are [Hoog] and Leontis-Westhof-style "
-                    "geometry tags like [cWW], [tWH], and [cSS]."
+                    "supported pair-geometry tags use Leontis-Westhof notation, "
+                    "for example [cWW], [tWH], and [cSS]."
                 )
             kind_group = "pair_geometry"
             if kind_group in seen_kinds:
@@ -282,7 +277,6 @@ class ConfigLoader:
     def _parse_strand_maps(data_lines, strand_count, signed_strand_lengths, file_path):
         """Support both explicit unit maps and Curves shorthand ranges like 1:12."""
         maps = []
-        hoogsteen_markers = set()
         pair_geometry_markers = {}
         current_idx = 1
         range_style = any(":" in line for line in data_lines[1:1 + strand_count])
@@ -301,7 +295,6 @@ class ConfigLoader:
                             strand + 1,
                             len(mapping),
                             mapped_unit,
-                            hoogsteen_markers,
                             pair_geometry_markers,
                         )
                 maps.append(mapping)
@@ -309,7 +302,6 @@ class ConfigLoader:
             return (
                 maps,
                 current_idx,
-                hoogsteen_markers,
                 pair_geometry_markers,
             )
 
@@ -330,7 +322,6 @@ class ConfigLoader:
                             strand + 1,
                             len(mapping),
                             mapped_unit,
-                            hoogsteen_markers,
                             pair_geometry_markers,
                         )
                 current_idx += 1
@@ -338,7 +329,6 @@ class ConfigLoader:
         return (
             maps,
             current_idx,
-            hoogsteen_markers,
             pair_geometry_markers,
         )
 
@@ -348,15 +338,11 @@ class ConfigLoader:
         strand: int,
         level: int,
         mapped_unit: int,
-        hoogsteen_markers: set,
         pair_geometry_markers: dict,
     ) -> None:
         if not tag_infos or mapped_unit == 0:
             return
         for tag_info in tag_infos:
-            if tag_info.get("kind") == "hoogsteen":
-                hoogsteen_markers.add((strand, level))
-                continue
             if tag_info.get("kind") == "lw":
                 marker = dict(tag_info)
                 marker["annotated_strand"] = strand

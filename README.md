@@ -149,7 +149,8 @@ edge/contact evidence is strong enough.
 
 Generated `.inp` files can carry editable geometry tags such as `[cWW]`,
 `[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are still reported as
-mismatches even when they have a clear edge-contact geometry.
+mismatches even when they have a clear edge-contact geometry. Pair geometry in
+`.inp` files is represented exclusively by explicit three-character LW tags.
 
 The annotation report is part of the Curves text output, and annotation records
 are always included in JSON/CSV results. They include the detected pair class,

@@ -842,10 +842,6 @@ class StandardParameterConvention(LegacyParameterConvention):
         )
 
     def _is_hoogsteen_pair(self, calc, partner_strand: int, level: int) -> bool:
-        if self._hoogsteen_marker_matches(calc, 0, partner_strand, level):
-            return True
-        if self._is_hoogsteen_level(calc, 0, level) or self._is_hoogsteen_level(calc, partner_strand, level):
-            return True
         base_pairs = getattr(calc.ctx, "annotations", {}).get("base_pair_annotations", [])
         strands = {1, partner_strand + 1}
         for bp in base_pairs:
@@ -858,18 +854,7 @@ class StandardParameterConvention(LegacyParameterConvention):
 
     @staticmethod
     def _is_hoogsteen_level(calc, strand: int, level: int) -> bool:
-        markers = getattr(calc.ctx, "hoogsteen_markers", set()) or set()
         strand_id = strand + 1
-        if level in markers or (strand_id, level) in markers:
-            return True
-        for marker in markers:
-            if (
-                isinstance(marker, tuple)
-                and len(marker) == 3
-                and marker[2] == level
-                and strand_id in marker[:2]
-            ):
-                return True
         base_pairs = getattr(calc.ctx, "annotations", {}).get("base_pair_annotations", [])
         for bp in base_pairs:
             if not bp.get("is_hoogsteen") or bp.get("level") != level:
@@ -878,20 +863,6 @@ class StandardParameterConvention(LegacyParameterConvention):
             if strand_id in strands:
                 return True
         return False
-
-    @staticmethod
-    def _hoogsteen_marker_matches(calc, first_strand: int, partner_strand: int, level: int) -> bool:
-        markers = getattr(calc.ctx, "hoogsteen_markers", set()) or set()
-        if level in markers:
-            return True
-        first = first_strand + 1
-        second = partner_strand + 1
-        return (
-            (first, level) in markers
-            or (second, level) in markers
-            or (first, second, level) in markers
-            or (second, first, level) in markers
-        )
 
     def _base_pair_frame(self, calc, partner_strand: int, level: int) -> Optional[ParameterFrame]:
         pair_frames = self._base_pair_member_frames(calc, partner_strand, level)

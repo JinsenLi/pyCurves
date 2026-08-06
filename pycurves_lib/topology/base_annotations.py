@@ -325,7 +325,6 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
         source_pair = source_by_level.get(level)
         source_hoogsteen = bool(source_pair and source_pair.get("is_hoogsteen"))
         manual_geometry = _pair_geometry_marker(ctx, level, s1 + 1, s2 + 1)
-        marked_hoogsteen = _hoogsteen_marker_matches(ctx, level, s1 + 1, s2 + 1)
         contact_geometry = _contact_geometry_for_pair(
             ctx,
             s1,
@@ -334,26 +333,18 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             r1,
             r2,
             source_hoogsteen=source_hoogsteen,
-            marked_hoogsteen=marked_hoogsteen,
             canonical_identity=canonical,
             manual_geometry=manual_geometry,
         )
         geometry_flag = _geometry_flag(ctx, s1, s2, level, contact_geometry)
         if source_hoogsteen:
             geometry_flag = "hoogsteen_from_source"
-        elif marked_hoogsteen:
-            geometry_flag = "hoogsteen_from_inp"
-        is_hoogsteen = source_hoogsteen or marked_hoogsteen or geometry_flag == "possible_hoogsteen"
+        is_hoogsteen = source_hoogsteen or geometry_flag == "possible_hoogsteen"
         if source_hoogsteen:
             pair_family = "hoogsteen"
             pair_subtype = "source_annotation"
             confidence = "source_mmcif"
             method = "mmcif_ndb_struct_na_base_pair"
-        elif marked_hoogsteen:
-            pair_family = "hoogsteen"
-            pair_subtype = "inp_marker"
-            confidence = "inp_topology"
-            method = "inp_hoogsteen_marker"
         elif geometry_flag == "possible_hoogsteen":
             pair_family = "possible_hoogsteen"
             pair_subtype = contact_geometry.get("edge_pair") or subtype
@@ -392,7 +383,7 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "parent_base_2": b2,
             "pair_family": pair_family,
             "pair_subtype": pair_subtype,
-            "is_canonical": canonical and frame_mode == "legacy_canonical" and not geometry_flag and not source_hoogsteen and not marked_hoogsteen,
+            "is_canonical": canonical and frame_mode == "legacy_canonical" and not geometry_flag and not source_hoogsteen,
             "is_mismatch": family == "mismatch" and not is_hoogsteen,
             "is_hoogsteen": is_hoogsteen,
             "has_modified_base": is_modified_base(r1["residue_name"]) or is_modified_base(r2["residue_name"]),
@@ -532,7 +523,6 @@ def _contact_geometry_for_pair(
     residue_1: Dict[str, Any],
     residue_2: Dict[str, Any],
     source_hoogsteen: bool,
-    marked_hoogsteen: bool,
     canonical_identity: bool,
     manual_geometry: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -601,16 +591,12 @@ def _contact_geometry_for_pair(
     # coordinate contact finder cannot recover two short atom pairs. The frame
     # builder can fall back to the complete atoms belonging to those edges.
     has_manual_frame_geometry = manual_requested and bool(edge_1) and bool(edge_2)
-    forced_noncanonical = bool(source_hoogsteen or marked_hoogsteen)
+    forced_noncanonical = bool(source_hoogsteen)
     if has_manual_frame_geometry:
         # WW families already have a stable standard fitted construction.
         frame_mode = "fitted_fallback" if edge_1 == edge_2 == "W" else "contact_geometry"
     elif manual_requested:
         frame_mode = "fitted_fallback"
-    elif marked_hoogsteen and has_reliable_contacts and edge_1 != edge_2:
-        # Preserve the legacy explicit [Hoog] instruction when its edge can be
-        # recovered, although new generated inputs use a precise LW tag.
-        frame_mode = "contact_geometry"
     elif canonical_identity and not forced_noncanonical:
         frame_mode = "legacy_canonical"
     else:
@@ -638,7 +624,7 @@ def _contact_geometry_for_pair(
     elif contacts:
         confidence = "weak_or_ambiguous_contacts"
     elif forced_noncanonical:
-        confidence = "source_or_inp_without_contacts"
+        confidence = "source_without_contacts"
     else:
         confidence = "identity"
 
@@ -667,7 +653,7 @@ def _contact_geometry_for_pair(
         "confidence": confidence,
         "geometry_source": (
             "inp"
-            if (manual_requested or marked_hoogsteen)
+            if manual_requested
             else "fitted_lw_exemplar"
             if confident_exemplar
             else "fitted_standard_frames"
@@ -684,7 +670,6 @@ def _contact_geometry_for_pair(
         "manual_geometry_tag": manual_geometry.get("tag", ""),
         "manual_geometry_strand": manual_geometry.get("annotated_strand"),
         "source_hoogsteen": bool(source_hoogsteen),
-        "marked_hoogsteen": bool(marked_hoogsteen),
     }
 
 
@@ -1071,18 +1056,6 @@ def _atom_distance(
     if coord_1 is None or coord_2 is None:
         return None
     return float(np.linalg.norm(coord_1 - coord_2))
-
-
-def _hoogsteen_marker_matches(ctx, level: int, strand_1: int, strand_2: int) -> bool:
-    markers = getattr(ctx, "hoogsteen_markers", set()) or set()
-    if level in markers:
-        return True
-    return (
-        (strand_1, level) in markers
-        or (strand_2, level) in markers
-        or (strand_1, strand_2, level) in markers
-        or (strand_2, strand_1, level) in markers
-    )
 
 
 def _source_base_pair_annotations(ctx) -> List[Dict[str, Any]]:

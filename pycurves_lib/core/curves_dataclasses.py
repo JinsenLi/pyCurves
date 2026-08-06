@@ -777,7 +777,6 @@ class CurvesContext:
         self.ng = cfg.get('ng', np.zeros(self.nst, dtype=int))
         self.nr = cfg.get('nr', np.zeros(self.nst, dtype=int))
         self.ni_map = np.array(cfg['ni_map'])   # Fortran ni: subunit index per strand/level.
-        self.hoogsteen_markers = set(cfg.get('hoogsteen_markers', set()) or set())
         self.pair_geometry_markers = dict(cfg.get('pair_geometry_markers', {}) or {})
         self.active_start_levels = self.ng  # Readable alias for Fortran ng.
         self.active_end_levels = self.nr  # Readable alias for Fortran nr.

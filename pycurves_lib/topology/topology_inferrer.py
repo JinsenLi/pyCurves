@@ -138,7 +138,6 @@ class InferredTopology:
     fit: bool = True
     grv: bool = True
     ends: bool = False
-    hoogsteen_markers: set = field(default_factory=set)
     pair_geometry_markers: Dict[Tuple[int, int], str] = field(default_factory=dict)
 
     @property
@@ -167,17 +166,9 @@ class InferredTopology:
             tokens = []
             for level, value in enumerate(row, start=1):
                 token = str(int(value))
-                tags = []
                 geometry_tag = self.pair_geometry_markers.get((strand, level)) if int(value) != 0 else None
                 if geometry_tag:
-                    tags.append(geometry_tag)
-                elif int(value) != 0 and (
-                    (strand, level) in self.hoogsteen_markers
-                    or level in self.hoogsteen_markers
-                ):
-                    tags.append("Hoog")
-                if tags:
-                    token += "".join(f"[{tag}]" for tag in tags)
+                    token += f"[{geometry_tag}]"
                 tokens.append(token)
             lines.append(" " + " ".join(tokens))
         lines.append("0.0 0.0 0.0 0.0")
@@ -850,7 +841,6 @@ class RobustTopologyInferrer:
             if subunit > 0:
                 level_by_subunit[subunit] = level
                 strand_by_subunit[subunit] = 2
-        hoogsteen_markers = set()
         pair_geometry_markers = {}
         for candidate in selected_pairs:
             if candidate.first not in level_by_subunit or candidate.second not in level_by_subunit:
@@ -866,12 +856,6 @@ class RobustTopologyInferrer:
             if geometry_marker is not None:
                 strand_id, level, tag = geometry_marker
                 pair_geometry_markers[(strand_id, level)] = tag
-                continue
-            if candidate.is_hoogsteen:
-                marker_subunit = self._hoogsteen_marker_subunit(candidate)
-                if marker_subunit not in level_by_subunit:
-                    continue
-                hoogsteen_markers.add((strand_by_subunit[marker_subunit], level_by_subunit[marker_subunit]))
 
         return InferredTopology(
             pdbfile=self.pdbfile,
@@ -884,7 +868,6 @@ class RobustTopologyInferrer:
             comb=True,
             fit=True,
             grv=paired_count >= 4,
-            hoogsteen_markers=hoogsteen_markers,
             pair_geometry_markers=pair_geometry_markers,
         )
 
@@ -929,17 +912,6 @@ class RobustTopologyInferrer:
             partner_position,
         )
         return max((-1, 1), key=lambda direction: scores[direction])
-
-    def _hoogsteen_marker_subunit(self, candidate: BasePairCandidate) -> int:
-        """Return the base that uses the Hoogsteen edge in a marked pair."""
-        purines = {"A", "G", "I"}
-        first_is_purine = self.residues[candidate.first].base in purines
-        second_is_purine = self.residues[candidate.second].base in purines
-        if first_is_purine and not second_is_purine:
-            return candidate.first
-        if second_is_purine and not first_is_purine:
-            return candidate.second
-        return candidate.first
 
     def _pair_geometry_marker(
         self,
