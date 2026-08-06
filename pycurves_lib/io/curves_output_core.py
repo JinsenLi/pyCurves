@@ -680,9 +680,6 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "base_1": row.get("base_1"),
                 "base_2": row.get("base_2"),
                 "pair_status": row.get("pair_status", "uncertain"),
-                "identity_class": row.get(
-                    "identity_class", row.get("pair_family", "")
-                ),
                 "observed_lw_family": base_pair_observed_geometry_tag(row),
                 "reference_lw_family": row.get("reference_lw_family", ""),
                 "pairing_mode": row.get("pairing_mode", ""),

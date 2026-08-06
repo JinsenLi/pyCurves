@@ -186,8 +186,12 @@ pycurves-md topology.pdb trajectory.xtc --topology-mode annotate --mode both --o
 reports missing reference pairs as absent, and adds newly detected pairs with
 `reference_pair=false`. The compact `base_pair_observations` table contains
 pair presence and pairing mode; detailed geometry remains available elsewhere
-in the JSON. This mode is currently implemented only in `pycurves-md`, not
-`pycurves-md-batch`.
+in the JSON. In `summary` mode this table becomes a categorical state profile:
+each row reports one pair/status/mode/LW combination with `frame_count` and
+`frame_fraction`. Identifiers and diagnostic fields are not numerically
+averaged, and the detailed `annotations` and `noncanonical_base_pairs` tables
+are retained only by `per-frame` or `both` output. This mode is currently
+implemented only in `pycurves-md`, not `pycurves-md-batch`.
 
 Summary tables report numeric columns as `*_mean` and `*_stddev`. Angular columns
 use a circular mean and the resultant-length standard deviation

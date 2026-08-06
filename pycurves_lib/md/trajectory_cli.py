@@ -199,7 +199,10 @@ class MDTrajectoryAnalyzer:
         if mode in {"per-frame", "both"}:
             payload["frames"] = frame_payloads
         if mode in {"summary", "both"}:
-            payload["summary"] = self._summarize_tables(table_records)
+            payload["summary"] = self._summarize_tables(
+                table_records,
+                total_frames=processed,
+            )
         return payload
 
     def write_csv(self, payload: Dict, prefix: str) -> None:
@@ -313,9 +316,24 @@ class MDTrajectoryAnalyzer:
         return flat_rows
 
     @staticmethod
-    def _summarize_tables(tables: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
+    def _summarize_tables(
+        tables: Dict[str, List[Dict]],
+        total_frames: Optional[int] = None,
+    ) -> Dict[str, List[Dict]]:
         summaries = {}
         for name, rows in tables.items():
+            if name == "base_pair_observations":
+                summaries[name] = MDTrajectoryAnalyzer._pairing_profile_rows(
+                    rows,
+                    total_frames=total_frames,
+                )
+                continue
+            if name in {"annotations", "noncanonical_base_pairs"}:
+                # These are categorical event/detail tables. Treating residue,
+                # strand, status, and diagnostic fields as generic grouping keys
+                # produces misleading columns such as strand_1_mean. Pair-state
+                # populations are reported by base_pair_observations instead.
+                continue
             if not rows:
                 summaries[name] = []
                 continue
@@ -367,6 +385,101 @@ class MDTrajectoryAnalyzer:
         if "backbone" in tables:
             summaries.update(backbone_conformer_population_tables(tables["backbone"]))
         return summaries
+
+    @staticmethod
+    def _pairing_profile_rows(
+        rows: List[Dict],
+        total_frames: Optional[int] = None,
+    ) -> List[Dict]:
+        """Summarize categorical pair states without averaging identifiers."""
+        if not rows:
+            return []
+
+        if total_frames is None:
+            frame_ids = {
+                row.get("frame")
+                for row in rows
+                if row.get("frame") is not None
+            }
+            total_frames = len(frame_ids) if frame_ids else 0
+        total_frames = max(int(total_frames or 0), 0)
+
+        by_pair: Dict[str, List[Dict]] = {}
+        for row in rows:
+            pair_id = str(row.get("pair_id") or "").strip()
+            if not pair_id:
+                pair_id = (
+                    f"{row.get('residue_1', '')}:"
+                    f"{row.get('residue_2', '')}"
+                )
+            by_pair.setdefault(pair_id, []).append(row)
+
+        profile: List[Dict] = []
+        status_order = {"present": 0, "absent": 1, "uncertain": 2}
+        for pair_id in sorted(by_pair):
+            pair_rows = by_pair[pair_id]
+            first = pair_rows[0]
+            reference_pair = bool(first.get("reference_pair", True))
+            state_counts: Dict[tuple, int] = {}
+            for row in pair_rows:
+                state = (
+                    str(row.get("pair_status") or "uncertain"),
+                    str(row.get("pairing_mode") or ""),
+                    str(row.get("candidate_mode") or ""),
+                    str(row.get("classification_status") or "unassigned"),
+                    str(row.get("observed_lw_family") or ""),
+                )
+                state_counts[state] = state_counts.get(state, 0) + 1
+
+            missing_count = max(total_frames - len(pair_rows), 0)
+            if missing_count:
+                # Newly discovered pairs have no row in frames where the
+                # coordinate-only inferrer did not detect them.
+                missing_status = "uncertain" if reference_pair else "absent"
+                missing_state = (
+                    missing_status,
+                    "",
+                    "",
+                    "unassigned",
+                    "",
+                )
+                state_counts[missing_state] = (
+                    state_counts.get(missing_state, 0) + missing_count
+                )
+
+            for state, frame_count in sorted(
+                state_counts.items(),
+                key=lambda item: (
+                    status_order.get(item[0][0], 99),
+                    item[0][1],
+                    item[0][2],
+                    item[0][4],
+                ),
+            ):
+                (
+                    pair_status,
+                    pairing_mode,
+                    candidate_mode,
+                    classification_status,
+                    observed_lw_family,
+                ) = state
+                profile.append({
+                    "pair_id": pair_id,
+                    "reference_pair": reference_pair,
+                    "level": first.get("level"),
+                    "residue_1": first.get("residue_1"),
+                    "residue_2": first.get("residue_2"),
+                    "pair_status": pair_status,
+                    "pairing_mode": pairing_mode,
+                    "candidate_mode": candidate_mode,
+                    "classification_status": classification_status,
+                    "observed_lw_family": observed_lw_family,
+                    "frame_count": frame_count,
+                    "frame_fraction": (
+                        frame_count / total_frames if total_frames else None
+                    ),
+                })
+        return profile
 
     @staticmethod
     def _is_circular_degree_column(column_name: str) -> bool:
