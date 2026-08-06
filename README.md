@@ -132,7 +132,6 @@ Common options:
 - `--fit`, `--grooves`, `--mini`, `--comb`, and `--ends`: override inferred
   analysis flags. Each also accepts the `--no-*` form. When neither mini option
   is given, the `mini` value in the `.inp` file is used.
-- `--no-annotations`: suppress the pyCurves annotation report.
 - `--visualization`: include geometry needed by `pycurves-viewer` in JSON.
 
 In legacy-axis mode, `mini=.f.` or `--no-mini` constructs the axis once from
@@ -152,7 +151,8 @@ Generated `.inp` files can carry editable geometry tags such as `[cWW]`,
 `[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are still reported as
 mismatches even when they have a clear edge-contact geometry.
 
-The annotation report and JSON/CSV tables include the detected pair class,
+The annotation report is part of the Curves text output, and annotation records
+are always included in JSON/CSV results. They include the detected pair class,
 observed edge/orientation tag, source mmCIF pair records when available, and
 warnings for source pairs that do not belong to the current generated `.inp`
 topology.

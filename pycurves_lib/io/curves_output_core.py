@@ -96,9 +96,8 @@ def _backbone_number(value):
 class CurvesOutputFormatter(VisualizationPayloadMixin):
     """Render pyCurves results as Curves-style text or structured JSON/Pandas."""
 
-    def __init__(self, runner, annotations: bool = True, visualization: bool = False):
+    def __init__(self, runner, visualization: bool = False):
         self.runner = runner
-        self.include_annotations = annotations
         self.include_visualization = visualization
         self._annotation_cache = None
 
@@ -168,8 +167,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             outaxe_text,
             self._render_section_l_local_base_base(records).rstrip(),
         ]
-        if self.include_annotations:
-            pieces.append(render_section_m(annotations).rstrip())
+        pieces.append(render_section_m(annotations).rstrip())
         return "\n\n".join(piece for piece in pieces if piece) + "\n"
 
     def render_json(self) -> str:
@@ -269,7 +267,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         """Build the slim dataframe dictionary used by JSON, CSV, and viewers."""
         ctx = self.runner.ctx
         calc = self.runner.calc
-        annotations = self._annotations() if self.include_annotations else {}
+        annotations = self._annotations()
         curvesplus_axis = self._uses_curvesplus_axis()
         
         records = {}
@@ -531,9 +529,8 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             if hasattr(calc, "groove_params") and calc.groove_params:
                 records["groove"] = self._groove_records(calc.groove_params)
 
-        if self.include_annotations:
-            records["annotations"] = self._slim_annotation_records(annotations)
-            records["noncanonical_base_pairs"] = self._noncanonical_base_pair_records(annotations)
+        records["annotations"] = self._slim_annotation_records(annotations)
+        records["noncanonical_base_pairs"] = self._noncanonical_base_pair_records(annotations)
 
         return records
 

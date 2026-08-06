@@ -275,24 +275,24 @@ class CurvesWrapper:
             "axis_convention": self.axis_convention,
         }
 
-    def run(self, output: bool = True, mini: Optional[bool] = None, verbose: bool = False, output_format: str = "curves", annotations: bool = True, visualization: bool = False):
+    def run(self, output: bool = True, mini: Optional[bool] = None, verbose: bool = False, output_format: str = "curves", visualization: bool = False):
         self.analyze(mini=mini, verbose=verbose)
         if output:
-            self.output(fmt=output_format, annotations=annotations, visualization=visualization)
+            self.output(fmt=output_format, visualization=visualization)
         return self
 
-    def output(self, fmt: str = "curves", file=None, annotations: bool = True, visualization: bool = False) -> str:
+    def output(self, fmt: str = "curves", file=None, visualization: bool = False) -> str:
         if self.ctx is None or self.opt is None or self.calc is None:
             raise RuntimeError("Call analyze() before output().")
-        text = CurvesOutputFormatter(self, annotations=annotations, visualization=visualization).render(fmt)
+        text = CurvesOutputFormatter(self, visualization=visualization).render(fmt)
         if file is None:
             print(text, end="")
         else:
             Path(file).write_text(text, encoding="utf-8")
         return text
 
-    def write_output(self, path: str, fmt: str = "curves", annotations: bool = True, visualization: bool = False) -> str:
-        return self.output(fmt=fmt, file=path, annotations=annotations, visualization=visualization)
+    def write_output(self, path: str, fmt: str = "curves", visualization: bool = False) -> str:
+        return self.output(fmt=fmt, file=path, visualization=visualization)
 
     def getFeatures(self):
         if self.calc is None:
@@ -305,7 +305,7 @@ class CurvesWrapper:
             "local_inter_base": self.calc.local_inter_base,
             "local_inter_base_pair": self.calc.local_inter_base_pair,
             "bend": self.calc.bend,
-            "annotations": CurvesOutputFormatter(self, annotations=True)._annotations(),
+            "annotations": CurvesOutputFormatter(self)._annotations(),
         }
 
     @staticmethod

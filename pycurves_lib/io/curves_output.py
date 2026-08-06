@@ -18,10 +18,9 @@ class CurvesOutputFormatter(_core.CurvesOutputFormatter):
         if provenance:
             payload["inputs"]["dssr_json"] = getattr(self.runner, "dssr_json", None)
             payload["topology_provenance"] = provenance
-            if self.include_annotations:
-                payload["dssr_source_pairs"] = _to_jsonable(
-                    list(getattr(self.runner, "dssr_source_base_pairs", []) or [])
-                )
+            payload["dssr_source_pairs"] = _to_jsonable(
+                list(getattr(self.runner, "dssr_source_base_pairs", []) or [])
+            )
         return json.dumps(_to_jsonable(payload), indent=2, allow_nan=False) + "\n"
 
     def get_dataframes(self):

@@ -164,7 +164,6 @@ def run_batch(args) -> Dict:
             "compatible_with": ["Curves+", "3DNA", "x3dna"],
             "axis_convention": "curvesplus",
         },
-        "annotations_enabled": False,
     }
     if args.mode in {"per-frame", "both"}:
         payload["frames"] = frame_payloads

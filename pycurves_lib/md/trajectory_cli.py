@@ -37,7 +37,6 @@ class MDTrajectoryAnalyzer:
         trajectory_file: Optional[str] = None,
         inpfile: Optional[str] = None,
         output_dir: str = ".",
-        annotations: bool = True,
         frame_convention: str = "standard",
         axis_convention: str = "legacy",
         continuous_strands: bool = False,
@@ -51,7 +50,6 @@ class MDTrajectoryAnalyzer:
         self.topology_file = topology_file
         self.trajectory_file = trajectory_file
         self.output_dir = output_dir
-        self.include_annotations = annotations
         self.frame_convention, self.axis_convention = CurvesWrapper.normalize_conventions(
             frame_convention,
             axis_convention,
@@ -127,7 +125,7 @@ class MDTrajectoryAnalyzer:
                 if axis_continuity and axis_sign_reference is None:
                     axis_sign_reference = np.asarray(axis_direction_signs, dtype=int)
 
-            formatter = CurvesOutputFormatter(runner, annotations=self.include_annotations)
+            formatter = CurvesOutputFormatter(runner)
             dataframes = self._normalize_frame_dataframes(formatter._build_dataframes())
 
             for table_name, rows in dataframes.items():
@@ -181,7 +179,6 @@ class MDTrajectoryAnalyzer:
                 "compatible_with": ["Curves+", "3DNA", "x3dna"] if self.frame_convention == "standard" else ["Curves 5.3"],
                 "axis_convention": self.axis_convention,
             },
-            "annotations_enabled": self.include_annotations,
         }
 
         if mode in {"per-frame", "both"}:
@@ -455,7 +452,6 @@ def analyze_trajectory(
     stop: Optional[int] = None,
     step: int = 1,
     mode: str = "per-frame",
-    annotations: bool = True,
     frame_convention: str = "standard",
     axis_convention: str = "legacy",
     continuous_strands: bool = False,
@@ -486,7 +482,6 @@ def analyze_trajectory(
         trajectory_file=trajectory_file,
         inpfile=inpfile,
         output_dir=output_dir,
-        annotations=annotations,
         frame_convention=frame_convention,
         axis_convention=axis_convention,
         continuous_strands=continuous_strands,
@@ -520,7 +515,6 @@ def main() -> None:
     parser.add_argument("--start", type=int, help="First frame index to include.")
     parser.add_argument("--stop", type=int, help="Stop before this frame index.")
     parser.add_argument("--step", type=int, default=1, help="Frame stride.")
-    parser.add_argument("--no-annotations", action="store_true", help="Suppress pyCurves annotation records.")
     add_pycurves_analysis_options(parser)
     parser.add_argument(
         "--no-warm-start",
@@ -541,7 +535,6 @@ def main() -> None:
         trajectory_file=args.trajectory,
         inpfile=args.inp,
         output_dir=args.output_dir,
-        annotations=not args.no_annotations,
         **pycurves_runner_kwargs(args),
     )
     try:

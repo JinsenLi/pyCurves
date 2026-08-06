@@ -110,7 +110,6 @@ def main():
     parser.add_argument("--no-output", action="store_true", help="Run calculations without printing the Curves report.")
     parser.add_argument("--format", choices=["curves", "json", "csv"], default="curves", help="Output format (csv requires Pandas).")
     parser.add_argument("--output-file", help="Write the selected output format to a file instead of stdout (for csv, writes multiple files based on prefix).")
-    parser.add_argument("--no-annotations", action="store_true", help="Suppress the pyCurves |M| annotation report and annotation records.")
     parser.add_argument("--visualization", "--visualize", action="store_true", help="Include HTML-viewer geometry in JSON output.")
     parser.add_argument("--verbose-opt", action="store_true", help="Echo fitting and minimization progress while analyzing.")
     parser.add_argument("--quiet-opt", action="store_true", help=argparse.SUPPRESS)
@@ -157,14 +156,13 @@ def main():
                 print(f"  {inpfile}", file=stream)
 
     runner.run(output=False, mini=args.mini, verbose=args.verbose_opt and not args.quiet_opt)
-    include_annotations = not args.no_annotations
-    
+
     if not args.no_output:
         if args.format == "csv" and args.output_file:
             # For CSV with an output file specified, use it as a prefix
             prefix = args.output_file.removesuffix('.csv')
             from pycurves_lib.io.curves_output import CurvesOutputFormatter
-            dfs = CurvesOutputFormatter(runner, annotations=include_annotations).get_dataframes()
+            dfs = CurvesOutputFormatter(runner).get_dataframes()
                 
             for name, df in dfs.items():
                 df.to_csv(f"{prefix}_{name}.csv", index=False)
@@ -173,7 +171,6 @@ def main():
             runner.output(
                 fmt=args.format,
                 file=args.output_file,
-                annotations=include_annotations,
                 visualization=args.visualization,
             )
 
