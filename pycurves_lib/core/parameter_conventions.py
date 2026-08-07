@@ -16,6 +16,20 @@ EQUIVALENT_AXIS_SIGN_FLIPS = (
 )
 
 
+def apply_curvesplus_base_pair_inversion(values, invert):
+    """Apply the Curves+ reverse-Z rule to intra-base-pair parameters.
+
+    ``params.f`` changes only Shear (index 0) and Buckle (index 3) when the
+    base-pair level has its Z direction inverted.  ``invert`` may be a scalar
+    or an array matching the leading dimensions of ``values``.
+    """
+    corrected = np.array(values, dtype=float, copy=True)
+    mask = np.asarray(invert, dtype=bool)
+    corrected[..., 0] = np.where(mask, -corrected[..., 0], corrected[..., 0])
+    corrected[..., 3] = np.where(mask, -corrected[..., 3], corrected[..., 3])
+    return corrected
+
+
 def build_interaction_reference_frames(ctx):
     """Build contact-geometry frames for noncanonical shape calculations.
 
@@ -579,6 +593,9 @@ class StandardParameterConvention(LegacyParameterConvention):
             return None
         first, other = pair_frames
         values = self._rigid_body_values(first, other, calc.cdr, translation_sign=-1.0, rotation_sign=-1.0)
+        invert = getattr(calc, "curvesplus_invert", None)
+        if invert is not None and 0 <= level < len(invert):
+            values = apply_curvesplus_base_pair_inversion(values, invert[level])
         return np.array(values, dtype=float)
 
     def fill_local_base_pair_steps(self, calc) -> None:

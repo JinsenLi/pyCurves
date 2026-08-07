@@ -8,6 +8,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from pycurves_lib.core.curves_analyzer import BackboneAnalyzer
+from pycurves_lib.core.parameter_conventions import apply_curvesplus_base_pair_inversion
 from pycurves_lib.core.curves_dataclasses import (
     BaseGeometryConstants,
     BaseLocator,
@@ -548,6 +549,7 @@ class BatchCurvesPlusMDAnalyzer:
         local_inter_base = self._local_inter_base(frames)
         local_base_base, pair_frames = self._local_base_base_and_pair_frames(frames)
         axis_tables = self._curvesplus_axis_tables(frames, include_inter_bp=self.include_curvesplus_axis_steps)
+        local_base_base = apply_curvesplus_base_pair_inversion(local_base_base, axis_tables["invert"])
         backbone_torsions, backbone_pucker = self._backbone_values(coordinates)
         groove_rows_by_frame = (
             compute_batch_grooves(self, coordinates, frames, axis_tables, local_inter_base)
@@ -628,6 +630,7 @@ class BatchCurvesPlusMDAnalyzer:
         local_inter_base = self._local_inter_base(frames)
         local_base_base, pair_frames = self._local_base_base_and_pair_frames(frames)
         axis_tables = self._curvesplus_axis_tables(frames, include_inter_bp=self.include_curvesplus_axis_steps)
+        local_base_base = apply_curvesplus_base_pair_inversion(local_base_base, axis_tables["invert"])
         backbone_torsions, backbone_pucker = self._backbone_values(coordinates)
         local_inter_bp = self._local_inter_base_pair(pair_frames)
         groove_rows_by_frame = (
@@ -1053,7 +1056,7 @@ class BatchCurvesPlusMDAnalyzer:
         uvw = self._curvesplus_smoothed_axis(ref, upm)
         invert = self._curvesplus_inversion_flags(upm)
         bp_axis = self._curvesplus_bp_axis_values(upm, uvw, invert)
-        tables = {"bp_axis": bp_axis, "axis_frames": uvw}
+        tables = {"bp_axis": bp_axis, "axis_frames": uvw, "invert": invert}
         if include_inter_bp:
             tables["inter_bp"] = self._curvesplus_inter_base_pair(upm, invert)
         return tables
