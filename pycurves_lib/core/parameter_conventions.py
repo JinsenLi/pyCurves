@@ -597,7 +597,23 @@ class StandardParameterConvention(LegacyParameterConvention):
         if pair_frames is None:
             return None
         first, other = pair_frames
-        values = self._rigid_body_values(first, other, calc.cdr, translation_sign=-1.0, rotation_sign=-1.0)
+        # Standard fitted frames use the Curves partner-to-primary rotational
+        # ordering.  Contact frames instead define +Y explicitly from the
+        # primary base toward its partner, so their coordinate-consistent
+        # rotation is primary-to-partner.  Reusing the standard negative sign
+        # reverses buckle, propeller, and opening in the edge-aligned frame.
+        rotation_sign = (
+            1.0
+            if self._uses_contact_geometry_pair(calc, partner_strand, level)
+            else -1.0
+        )
+        values = self._rigid_body_values(
+            first,
+            other,
+            calc.cdr,
+            translation_sign=-1.0,
+            rotation_sign=rotation_sign,
+        )
         invert = getattr(calc, "curvesplus_invert", None)
         if invert is not None and 0 <= level < len(invert):
             values = apply_curvesplus_base_pair_inversion(values, invert[level])
