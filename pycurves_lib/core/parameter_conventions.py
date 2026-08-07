@@ -15,6 +15,11 @@ EQUIVALENT_AXIS_SIGN_FLIPS = (
     np.diag([-1.0, -1.0, 1.0]),
 )
 
+# An observed edge defines an in-plane axis line, not a directed vector.  This
+# determinant-preserving alternative reverses X and Y without changing the
+# fitted base-plane normal Z.
+CONTACT_IN_PLANE_SIGN_FLIP = np.diag([-1.0, -1.0, 1.0])
+
 
 def apply_curvesplus_base_pair_inversion(values, invert):
     """Apply the Curves+ reverse-Z rule to intra-base-pair parameters.
@@ -806,7 +811,32 @@ class StandardParameterConvention(LegacyParameterConvention):
         else:
             prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)
             other = self._aligned_partner_frame(first, other, prefer_parallel=prefer_parallel)
+        if self._uses_contact_geometry_pair(calc, partner_strand, level):
+            other = self._aligned_contact_partner_frame(first, other)
         return first, other
+
+    @staticmethod
+    def _aligned_contact_partner_frame(
+        first: ParameterFrame,
+        other: ParameterFrame,
+    ) -> ParameterFrame:
+        """Choose the nearest valid in-plane branch for a contact frame.
+
+        Edge fitting leaves the directions of X and Y ambiguous up to a
+        simultaneous sign reversal.  Resolve that ambiguity only after the LW
+        parallel/antiparallel orientation has been applied.  Keeping Z fixed
+        preserves the fitted base normal and therefore the physical plane
+        bend between the paired bases.
+        """
+        alternate = ParameterFrame(
+            origin=other.origin.copy(),
+            axes=CONTACT_IN_PLANE_SIGN_FLIP @ other.axes,
+        )
+        direct_score = float(np.trace(first.axes @ other.axes.T))
+        alternate_score = float(np.trace(first.axes @ alternate.axes.T))
+        if alternate_score > direct_score + 1e-9:
+            return alternate
+        return other
 
     def _uses_noncanonical_watson_pair(self, calc, partner_strand: int, level: int) -> bool:
         annotation = self._base_pair_annotation(calc, partner_strand, level)
