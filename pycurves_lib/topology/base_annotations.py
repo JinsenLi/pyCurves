@@ -156,7 +156,10 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
             or row.get("diagnostic_flags")
             or row.get("candidate_mode")
             or row.get("pair_status") != "present"
-            or row.get("frame_mode") == "contact_geometry"
+            or row.get("frame_mode") in {
+                "contact_geometry",
+                "provisional_contact_geometry",
+            }
             or row.get("normal_branch_mode") == "left_handed_cww"
         )
     ]
@@ -201,6 +204,11 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
             notes.extend(flag for flag in diagnostics if flag not in notes)
             if row.get("frame_mode") == "contact_geometry":
                 notes.append("contact_geometry_frames")
+            elif row.get("frame_mode") == "provisional_contact_geometry":
+                notes.append("provisional_contact_geometry_frames")
+            candidate_lw = str(row.get("candidate_lw_family") or "").strip()
+            if candidate_lw:
+                notes.append(f"possible [{candidate_lw}]")
             if row.get("normal_branch_mode") == "left_handed_cww":
                 notes.append("normal_branch=left_handed_cww")
                 notes.append(f"normal_sign={int(row.get('pair_normal_sign', -1)):+d}")
@@ -643,6 +651,9 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "pair_status": pair_status,
             "observed_lw_family": observed_lw_family,
             "reference_lw_family": reference_lw_family,
+            "candidate_lw_family": contact_geometry.get(
+                "candidate_lw_family", ""
+            ),
             "pairing_mode": "",
             "candidate_mode": "",
             "classification_status": "unassigned",
@@ -667,6 +678,12 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "strand_direction": contact_geometry.get("strand_direction", ""),
             "topology_strand_direction": contact_geometry.get("topology_strand_direction", ""),
             "frame_mode": frame_mode,
+            "input_geometry_tag": contact_geometry.get(
+                "input_geometry_tag", ""
+            ),
+            "geometry_resolution_status": contact_geometry.get(
+                "geometry_resolution_status", ""
+            ),
             "contact_atom_pairs": contact_geometry.get("contact_atom_pairs", []),
             "contact_count": contact_geometry.get("contact_count", 0),
             "contact_confidence": contact_geometry.get("confidence", ""),
@@ -725,6 +742,18 @@ def _geometry_diagnostics(
         observed_lw = str(
             (contact_geometry or {}).get("observed_lw_family") or ""
         )
+        resolution_status = str(
+            (contact_geometry or {}).get("geometry_resolution_status") or ""
+        )
+        if resolution_status == "unresolved":
+            diagnostics.append("unresolved_lw_geometry")
+            if int((contact_geometry or {}).get("contact_count") or 0) == 1:
+                diagnostics.append("single_independent_contact")
+            candidate_lw = str(
+                (contact_geometry or {}).get("candidate_lw_family") or ""
+            )
+            if candidate_lw:
+                diagnostics.append(f"possible_lw_{candidate_lw.lower()}")
         if not observed_lw and _has_hoogsteen_heavy_atom_contacts(
             ctx, residue_1, residue_2
         ):
@@ -742,6 +771,13 @@ def _pair_status_from_geometry(contact_geometry: Dict[str, Any]) -> str:
     confident_lw = bool(
         contact_geometry.get("observed_lw_family_confident")
     )
+    unresolved_contact = (
+        contact_geometry.get("input_geometry_tag") == "unresolved"
+        and contact_geometry.get("frame_mode")
+        == "provisional_contact_geometry"
+    )
+    if eligible and contact_count >= 1 and unresolved_contact:
+        return "present"
     if eligible and contact_count >= 1 and (confident_lw or contact_count >= 2):
         return "present"
     if eligible or contact_count >= 1:
@@ -847,6 +883,12 @@ def _contact_geometry_for_pair(
     contact_atoms_2 = [item["atom_2"] for item in contacts]
     edge_1, edge_1_score, edge_1_ambiguous = _dominant_edge(base_1, contact_atoms_1)
     edge_2, edge_2_score, edge_2_ambiguous = _dominant_edge(base_2, contact_atoms_2)
+    manual_geometry = dict(manual_geometry or {})
+    unresolved_requested = bool(
+        manual_geometry.get("kind") == "unresolved"
+        or str(manual_geometry.get("tag") or "").lower() == "unresolved"
+    )
+    manual_lw_requested = bool(manual_geometry) and not unresolved_requested
     fitted_geometry = _standard_fitted_pair_geometry(ctx, residue_1, residue_2)
     fitted_cww = is_fitted_cww_pose(fitted_geometry)
     lw_classification = _lw_exemplar_classification(ctx, residue_1, residue_2)
@@ -869,11 +911,19 @@ def _contact_geometry_for_pair(
         coordinate_edge_2 = lw_classification.edge_2
     elif fitted_cww:
         coordinate_edge_1 = coordinate_edge_2 = "W"
+    has_reliable_coordinate_contacts = (
+        len(contacts) >= MIN_CONTACT_FRAME_PAIRS
+        and bool(coordinate_edge_1)
+        and bool(coordinate_edge_2)
+        and not edge_1_ambiguous
+        and not edge_2_ambiguous
+    )
     coordinate_trans_ww = bool(
         fitted_geometry
         and fitted_geometry.get("eligible")
         and coordinate_edge_1 == coordinate_edge_2 == "W"
         and coordinate_orientation == "trans"
+        and has_reliable_coordinate_contacts
     )
     observed_lw_family = (
         lw_classification.tag
@@ -887,10 +937,25 @@ def _contact_geometry_for_pair(
     observed_lw_family_confident = bool(
         confident_exemplar or fitted_cww or coordinate_trans_ww
     )
+    provisional_unresolved = bool(
+        unresolved_requested and not observed_lw_family_confident
+    )
+    candidate_lw_family = ""
+    orientation_prefix = {
+        "cis": "c",
+        "trans": "t",
+    }.get(str(coordinate_orientation).lower(), "")
+    if (
+        provisional_unresolved
+        and orientation_prefix
+        and coordinate_edge_1
+        and coordinate_edge_2
+    ):
+        candidate_lw_family = (
+            f"{orientation_prefix}{coordinate_edge_1}{coordinate_edge_2}"
+        )
 
-    manual_geometry = dict(manual_geometry or {})
-    manual_requested = bool(manual_geometry)
-    if manual_requested:
+    if manual_lw_requested:
         edge_1 = str(manual_geometry.get("edge_1", "")).upper()
         edge_2 = str(manual_geometry.get("edge_2", "")).upper()
         edge_1_ambiguous = False
@@ -906,18 +971,30 @@ def _contact_geometry_for_pair(
         edge_2_ambiguous = False
     edge_pair = f"{edge_1}/{edge_2}" if edge_1 and edge_2 else ""
     topology_strand_direction = _strand_direction(ctx, strand_1, strand_2)
-    manual_glycosidic_orientation = manual_geometry.get("glycosidic_orientation", "")
+    manual_glycosidic_orientation = (
+        manual_geometry.get("glycosidic_orientation", "")
+        if manual_lw_requested
+        else ""
+    )
     glycosidic_orientation = (
         manual_glycosidic_orientation or coordinate_orientation
     )
     manual_lw_strand_orientation = (
-        manual_geometry.get("lw_strand_orientation")
-        or manual_geometry.get("strand_direction")
+        (
+            manual_geometry.get("lw_strand_orientation")
+            or manual_geometry.get("strand_direction")
+        )
+        if manual_lw_requested
+        else ""
     )
-    lw_strand_orientation = manual_lw_strand_orientation or infer_lw_strand_orientation(
-        glycosidic_orientation,
-        edge_1,
-        edge_2,
+    lw_strand_orientation = (
+        ""
+        if provisional_unresolved
+        else manual_lw_strand_orientation or infer_lw_strand_orientation(
+            glycosidic_orientation,
+            edge_1,
+            edge_2,
+        )
     )
 
     has_reliable_contacts = (
@@ -930,7 +1007,17 @@ def _contact_geometry_for_pair(
     # An explicit LW tag in the input is authoritative even if the raw
     # coordinate contact finder cannot recover two short atom pairs. The frame
     # builder can fall back to the complete atoms belonging to those edges.
-    has_manual_frame_geometry = manual_requested and bool(edge_1) and bool(edge_2)
+    has_manual_frame_geometry = (
+        manual_lw_requested and bool(edge_1) and bool(edge_2)
+    )
+    has_provisional_contact_geometry = (
+        provisional_unresolved
+        and bool(contacts)
+        and bool(edge_1)
+        and bool(edge_2)
+        and not edge_1_ambiguous
+        and not edge_2_ambiguous
+    )
     forced_noncanonical = bool(source_hoogsteen)
     if has_manual_frame_geometry:
         # cWW is the canonical standard-frame family.  Other directed LW
@@ -941,7 +1028,12 @@ def _contact_geometry_for_pair(
             and edge_1 == edge_2 == "W"
         )
         frame_mode = "fitted_fallback" if is_cww else "contact_geometry"
-    elif manual_requested:
+    elif unresolved_requested and observed_lw_family_confident:
+        is_cww = observed_lw_family == "cWW"
+        frame_mode = "fitted_fallback" if is_cww else "contact_geometry"
+    elif has_provisional_contact_geometry:
+        frame_mode = "provisional_contact_geometry"
+    elif unresolved_requested:
         frame_mode = "fitted_fallback"
     elif canonical_identity and not forced_noncanonical:
         frame_mode = "legacy_canonical"
@@ -955,11 +1047,19 @@ def _contact_geometry_for_pair(
         and fitted_geometry.get("eligible")
         and edge_1 == edge_2 == "W"
         and glycosidic_orientation == "trans"
+        and has_reliable_contacts
     )
     lw_family_confident = bool(
-        manual_requested or confident_exemplar or fitted_cww or fitted_trans_ww
+        manual_lw_requested
+        or confident_exemplar
+        or fitted_cww
+        or fitted_trans_ww
     )
-    if manual_requested:
+    if provisional_unresolved and has_provisional_contact_geometry:
+        confidence = "provisional_single_contact_geometry"
+    elif provisional_unresolved:
+        confidence = "unresolved_geometry"
+    elif manual_lw_requested:
         confidence = "manual_inp_geometry"
     elif confident_exemplar:
         confidence = "fitted_lw_exemplar"
@@ -984,7 +1084,10 @@ def _contact_geometry_for_pair(
         "edge_2": edge_2,
         "edge_pair": edge_pair,
         "observed_lw_family": observed_lw_family,
-        "reference_lw_family": manual_geometry.get("tag", ""),
+        "reference_lw_family": (
+            manual_geometry.get("tag", "") if manual_lw_requested else ""
+        ),
+        "candidate_lw_family": candidate_lw_family,
         "observed_lw_family_confident": observed_lw_family_confident,
         "observed_edge_1": coordinate_edge_1,
         "observed_edge_2": coordinate_edge_2,
@@ -1003,6 +1106,8 @@ def _contact_geometry_for_pair(
         "strand_direction_source": (
             manual_geometry.get("strand_direction_source", "")
             if manual_lw_strand_orientation
+            else "coordinate_provisional"
+            if provisional_unresolved
             else "inferred_from_contact_geometry" if lw_strand_orientation else ""
         ),
         "topology_strand_direction": topology_strand_direction,
@@ -1012,7 +1117,9 @@ def _contact_geometry_for_pair(
         "confidence": confidence,
         "geometry_source": (
             "inp"
-            if manual_requested
+            if manual_lw_requested
+            else "inp_unresolved_coordinates"
+            if unresolved_requested
             else "fitted_lw_exemplar"
             if confident_exemplar
             else "fitted_standard_frames"
@@ -1026,7 +1133,17 @@ def _contact_geometry_for_pair(
         "edge_score_2": edge_2_score,
         "edge_1_ambiguous": edge_1_ambiguous,
         "edge_2_ambiguous": edge_2_ambiguous,
-        "manual_geometry_tag": manual_geometry.get("tag", ""),
+        "manual_geometry_tag": (
+            manual_geometry.get("tag", "") if manual_lw_requested else ""
+        ),
+        "input_geometry_tag": (
+            str(manual_geometry.get("tag") or "") if manual_geometry else ""
+        ),
+        "geometry_resolution_status": (
+            "unresolved"
+            if provisional_unresolved
+            else "resolved" if unresolved_requested else ""
+        ),
         "manual_geometry_strand": manual_geometry.get("annotated_strand"),
         "source_hoogsteen": bool(source_hoogsteen),
     }
@@ -1672,6 +1789,15 @@ def _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs) -> L
                 "possible_hoogsteen_pair",
                 location,
                 f"{row['residue_1']} paired with {row['residue_2']} has evidence consistent with possible Hoogsteen pairing, but no definitive ordered LW assignment.",
+            ))
+        elif row.get("frame_mode") == "provisional_contact_geometry":
+            candidate = str(row.get("candidate_lw_family") or "").strip()
+            suffix = f"; possible [{candidate}]" if candidate else ""
+            warnings.append(_warning(
+                "info",
+                "unresolved_contact_geometry_pair",
+                location,
+                f"{row['residue_1']} paired with {row['residue_2']} uses a provisional contact frame from {row.get('contact_count', 0)} independent contact(s){suffix}; no LW family is assigned.",
             ))
         elif row.get("frame_mode") == "contact_geometry":
             geometry = base_pair_geometry_annotation(row) or row.get("edge_pair") or "unknown edges"

@@ -1065,6 +1065,16 @@ class RobustTopologyInferrer:
             confident_trans_ww = (
                 edge_1 == edge_2 == "W"
                 and orientation == "t"
+                and len(atom_pairs) >= 2
+                and candidate.fitted_geometry is not None
+                and bool(candidate.fitted_geometry.get("eligible"))
+            )
+            unresolved_contact_geometry = (
+                not self._is_complementary(residue_1.base, residue_2.base)
+                and bool(atom_pairs)
+                and bool(edge_1)
+                and bool(edge_2)
+                and bool(orientation)
                 and candidate.fitted_geometry is not None
                 and bool(candidate.fitted_geometry.get("eligible"))
             )
@@ -1075,7 +1085,10 @@ class RobustTopologyInferrer:
             # authoritative cases are fitted cWW, fitted/observed tWW, and
             # chemically named Hoogsteen patterns.
             if not (confident_trans_ww or confident_named_hoogsteen):
-                return None
+                if unresolved_contact_geometry:
+                    tag = "unresolved"
+                else:
+                    return None
         if not tag:
             tag = self._lw_tag_for_edges(edge_1, edge_2, orientation)
         measured_noncanonical = (edge_1, edge_2) != ("W", "W") or orientation == "t"

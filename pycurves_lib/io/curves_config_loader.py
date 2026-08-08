@@ -213,8 +213,9 @@ class ConfigLoader:
             if tag_info is None:
                 raise ValueError(
                     f"Unknown Curves topology tag [{tag}] in token {token!r}; "
-                    "supported pair-geometry tags use Leontis-Westhof notation, "
-                    "for example [cWW], [tWH], and [cSS]."
+                    "supported pair-geometry tags use Leontis-Westhof notation "
+                    "or [unresolved], for example [cWW], [tWH], [cSS], and "
+                    "[unresolved]."
                 )
             kind_group = "pair_geometry"
             if kind_group in seen_kinds:
@@ -225,6 +226,13 @@ class ConfigLoader:
 
     @staticmethod
     def _parse_lw_geometry_tag(normalized: str):
+        if normalized == "unresolved":
+            return {
+                "kind": "unresolved",
+                "tag": "unresolved",
+                "resolution_status": "unresolved",
+                "strand_direction_source": "coordinate_provisional",
+            }
         parts = normalized.split(":", 1)
         lw_text = parts[0]
         direction_text = parts[1] if len(parts) == 2 else ""
@@ -343,7 +351,7 @@ class ConfigLoader:
         if not tag_infos or mapped_unit == 0:
             return
         for tag_info in tag_infos:
-            if tag_info.get("kind") == "lw":
+            if tag_info.get("kind") in {"lw", "unresolved"}:
                 marker = dict(tag_info)
                 marker["annotated_strand"] = strand
                 marker["level"] = level

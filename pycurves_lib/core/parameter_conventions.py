@@ -58,8 +58,9 @@ def build_interaction_reference_frames(ctx):
     """Build the derived frame view used for signed shape calculations.
 
     The fitted base frames remain available as ``params.frames``.  For a
-    noncanonical pair with reliable edge contacts, ``params.shape_frames``
-    replaces both paired base frames with per-base interaction frames:
+    noncanonical pair with reliable edge contacts, or an unresolved pair with
+    a stable provisional contact axis, ``params.shape_frames`` replaces both
+    paired base frames with per-base interaction frames:
 
     * X follows that base's observed interacting edge.
     * Y is oriented consistently along the strand-1 to partner contact axis.
@@ -109,7 +110,8 @@ def build_interaction_reference_frames(ctx):
         shape_frames[partner_strand, level] = partner_frame
         frame_keys.add((0, partner_strand, level))
         frame_keys.add((partner_strand, 0, level))
-        built_pairs.append((partner_strand, level, "contact_geometry"))
+        mode = str(geometry.get("frame_mode") or "contact_geometry")
+        built_pairs.append((partner_strand, level, mode))
 
     normal_pairs = built_pairs + left_handed_pairs
     branch_modes = {
@@ -127,7 +129,10 @@ def build_interaction_reference_frames(ctx):
     ctx.contact_geometry_frame_keys = frame_keys
     ctx.contact_pair_normal_signs = {
         key: sign for key, sign in normal_signs.items()
-        if branch_modes.get(key) == "contact_geometry"
+        if branch_modes.get(key) in {
+            "contact_geometry",
+            "provisional_contact_geometry",
+        }
     }
     ctx.contact_pair_normal_flips = [
         (partner + 1, level)
@@ -251,7 +256,11 @@ def _interaction_frame_pairs(ctx):
     annotations = getattr(ctx, "annotations", {}).get("base_pair_annotations", [])
     for row in annotations:
         geometry = row.get("contact_geometry") or {}
-        if row.get("frame_mode") != "contact_geometry":
+        frame_mode = str(row.get("frame_mode") or "")
+        if frame_mode not in {
+            "contact_geometry",
+            "provisional_contact_geometry",
+        }:
             continue
         # cWW is the canonical standard-frame family, including wobble or
         # mismatch identities that retain cWW geometry.  It must never enter
@@ -1510,20 +1519,35 @@ class StandardParameterConvention(LegacyParameterConvention):
         annotation = self._base_pair_annotation(calc, partner_strand, level)
         annotated_geometry = (annotation or {}).get("contact_geometry") or {}
         pair_geometry = contact_geometry or annotated_geometry
+        frame_mode = str(
+            pair_geometry.get("frame_mode")
+            or (annotation or {}).get("frame_mode")
+            or ""
+        )
+        provisional_contact = frame_mode == "provisional_contact_geometry"
         lw_strand_orientation = str(pair_geometry.get("lw_strand_orientation") or "").lower()
-        if not lw_strand_orientation:
+        if not lw_strand_orientation and not provisional_contact:
             lw_strand_orientation = infer_lw_strand_orientation(
                 pair_geometry.get("glycosidic_orientation", ""),
                 pair_geometry.get("edge_1", ""),
                 pair_geometry.get("edge_2", ""),
             )
-        if not lw_strand_orientation:
+        if not lw_strand_orientation and not provisional_contact:
             lw_strand_orientation = str(pair_geometry.get("strand_direction") or "").lower()
         first = self._base_frame(calc, 0, level)
         other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        if lw_strand_orientation == "antiparallel":
+        if provisional_contact:
+            # No LW family is authoritative here. Choose the member-frame
+            # branch with the smaller physical rotation instead of allowing a
+            # tentative cis/trans vote to imply parallel strand semantics.
+            other = self._aligned_partner_frame(
+                first,
+                other,
+                prefer_parallel=True,
+            )
+        elif lw_strand_orientation == "antiparallel":
             other = self._inverted_partner_frame(other)
         elif lw_strand_orientation == "parallel":
             other = ParameterFrame(origin=other.origin.copy(), axes=other.axes.copy())

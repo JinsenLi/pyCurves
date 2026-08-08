@@ -682,6 +682,11 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "pair_status": row.get("pair_status", "uncertain"),
                 "observed_lw_family": base_pair_observed_geometry_tag(row),
                 "reference_lw_family": row.get("reference_lw_family", ""),
+                "candidate_lw_family": row.get("candidate_lw_family", ""),
+                "input_geometry_tag": row.get("input_geometry_tag", ""),
+                "geometry_resolution_status": row.get(
+                    "geometry_resolution_status", ""
+                ),
                 "pairing_mode": row.get("pairing_mode", ""),
                 "candidate_mode": row.get("candidate_mode", ""),
                 "classification_status": row.get(
@@ -713,6 +718,10 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             if not self._is_reportable_base_pair_annotation(row):
                 continue
             left_handed_cww = row.get("normal_branch_mode") == "left_handed_cww"
+            unresolved_geometry = (
+                row.get("geometry_resolution_status") == "unresolved"
+            )
+            candidate_lw = str(row.get("candidate_lw_family") or "").strip()
             rows.append({
                 "annotation_type": "base_pair",
                 "severity": "warn" if row.get("is_mismatch") else "info",
@@ -721,11 +730,18 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "code": (
                     "left_handed_cww"
                     if left_handed_cww
+                    else "unresolved_contact_geometry"
+                    if unresolved_geometry
                     else row.get("pair_family", "")
                 ),
                 "message": (
                     "coordinate-derived left-handed cWW normal branch"
                     if left_handed_cww
+                    else (
+                        "provisional contact geometry; no LW family assigned"
+                        + (f"; possible [{candidate_lw}]" if candidate_lw else "")
+                    )
+                    if unresolved_geometry
                     else row.get("pair_subtype", "")
                 ),
                 "pairing_mode": row.get("pairing_mode", ""),
@@ -733,6 +749,11 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "geometry_annotation": base_pair_observed_geometry_annotation(row),
                 "leontis_westhof": base_pair_observed_geometry_tag(row),
                 "reference_lw_family": row.get("reference_lw_family", ""),
+                "candidate_lw_family": row.get("candidate_lw_family", ""),
+                "input_geometry_tag": row.get("input_geometry_tag", ""),
+                "geometry_resolution_status": row.get(
+                    "geometry_resolution_status", ""
+                ),
                 "candidate_mode": row.get("candidate_mode", ""),
                 "classification_status": row.get("classification_status", "unassigned"),
                 "diagnostic_flags": list(row.get("diagnostic_flags") or []),
@@ -808,6 +829,11 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "geometry_annotation": base_pair_observed_geometry_annotation(row),
                 "leontis_westhof": base_pair_observed_geometry_tag(row),
                 "reference_lw_family": row.get("reference_lw_family", ""),
+                "candidate_lw_family": row.get("candidate_lw_family", ""),
+                "input_geometry_tag": row.get("input_geometry_tag", ""),
+                "geometry_resolution_status": row.get(
+                    "geometry_resolution_status", ""
+                ),
                 "candidate_mode": row.get("candidate_mode", ""),
                 "classification_status": row.get("classification_status", "unassigned"),
                 "diagnostic_flags": list(row.get("diagnostic_flags") or []),
@@ -839,7 +865,10 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             or row.get("diagnostic_flags")
             or row.get("candidate_mode")
             or row.get("pair_status") != "present"
-            or row.get("frame_mode") == "contact_geometry"
+            or row.get("frame_mode") in {
+                "contact_geometry",
+                "provisional_contact_geometry",
+            }
             or row.get("normal_branch_mode") == "left_handed_cww"
         )
 
@@ -852,7 +881,10 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             or row.get("diagnostic_flags")
             or row.get("candidate_mode")
             or row.get("pair_status") != "present"
-            or row.get("frame_mode") == "contact_geometry"
+            or row.get("frame_mode") in {
+                "contact_geometry",
+                "provisional_contact_geometry",
+            }
         )
 
     @staticmethod
