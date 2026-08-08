@@ -922,8 +922,14 @@ def _contact_geometry_for_pair(
     has_manual_frame_geometry = manual_requested and bool(edge_1) and bool(edge_2)
     forced_noncanonical = bool(source_hoogsteen)
     if has_manual_frame_geometry:
-        # WW families already have a stable standard fitted construction.
-        frame_mode = "fitted_fallback" if edge_1 == edge_2 == "W" else "contact_geometry"
+        # cWW is the canonical standard-frame family.  Other directed LW
+        # families, including tWW, use their explicitly requested contact
+        # geometry and its coordinate-derived normal branch.
+        is_cww = (
+            glycosidic_orientation == "cis"
+            and edge_1 == edge_2 == "W"
+        )
+        frame_mode = "fitted_fallback" if is_cww else "contact_geometry"
     elif manual_requested:
         frame_mode = "fitted_fallback"
     elif canonical_identity and not forced_noncanonical:

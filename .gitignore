@@ -5,3 +5,4 @@ __pycache__/
 /tests
 /figures
 /test_tmp_4ocb_sign_20260807
+*.inp
