@@ -575,12 +575,6 @@ class RobustTopologyInferrer:
         fitted_geometry = self._fitted_pair_geometry(residue_1, residue_2)
         lw_classification = self._lw_classification(residue_1, residue_2)
         confident_lw = bool(lw_classification and lw_classification.confident)
-        if (
-            fitted_geometry is not None
-            and not bool(fitted_geometry["eligible"])
-            and not confident_lw
-        ):
-            return None
         atom_map_1 = self._atom_map(residue_1)
         atom_map_2 = self._atom_map(residue_2)
 
@@ -588,6 +582,13 @@ class RobustTopologyInferrer:
         generic_matches = self._generic_hbond_matches(
             residue_1, residue_2, atom_map_1, atom_map_2,
             donor_acceptor_only=donor_acceptor_only,
+        )
+        strong_contact_support = self._has_strong_coordinate_pair_support(
+            residue_1,
+            residue_2,
+            atom_map_1,
+            atom_map_2,
+            pattern_matches=pattern_matches,
         )
 
         if len(pattern_matches) >= 2:
@@ -602,6 +603,20 @@ class RobustTopologyInferrer:
             pair_family = "lw_exemplar"
             matches = generic_matches
         else:
+            return None
+
+        # The fitted-pair eligibility envelope is a topology safeguard, not a
+        # physical upper bound on buckle.  An extreme but chemically supported
+        # pair can exceed its normal-angle cutoff while retaining multiple
+        # short, independent donor-acceptor contacts (1R2L level 11 is the
+        # motivating example).  Evaluate those contacts before rejecting the
+        # pair so a large deformation does not erase its LW geometry.
+        if (
+            fitted_geometry is not None
+            and not bool(fitted_geometry["eligible"])
+            and not confident_lw
+            and not strong_contact_support
+        ):
             return None
 
         center_distance = float(np.linalg.norm(residue_1.center - residue_2.center))
@@ -633,6 +648,49 @@ class RobustTopologyInferrer:
             is_hoogsteen=pair_family == "hoogsteen_like",
             fitted_geometry=fitted_geometry,
             lw_classification=lw_classification,
+        )
+
+    def _has_strong_coordinate_pair_support(
+        self,
+        residue_1: ResidueNode,
+        residue_2: ResidueNode,
+        atom_map_1: Optional[Dict[str, np.ndarray]] = None,
+        atom_map_2: Optional[Dict[str, np.ndarray]] = None,
+        *,
+        pattern_matches: Optional[Sequence[Tuple[str, str, float]]] = None,
+    ) -> bool:
+        """Return whether contacts override only the fitted normal-angle gate.
+
+        Two independent donor-acceptor contacts plus ordinary pair-center and
+        plane-offset bounds are strong evidence of a real pair even when the
+        bases are more buckled than the fitted-frame eligibility envelope.
+        """
+        atom_map_1 = atom_map_1 or self._atom_map(residue_1)
+        atom_map_2 = atom_map_2 or self._atom_map(residue_2)
+        if pattern_matches is None:
+            pattern_matches, _ = self._pattern_hbond_matches(
+                residue_1.base,
+                residue_2.base,
+                atom_map_1,
+                atom_map_2,
+            )
+        donor_acceptor_matches = self._generic_hbond_matches(
+            residue_1,
+            residue_2,
+            atom_map_1,
+            atom_map_2,
+            donor_acceptor_only=True,
+        )
+        if max(len(pattern_matches), len(donor_acceptor_matches)) < 2:
+            return False
+
+        center_distance = float(np.linalg.norm(residue_1.center - residue_2.center))
+        if center_distance > 9.0:
+            return False
+        plane_offset = self._base_pair_plane_offset(residue_1, residue_2)
+        return bool(
+            plane_offset is not None
+            and plane_offset <= BASE_PAIR_PLANE_OFFSET_CUTOFF
         )
 
     @staticmethod
@@ -939,6 +997,24 @@ class RobustTopologyInferrer:
                 strand_id, level, tag = geometry_marker
                 pair_geometry_markers[(strand_id, level)] = tag
 
+        # Register interpolation may retain a plausible paired level that was
+        # not itself selected as an anchor.  An untagged noncomplementary pair
+        # would otherwise acquire implicit cWW calculation semantics.  Keep
+        # the family explicitly unresolved unless coordinate evidence above
+        # was strong enough to produce a named marker.
+        for level, (subunit_1, subunit_2) in enumerate(
+            zip(row_1, row_2),
+            start=1,
+        ):
+            if subunit_1 <= 0 or subunit_2 <= 0:
+                continue
+            if (1, level) in pair_geometry_markers:
+                continue
+            residue_1 = self.residues[subunit_1]
+            residue_2 = self.residues[subunit_2]
+            if not self._is_complementary(residue_1.base, residue_2.base):
+                pair_geometry_markers[(1, level)] = "unresolved"
+
         return InferredTopology(
             pdbfile=self.pdbfile,
             output_prefix=Path(self.pdbfile).stem,
@@ -1004,6 +1080,11 @@ class RobustTopologyInferrer:
     ) -> Optional[Tuple[int, int, str]]:
         residue_1 = self.residues[candidate.first]
         residue_2 = self.residues[candidate.second]
+        atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
+        strong_contact_support = self._has_strong_coordinate_pair_support(
+            residue_1,
+            residue_2,
+        )
         if (
             candidate.fitted_geometry is not None
             and not bool(candidate.fitted_geometry["eligible"])
@@ -1011,9 +1092,9 @@ class RobustTopologyInferrer:
                 candidate.lw_classification is not None
                 and candidate.lw_classification.confident
             )
+            and not strong_contact_support
         ):
             return None
-        atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
 
         lw_classification = candidate.lw_classification
         if lw_classification is not None and lw_classification.confident:
@@ -1066,8 +1147,13 @@ class RobustTopologyInferrer:
                 edge_1 == edge_2 == "W"
                 and orientation == "t"
                 and len(atom_pairs) >= 2
-                and candidate.fitted_geometry is not None
-                and bool(candidate.fitted_geometry.get("eligible"))
+                and (
+                    strong_contact_support
+                    or (
+                        candidate.fitted_geometry is not None
+                        and bool(candidate.fitted_geometry.get("eligible"))
+                    )
+                )
             )
             unresolved_contact_geometry = (
                 not self._is_complementary(residue_1.base, residue_2.base)
@@ -1075,8 +1161,13 @@ class RobustTopologyInferrer:
                 and bool(edge_1)
                 and bool(edge_2)
                 and bool(orientation)
-                and candidate.fitted_geometry is not None
-                and bool(candidate.fitted_geometry.get("eligible"))
+                and (
+                    strong_contact_support
+                    or (
+                        candidate.fitted_geometry is not None
+                        and bool(candidate.fitted_geometry.get("eligible"))
+                    )
+                )
             )
             confident_named_hoogsteen = (
                 candidate.is_hoogsteen or candidate.pair_family == "hoogsteen_like"

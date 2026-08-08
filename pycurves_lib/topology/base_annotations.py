@@ -776,6 +776,10 @@ def _pair_status_from_geometry(contact_geometry: Dict[str, Any]) -> str:
         and contact_geometry.get("frame_mode")
         == "provisional_contact_geometry"
     )
+    # Multiple independent edge contacts can establish a real, highly
+    # buckled pair even when the fitted normal-angle envelope is exceeded.
+    if contact_count >= 2 and confident_lw:
+        return "present"
     if eligible and contact_count >= 1 and unresolved_contact:
         return "present"
     if eligible and contact_count >= 1 and (confident_lw or contact_count >= 2):
@@ -919,9 +923,7 @@ def _contact_geometry_for_pair(
         and not edge_2_ambiguous
     )
     coordinate_trans_ww = bool(
-        fitted_geometry
-        and fitted_geometry.get("eligible")
-        and coordinate_edge_1 == coordinate_edge_2 == "W"
+        coordinate_edge_1 == coordinate_edge_2 == "W"
         and coordinate_orientation == "trans"
         and has_reliable_coordinate_contacts
     )
@@ -1042,10 +1044,8 @@ def _contact_geometry_for_pair(
         # silently replace the standard fitted calculation frames.
         frame_mode = "fitted_fallback"
 
-    fitted_trans_ww = bool(
-        fitted_geometry
-        and fitted_geometry.get("eligible")
-        and edge_1 == edge_2 == "W"
+    contact_supported_trans_ww = bool(
+        edge_1 == edge_2 == "W"
         and glycosidic_orientation == "trans"
         and has_reliable_contacts
     )
@@ -1053,7 +1053,7 @@ def _contact_geometry_for_pair(
         manual_lw_requested
         or confident_exemplar
         or fitted_cww
-        or fitted_trans_ww
+        or contact_supported_trans_ww
     )
     if provisional_unresolved and has_provisional_contact_geometry:
         confidence = "provisional_single_contact_geometry"
@@ -1096,7 +1096,7 @@ def _contact_geometry_for_pair(
             "fitted_lw_exemplar"
             if confident_exemplar
             else "fitted_standard_frames"
-            if fitted_cww or coordinate_trans_ww
+            if fitted_cww
             else "coordinates"
         ),
         "orientation": manual_geometry.get("orientation", ""),
