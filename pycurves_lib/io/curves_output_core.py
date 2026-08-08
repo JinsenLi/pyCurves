@@ -697,6 +697,12 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "reference_classification_status": row.get(
                     "reference_classification_status", ""
                 ),
+                "normal_branch_mode": row.get("normal_branch_mode", ""),
+                "pair_normal_sign": row.get("pair_normal_sign"),
+                "glycosidic_state_1": row.get("glycosidic_state_1", ""),
+                "glycosidic_state_2": row.get("glycosidic_state_2", ""),
+                "glycosidic_chi_1": row.get("glycosidic_chi_1"),
+                "glycosidic_chi_2": row.get("glycosidic_chi_2"),
             })
         return rows
 
@@ -732,6 +738,10 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "strand_direction": row.get("strand_direction", ""),
                 "topology_strand_direction": row.get("topology_strand_direction", ""),
                 "frame_mode": row.get("frame_mode", ""),
+                "normal_branch_mode": row.get("normal_branch_mode", ""),
+                "pair_normal_sign": row.get("pair_normal_sign"),
+                "glycosidic_state_1": row.get("glycosidic_state_1", ""),
+                "glycosidic_state_2": row.get("glycosidic_state_2", ""),
                 "contact_confidence": row.get("contact_confidence", ""),
                 "contact_count": self._contact_count(row),
                 "shape_parameters_supported": row.get("shape_parameters_supported", True),
@@ -856,12 +866,22 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
     def _annotations(self) -> Dict[str, List[Dict[str, Any]]]:
         if self._annotation_cache is None:
+            ctx = self.runner.ctx
             frame_observations = getattr(
-                self.runner.ctx, "annotations", {}
+                ctx, "annotations", {}
             ).get("frame_base_pair_observations")
-            self._annotation_cache = annotate_context(self.runner.ctx)
+            self._annotation_cache = annotate_context(ctx)
             if frame_observations is not None:
                 self._annotation_cache["frame_base_pair_observations"] = frame_observations
+            from pycurves_lib.core.parameter_conventions import (
+                _annotate_pair_normal_branches,
+            )
+            _annotate_pair_normal_branches(
+                ctx,
+                getattr(ctx, "pair_normal_signs", {}) or {},
+                getattr(ctx, "pair_normal_branch_modes", {}) or {},
+                getattr(ctx, "pair_glycosidic_details", {}) or {},
+            )
         return self._annotation_cache
 
     def _header(self, header_name: str) -> str:

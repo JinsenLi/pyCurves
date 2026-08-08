@@ -20,11 +20,11 @@ EQUIVALENT_AXIS_SIGN_FLIPS = (
 # fitted base-plane normal Z.
 CONTACT_IN_PLANE_SIGN_FLIP = np.diag([-1.0, -1.0, 1.0])
 
-# Once +Y has been fixed from the primary base toward its partner, the
-# remaining normal-line ambiguity reverses X and Z together.  Applying this
-# transformation to both pair members preserves their relative geometry,
-# contact direction, and handedness while choosing the signed pair normal.
-CONTACT_PAIR_NORMAL_SIGN_FLIP = np.diag([-1.0, 1.0, -1.0])
+# Reversing X and Z together selects the opposite normal-line branch while
+# preserving Y, handedness, and relative geometry when applied to both pair
+# members. For contact frames Y is the directed primary-to-partner axis; for
+# left_handed_cww it remains the standard fitted Y axis.
+PAIR_NORMAL_SIGN_FLIP = np.diag([-1.0, 1.0, -1.0])
 
 # Ring atoms used only to obtain a coordinate-derived base-pair center for the
 # forward tangent.  Exocyclic substituents are intentionally excluded so a
@@ -35,6 +35,9 @@ BASE_RING_ATOMS = frozenset({
 
 CONTACT_NORMAL_TANGENT_WEIGHT = 2.0
 CONTACT_NORMAL_CONTINUITY_WEIGHT = 1.0
+LEFT_HANDED_CWW_MIN_SYN_PAIRS = 3
+LEFT_HANDED_CWW_MAX_EVIDENCE_GAP = 2
+LEFT_HANDED_CWW_MAX_MEDIAN_STEP_DEGREES = -1.0
 
 
 def apply_curvesplus_base_pair_inversion(values, invert):
@@ -52,7 +55,7 @@ def apply_curvesplus_base_pair_inversion(values, invert):
 
 
 def build_interaction_reference_frames(ctx):
-    """Build contact-geometry frames for noncanonical shape calculations.
+    """Build the derived frame view used for signed shape calculations.
 
     The fitted base frames remain available as ``params.frames``.  For a
     noncanonical pair with reliable edge contacts, ``params.shape_frames``
@@ -64,19 +67,30 @@ def build_interaction_reference_frames(ctx):
       common sign is oriented from the coordinate-derived forward tangent.
     * Origins are the centroids of the atoms defining the observed edge.
 
-    The two bases do not share averaged axes; downstream shape math still
-    compares two independent fitted frames, so buckle/propeller/opening remain
-    real geometric parameters instead of being collapsed to zero.
+    Coordinate-confirmed left-handed cWW segments keep their standard fitted
+    member frames and origins, but receive the same pair-normal branch
+    selection in this derived view. The two bases never share averaged axes;
+    downstream shape math still compares independent frames.
     """
     p = ctx.params
     raw_frames = np.asarray(p.frames, dtype=float)
     shape_frames = raw_frames.copy()
     pairs = _interaction_frame_pairs(ctx)
-    if not pairs:
+    left_handed_pairs, left_handed_segments, glycosidic_details = (
+        _left_handed_cww_pairs(ctx, raw_frames, pairs)
+    )
+    if not pairs and not left_handed_pairs:
         p.shape_frames = shape_frames
         ctx.contact_geometry_frame_keys = set()
         ctx.contact_pair_normal_signs = {}
         ctx.contact_pair_normal_flips = []
+        ctx.left_handed_cww_frame_keys = set()
+        ctx.left_handed_cww_segments = []
+        ctx.left_handed_cww_normal_signs = {}
+        ctx.pair_normal_branch_modes = {}
+        ctx.pair_normal_signs = {}
+        ctx.pair_normal_flips = []
+        ctx.pair_glycosidic_details = {}
         return shape_frames
 
     frame_keys = set()
@@ -95,23 +109,63 @@ def build_interaction_reference_frames(ctx):
         shape_frames[partner_strand, level] = partner_frame
         frame_keys.add((0, partner_strand, level))
         frame_keys.add((partner_strand, 0, level))
-        built_pairs.append((partner_strand, level, geometry))
+        built_pairs.append((partner_strand, level, "contact_geometry"))
 
-    shape_frames, normal_signs = _resolve_contact_pair_normal_branches(
+    normal_pairs = built_pairs + left_handed_pairs
+    branch_modes = {
+        (0, int(partner), int(level)): str(mode)
+        for partner, level, mode in normal_pairs
+    }
+    shape_frames, normal_signs = _resolve_pair_normal_branches(
         ctx,
         raw_frames,
         shape_frames,
-        built_pairs,
+        normal_pairs,
     )
 
     p.shape_frames = shape_frames
     ctx.contact_geometry_frame_keys = frame_keys
-    ctx.contact_pair_normal_signs = normal_signs
+    ctx.contact_pair_normal_signs = {
+        key: sign for key, sign in normal_signs.items()
+        if branch_modes.get(key) == "contact_geometry"
+    }
     ctx.contact_pair_normal_flips = [
         (partner + 1, level)
+        for (primary, partner, level), sign in sorted(ctx.contact_pair_normal_signs.items())
+        if primary == 0 and sign < 0
+    ]
+    left_handed_keys = {
+        key for key, mode in branch_modes.items()
+        if mode == "left_handed_cww"
+    }
+    ctx.left_handed_cww_frame_keys = {
+        directed
+        for primary, partner, level in left_handed_keys
+        for directed in ((primary, partner, level), (partner, primary, level))
+    }
+    ctx.left_handed_cww_segments = left_handed_segments
+    ctx.left_handed_cww_normal_signs = {
+        key: sign for key, sign in normal_signs.items()
+        if key in left_handed_keys
+    }
+    ctx.pair_normal_branch_modes = branch_modes
+    ctx.pair_normal_signs = normal_signs
+    ctx.pair_glycosidic_details = glycosidic_details
+    ctx.pair_normal_flips = [
+        {
+            "partner_strand": partner + 1,
+            "level": level,
+            "mode": branch_modes[(primary, partner, level)],
+        }
         for (primary, partner, level), sign in sorted(normal_signs.items())
         if primary == 0 and sign < 0
     ]
+    _annotate_pair_normal_branches(
+        ctx,
+        normal_signs,
+        branch_modes,
+        glycosidic_details,
+    )
     return shape_frames
 
 
@@ -246,40 +300,201 @@ def _normalized_lw_family(annotation: dict, geometry: Optional[dict] = None) -> 
     return ""
 
 
-def _resolve_contact_pair_normal_branches(
+def _left_handed_cww_pairs(ctx, raw_frames: np.ndarray, contact_pairs):
+    """Return cWW levels belonging to coordinate-confirmed Z-DNA segments."""
+    if not hasattr(ctx, "molecule"):
+        return [], [], {}
+    annotations = getattr(ctx, "annotations", {}).get("base_pair_annotations", [])
+    contact_levels = {
+        (int(partner), int(level)) for partner, level, _geometry in contact_pairs
+    }
+    cww_rows = {}
+    evidence_by_partner = {}
+    glycosidic_details = {}
+    for row in annotations:
+        geometry = row.get("contact_geometry") or {}
+        if _normalized_lw_family(row, geometry) != "cWW":
+            continue
+        pair = _primary_partner_for_annotation(row)
+        level = row.get("level")
+        if pair is None or level is None:
+            continue
+        partner = pair
+        level = int(level)
+        if not (_has_level(ctx, 0, level) and _has_level(ctx, partner, level)):
+            continue
+        cww_rows[(partner, level)] = row
+        details = {}
+        has_syn_purine = False
+        for strand in (0, partner):
+            base = _base_symbol(ctx, strand, level)
+            chi = _coordinate_glycosidic_chi(ctx, strand, level)
+            state = _glycosidic_state(base, chi)
+            details[strand] = {"base": base, "chi": chi, "state": state}
+            has_syn_purine = has_syn_purine or (
+                base in {"A", "G", "I"} and state == "syn"
+            )
+        glycosidic_details[(0, partner, level)] = details
+        if has_syn_purine:
+            evidence_by_partner.setdefault(partner, []).append(level)
+
+    pairs = []
+    segments = []
+    for partner, evidence_levels in sorted(evidence_by_partner.items()):
+        member_centers = _pair_member_coordinate_centers(ctx, raw_frames, partner)
+        bridge_levels = contact_levels | {
+            key for key in cww_rows if key[0] == partner
+        }
+        for evidence_run in _left_handed_evidence_runs(
+            ctx,
+            partner,
+            sorted(set(evidence_levels)),
+            bridge_levels,
+        ):
+            if len(evidence_run) < LEFT_HANDED_CWW_MIN_SYN_PAIRS:
+                continue
+            start, end = evidence_run[0], evidence_run[-1]
+            step_angles = [
+                angle
+                for level in range(start, end)
+                if (angle := _signed_pair_vector_step_degrees(
+                    ctx, partner, member_centers, level, level + 1
+                )) is not None
+            ]
+            if not step_angles:
+                continue
+            median_step = float(np.median(step_angles))
+            if median_step >= LEFT_HANDED_CWW_MAX_MEDIAN_STEP_DEGREES:
+                continue
+            cww_levels = [
+                level for level in range(start, end + 1)
+                if (partner, level) in cww_rows
+            ]
+            if len(cww_levels) < LEFT_HANDED_CWW_MIN_SYN_PAIRS:
+                continue
+            pairs.extend(
+                (partner, level, "left_handed_cww") for level in cww_levels
+            )
+            segments.append({
+                "partner_strand": partner + 1,
+                "start_level": start,
+                "end_level": end,
+                "cww_levels": cww_levels,
+                "syn_evidence_levels": list(evidence_run),
+                "median_pair_vector_step": median_step,
+            })
+    return pairs, segments, glycosidic_details
+
+
+def _primary_partner_for_annotation(annotation: dict) -> Optional[int]:
+    strands = {
+        int(annotation.get("strand_1", 0)),
+        int(annotation.get("strand_2", 0)),
+    }
+    if 1 not in strands or len(strands) != 2:
+        return None
+    return next(strand for strand in strands if strand != 1) - 1
+
+
+def _left_handed_evidence_runs(
+    ctx,
+    partner: int,
+    levels,
+    bridge_levels,
+):
+    runs = []
+    current = []
+    for level in levels:
+        if current:
+            previous = current[-1]
+            gap = int(level) - int(previous)
+            connected = all(
+                _pair_levels_are_connected(ctx, partner, step, step + 1)
+                for step in range(previous, level)
+            )
+            bridge_is_eligible = all(
+                (partner, bridge) in bridge_levels
+                for bridge in range(previous + 1, level)
+            )
+            if (
+                gap > LEFT_HANDED_CWW_MAX_EVIDENCE_GAP
+                or not connected
+                or not bridge_is_eligible
+            ):
+                runs.append(current)
+                current = []
+        current.append(int(level))
+    if current:
+        runs.append(current)
+    return runs
+
+
+def _annotate_pair_normal_branches(
+    ctx,
+    signs: dict,
+    modes: dict,
+    glycosidic_details: dict,
+) -> None:
+    annotations = getattr(ctx, "annotations", {})
+    rows = []
+    for name in ("base_pair_annotations", "frame_base_pair_observations"):
+        rows.extend(annotations.get(name, []) or [])
+    for row in rows:
+        partner = _primary_partner_for_annotation(row)
+        level = row.get("level")
+        if partner is None or level is None:
+            continue
+        key = (0, partner, int(level))
+        if key not in modes:
+            continue
+        row["normal_branch_mode"] = modes[key]
+        row["pair_normal_sign"] = int(signs.get(key, 1))
+        details = glycosidic_details.get(key, {})
+        row_strands = (
+            int(row.get("strand_1", 0)) - 1,
+            int(row.get("strand_2", 0)) - 1,
+        )
+        for member_index, strand in enumerate(row_strands, start=1):
+            member = details.get(strand)
+            if not member:
+                continue
+            row[f"glycosidic_state_{member_index}"] = member["state"]
+            row[f"glycosidic_chi_{member_index}"] = member["chi"]
+
+
+def _resolve_pair_normal_branches(
     ctx,
     raw_frames: np.ndarray,
     shape_frames: np.ndarray,
     pairs,
 ):
-    """Choose one signed normal branch for each non-cWW contact-pair run.
+    """Choose one signed normal branch for each eligible pair-frame run.
 
-    Contact geometry fixes a directed +Y axis but leaves the pair normal as an
-    unoriented line.  A binary dynamic program orients that line along the
-    increasing-level coordinate tangent while favoring continuity across a
-    contiguous run.  Only contact frames are transformed; fitted standard
-    frames remain immutable.
+    The eligible set contains non-cWW contact frames and standard cWW frames
+    inside coordinate-confirmed left-handed segments. A binary dynamic program
+    orients each normal line along the increasing-level coordinate tangent
+    while favoring continuity. Fitted ``params.frames`` remain immutable.
     """
     resolved = np.asarray(shape_frames, dtype=float).copy()
     signs = {}
     pairs_by_partner = {}
-    for partner, level, geometry in pairs:
-        pairs_by_partner.setdefault(int(partner), []).append((int(level), geometry))
+    for partner, level, mode in pairs:
+        pairs_by_partner.setdefault(int(partner), []).append((int(level), mode))
 
     for partner, partner_pairs in sorted(pairs_by_partner.items()):
         centers = _pair_coordinate_centers(ctx, raw_frames, partner)
-        runs = _contact_pair_runs(ctx, partner, partner_pairs)
+        runs = _normal_pair_runs(ctx, partner, partner_pairs)
         for run in runs:
-            levels = [level for level, _geometry in run]
+            levels = [level for level, _mode in run]
             normals = [
-                _unsigned_contact_pair_normal(resolved, partner, level)
+                _unsigned_pair_normal(resolved, partner, level)
                 for level in levels
             ]
             tangents = [
                 _pair_forward_tangent(ctx, partner, centers, level)
                 for level in levels
             ]
-            run_signs = _binary_contact_normal_signs(
+            run_signs = _binary_pair_normal_signs(
                 ctx,
                 raw_frames,
                 partner,
@@ -293,16 +508,30 @@ def _resolve_contact_pair_normal_branches(
                 if sign >= 0:
                     continue
                 resolved[0, level, :3, :] = (
-                    CONTACT_PAIR_NORMAL_SIGN_FLIP @ resolved[0, level, :3, :]
+                    PAIR_NORMAL_SIGN_FLIP @ resolved[0, level, :3, :]
                 )
                 resolved[partner, level, :3, :] = (
-                    CONTACT_PAIR_NORMAL_SIGN_FLIP @ resolved[partner, level, :3, :]
+                    PAIR_NORMAL_SIGN_FLIP @ resolved[partner, level, :3, :]
                 )
     return resolved, signs
 
 
-def _contact_pair_runs(ctx, partner: int, pairs):
-    """Split contact pairs at missing levels and explicit Curves breaks."""
+def _resolve_contact_pair_normal_branches(
+    ctx,
+    raw_frames: np.ndarray,
+    shape_frames: np.ndarray,
+    pairs,
+):
+    """Backward-compatible contact-only wrapper for focused unit tests."""
+    normalized = [
+        (partner, level, "contact_geometry")
+        for partner, level, _geometry in pairs
+    ]
+    return _resolve_pair_normal_branches(ctx, raw_frames, shape_frames, normalized)
+
+
+def _normal_pair_runs(ctx, partner: int, pairs):
+    """Split eligible pair frames at missing levels and explicit breaks."""
     runs = []
     current = []
     for item in sorted(pairs, key=lambda pair: pair[0]):
@@ -329,7 +558,7 @@ def _pair_levels_are_connected(ctx, partner: int, lower: int, upper: int) -> boo
     )
 
 
-def _unsigned_contact_pair_normal(frames: np.ndarray, partner: int, level: int) -> np.ndarray:
+def _unsigned_pair_normal(frames: np.ndarray, partner: int, level: int) -> np.ndarray:
     """Return one representative vector for an otherwise unsigned normal line."""
     first = _unit(frames[0, level, 2], np.array([0.0, 0.0, 1.0]))
     other = _unit(frames[partner, level, 2], first)
@@ -339,28 +568,122 @@ def _unsigned_contact_pair_normal(frames: np.ndarray, partner: int, level: int) 
 
 
 def _pair_coordinate_centers(ctx, raw_frames: np.ndarray, partner: int):
+    member_centers = _pair_member_coordinate_centers(ctx, raw_frames, partner)
+    return {
+        level: np.mean(np.asarray(centers, dtype=float), axis=0)
+        for level, centers in member_centers.items()
+    }
+
+
+def _pair_member_coordinate_centers(ctx, raw_frames: np.ndarray, partner: int):
     centers = {}
     for level in range(1, int(ctx.nux) + 1):
         if not (_has_level(ctx, 0, level) and _has_level(ctx, partner, level)):
             continue
         member_centers = []
         for strand in (0, partner):
-            center = None
-            if hasattr(ctx, "molecule"):
-                _base, atom_map = _base_atom_map(ctx, strand, level)
-                points = [
-                    point for name, point in atom_map.items()
-                    if name in BASE_RING_ATOMS
-                ]
-                if len(points) >= 3:
-                    center = np.mean(np.asarray(points, dtype=float), axis=0)
-            if center is None or not np.all(np.isfinite(center)):
-                center = np.asarray(raw_frames[strand, level, 3], dtype=float)
-            member_centers.append(center)
-        pair_center = np.mean(np.asarray(member_centers, dtype=float), axis=0)
-        if np.all(np.isfinite(pair_center)):
-            centers[level] = pair_center
+            member_centers.append(
+                _base_coordinate_center(ctx, raw_frames, strand, level)
+            )
+        if np.all(np.isfinite(member_centers)):
+            centers[level] = tuple(member_centers)
     return centers
+
+
+def _base_coordinate_center(ctx, raw_frames: np.ndarray, strand: int, level: int):
+    center = None
+    if hasattr(ctx, "molecule"):
+        _base, atom_map = _base_atom_map(ctx, strand, level)
+        points = [
+            point for name, point in atom_map.items()
+            if name in BASE_RING_ATOMS
+        ]
+        if len(points) >= 3:
+            center = np.mean(np.asarray(points, dtype=float), axis=0)
+    if center is None or not np.all(np.isfinite(center)):
+        center = np.asarray(raw_frames[strand, level, 3], dtype=float)
+    return center
+
+
+def _signed_pair_vector_step_degrees(
+    ctx,
+    partner: int,
+    member_centers: dict,
+    lower: int,
+    upper: int,
+) -> Optional[float]:
+    """Return direct coordinate handedness from successive pair vectors."""
+    if not _pair_levels_are_connected(ctx, partner, lower, upper):
+        return None
+    if lower not in member_centers or upper not in member_centers:
+        return None
+    first_primary, first_partner = member_centers[lower]
+    next_primary, next_partner = member_centers[upper]
+    first_center = 0.5 * (first_primary + first_partner)
+    next_center = 0.5 * (next_primary + next_partner)
+    axis = _unit(next_center - first_center)
+    if np.linalg.norm(axis) <= 1e-12:
+        return None
+    first_vector = first_partner - first_primary
+    next_vector = next_partner - next_primary
+    first_vector = first_vector - axis * float(np.dot(first_vector, axis))
+    next_vector = next_vector - axis * float(np.dot(next_vector, axis))
+    first_vector = _unit(first_vector)
+    next_vector = _unit(next_vector)
+    if min(np.linalg.norm(first_vector), np.linalg.norm(next_vector)) <= 1e-12:
+        return None
+    sine = float(np.dot(axis, np.cross(first_vector, next_vector)))
+    cosine = float(np.clip(np.dot(first_vector, next_vector), -1.0, 1.0))
+    return float(np.degrees(np.arctan2(sine, cosine)))
+
+
+def _coordinate_glycosidic_chi(ctx, strand: int, level: int) -> Optional[float]:
+    base, atom_map = _base_atom_map(ctx, strand, level)
+    if base in {"A", "G", "I"}:
+        names = ("C4", "N9", "C1'", "O4'")
+    elif base in {"C", "T", "U"}:
+        names = ("C2", "N1", "C1'", "O4'")
+    else:
+        return None
+    points = []
+    for name in names:
+        point = atom_map.get(name)
+        if point is None and name.endswith("'"):
+            point = atom_map.get(name[:-1] + "*")
+        if point is None:
+            return None
+        points.append(point)
+    return _signed_dihedral_degrees(*points)
+
+
+def _signed_dihedral_degrees(p1, p2, p3, p4) -> Optional[float]:
+    first = np.asarray(p2, dtype=float) - np.asarray(p1, dtype=float)
+    middle = np.asarray(p3, dtype=float) - np.asarray(p2, dtype=float)
+    last = np.asarray(p4, dtype=float) - np.asarray(p3, dtype=float)
+    normal_1 = np.cross(first, middle)
+    normal_2 = np.cross(last, -middle)
+    if min(
+        np.linalg.norm(middle),
+        np.linalg.norm(normal_1),
+        np.linalg.norm(normal_2),
+    ) <= 1e-12:
+        return None
+    normal_1 = _unit(normal_1)
+    normal_2 = _unit(normal_2)
+    middle = _unit(middle)
+    cosine = float(np.clip(np.dot(normal_1, normal_2), -1.0, 1.0))
+    sine = float(np.dot(normal_1, np.cross(normal_2, middle)))
+    return float(np.degrees(np.arctan2(sine, cosine)))
+
+
+def _glycosidic_state(base: str, chi: Optional[float]) -> str:
+    if chi is None or not np.isfinite(chi):
+        return "unknown"
+    if base in {"A", "G", "I"} and -90.0 <= chi <= 90.0:
+        return "syn"
+    if abs(float(chi)) >= 120.0:
+        return "anti"
+    return "ambiguous"
 
 
 def _pair_forward_tangent(
@@ -412,7 +735,7 @@ def _fixed_pair_normal_anchor(
     return normal
 
 
-def _binary_contact_normal_signs(
+def _binary_pair_normal_signs(
     ctx,
     raw_frames: np.ndarray,
     partner: int,
@@ -436,7 +759,7 @@ def _binary_contact_normal_signs(
         )
 
     for state_index, state in enumerate(states):
-        score = _contact_normal_unary_score(state, normals[0], tangents[0])
+        score = _pair_normal_unary_score(state, normals[0], tangents[0])
         if left_anchor is not None:
             score += CONTACT_NORMAL_CONTINUITY_WEIGHT * float(
                 np.dot(state * normals[0], left_anchor)
@@ -445,7 +768,7 @@ def _binary_contact_normal_signs(
 
     for index in range(1, len(levels)):
         for state_index, state in enumerate(states):
-            unary = _contact_normal_unary_score(state, normals[index], tangents[index])
+            unary = _pair_normal_unary_score(state, normals[index], tangents[index])
             candidates = []
             for previous_index, previous_state in enumerate(states):
                 continuity = CONTACT_NORMAL_CONTINUITY_WEIGHT * float(
@@ -476,7 +799,7 @@ def _binary_contact_normal_signs(
     return [states[index] for index in selected]
 
 
-def _contact_normal_unary_score(
+def _pair_normal_unary_score(
     state: int,
     normal: np.ndarray,
     tangent: Optional[np.ndarray],
@@ -925,12 +1248,12 @@ class StandardParameterConvention(LegacyParameterConvention):
             rotation_sign=rotation_sign,
         )
         invert = getattr(calc, "curvesplus_invert", None)
-        # The standard Curves+ reverse-Z flag belongs to the cWW/fitted-frame
-        # path.  A non-cWW contact pair has already selected its signed normal
-        # branch from coordinates, so applying the standard flag here would
-        # introduce a second, conflicting buckle/shear sign correction.
+        # A pair resolved from coordinates (non-cWW contact geometry or a
+        # left_handed_cww segment) has already selected its signed normal.
+        # Applying the standard reverse-Z mask again would introduce a second,
+        # conflicting buckle/shear sign correction.
         if (
-            not self._uses_contact_geometry_pair(calc, partner_strand, level)
+            not self._uses_resolved_normal_pair(calc, partner_strand, level)
             and invert is not None
             and 0 <= level < len(invert)
         ):
@@ -1206,6 +1529,17 @@ class StandardParameterConvention(LegacyParameterConvention):
     def _uses_contact_geometry_pair(self, calc, partner_strand: int, level: int) -> bool:
         keys = getattr(calc.ctx, "contact_geometry_frame_keys", set()) or set()
         return (0, partner_strand, level) in keys or (partner_strand, 0, level) in keys
+
+    @staticmethod
+    def _uses_resolved_normal_pair(calc, partner_strand: int, level: int) -> bool:
+        modes = getattr(calc.ctx, "pair_normal_branch_modes", {}) or {}
+        if (0, partner_strand, level) in modes:
+            return True
+        contact_keys = getattr(calc.ctx, "contact_geometry_frame_keys", set()) or set()
+        return (
+            (0, partner_strand, level) in contact_keys
+            or (partner_strand, 0, level) in contact_keys
+        )
 
     def _uses_contact_geometry_level(self, calc, strand: int, level: int) -> bool:
         keys = getattr(calc.ctx, "contact_geometry_frame_keys", set()) or set()
