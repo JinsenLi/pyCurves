@@ -366,6 +366,28 @@ def _left_handed_cww_pairs(ctx, raw_frames: np.ndarray, contact_pairs):
             median_step = float(np.median(step_angles))
             if median_step >= LEFT_HANDED_CWW_MAX_MEDIAN_STEP_DEGREES:
                 continue
+            # Syn purines identify the Z-DNA core, but a cWW pair at a B/Z
+            # junction can lie just outside that evidence while its step from
+            # the core is still unambiguously left-handed.  Include such
+            # connected boundary pairs in the same signed-normal run.  This
+            # avoids using an oriented boundary normal merely as a DP anchor
+            # while leaving the actual boundary frame on the opposite branch.
+            start, end = _extend_left_handed_cww_boundaries(
+                ctx,
+                partner,
+                start,
+                end,
+                cww_rows,
+                member_centers,
+            )
+            step_angles = [
+                angle
+                for level in range(start, end)
+                if (angle := _signed_pair_vector_step_degrees(
+                    ctx, partner, member_centers, level, level + 1
+                )) is not None
+            ]
+            median_step = float(np.median(step_angles))
             cww_levels = [
                 level for level in range(start, end + 1)
                 if (partner, level) in cww_rows
@@ -384,6 +406,46 @@ def _left_handed_cww_pairs(ctx, raw_frames: np.ndarray, contact_pairs):
                 "median_pair_vector_step": median_step,
             })
     return pairs, segments, glycosidic_details
+
+
+def _extend_left_handed_cww_boundaries(
+    ctx,
+    partner: int,
+    start: int,
+    end: int,
+    cww_rows: dict,
+    member_centers: dict,
+):
+    """Extend a syn-confirmed Z core across left-handed cWW boundary steps."""
+    while True:
+        candidate = start - 1
+        if (
+            (partner, candidate) not in cww_rows
+            or not _pair_levels_are_connected(ctx, partner, candidate, start)
+        ):
+            break
+        angle = _signed_pair_vector_step_degrees(
+            ctx, partner, member_centers, candidate, start
+        )
+        if angle is None or angle >= LEFT_HANDED_CWW_MAX_MEDIAN_STEP_DEGREES:
+            break
+        start = candidate
+
+    while True:
+        candidate = end + 1
+        if (
+            (partner, candidate) not in cww_rows
+            or not _pair_levels_are_connected(ctx, partner, end, candidate)
+        ):
+            break
+        angle = _signed_pair_vector_step_degrees(
+            ctx, partner, member_centers, end, candidate
+        )
+        if angle is None or angle >= LEFT_HANDED_CWW_MAX_MEDIAN_STEP_DEGREES:
+            break
+        end = candidate
+
+    return start, end
 
 
 def _primary_partner_for_annotation(annotation: dict) -> Optional[int]:
