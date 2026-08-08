@@ -712,13 +712,22 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         for row in self._base_pair_rows(annotations):
             if not self._is_reportable_base_pair_annotation(row):
                 continue
+            left_handed_cww = row.get("normal_branch_mode") == "left_handed_cww"
             rows.append({
                 "annotation_type": "base_pair",
                 "severity": "warn" if row.get("is_mismatch") else "info",
                 "level": row.get("level"),
                 "location": f"level {row.get('level')}",
-                "code": row.get("pair_family", ""),
-                "message": row.get("pair_subtype", ""),
+                "code": (
+                    "left_handed_cww"
+                    if left_handed_cww
+                    else row.get("pair_family", "")
+                ),
+                "message": (
+                    "coordinate-derived left-handed cWW normal branch"
+                    if left_handed_cww
+                    else row.get("pair_subtype", "")
+                ),
                 "pairing_mode": row.get("pairing_mode", ""),
                 "pair_status": row.get("pair_status", "uncertain"),
                 "geometry_annotation": base_pair_observed_geometry_annotation(row),
@@ -831,6 +840,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             or row.get("candidate_mode")
             or row.get("pair_status") != "present"
             or row.get("frame_mode") == "contact_geometry"
+            or row.get("normal_branch_mode") == "left_handed_cww"
         )
 
     @staticmethod

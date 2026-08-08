@@ -157,6 +157,7 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
             or row.get("candidate_mode")
             or row.get("pair_status") != "present"
             or row.get("frame_mode") == "contact_geometry"
+            or row.get("normal_branch_mode") == "left_handed_cww"
         )
     ]
     source_unusual = [
@@ -200,6 +201,16 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
             notes.extend(flag for flag in diagnostics if flag not in notes)
             if row.get("frame_mode") == "contact_geometry":
                 notes.append("contact_geometry_frames")
+            if row.get("normal_branch_mode") == "left_handed_cww":
+                notes.append("normal_branch=left_handed_cww")
+                notes.append(f"normal_sign={int(row.get('pair_normal_sign', -1)):+d}")
+                states = [
+                    str(row.get(key) or "")
+                    for key in ("glycosidic_state_1", "glycosidic_state_2")
+                ]
+                states = [state for state in states if state]
+                if states:
+                    notes.append(f"chi={'/'.join(states)}")
             if row.get("contact_confidence"):
                 notes.append(f"conf={row['contact_confidence']}")
             contact_count = row.get("contact_count")
