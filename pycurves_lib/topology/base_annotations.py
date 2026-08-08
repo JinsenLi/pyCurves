@@ -628,6 +628,7 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "frame_mode",
             "legacy_canonical" if canonical else "fitted_fallback",
         )
+        frame_basis = contact_geometry.get("frame_basis", "")
         subunit_1 = int(r1["subunit"])
         subunit_2 = int(r2["subunit"])
         pair_id = f"{min(subunit_1, subunit_2)}:{max(subunit_1, subunit_2)}"
@@ -678,6 +679,7 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
             "strand_direction": contact_geometry.get("strand_direction", ""),
             "topology_strand_direction": contact_geometry.get("topology_strand_direction", ""),
             "frame_mode": frame_mode,
+            "frame_basis": frame_basis,
             "input_geometry_tag": contact_geometry.get(
                 "input_geometry_tag", ""
             ),
@@ -942,6 +944,7 @@ def _contact_geometry_for_pair(
     provisional_unresolved = bool(
         unresolved_requested and not observed_lw_family_confident
     )
+    topology_strand_direction = _strand_direction(ctx, strand_1, strand_2)
     candidate_lw_family = ""
     orientation_prefix = {
         "cis": "c",
@@ -952,6 +955,13 @@ def _contact_geometry_for_pair(
         and orientation_prefix
         and coordinate_edge_1
         and coordinate_edge_2
+        and not edge_1_ambiguous
+        and not edge_2_ambiguous
+        and infer_lw_strand_orientation(
+            coordinate_orientation,
+            coordinate_edge_1,
+            coordinate_edge_2,
+        ) == topology_strand_direction
     ):
         candidate_lw_family = (
             f"{orientation_prefix}{coordinate_edge_1}{coordinate_edge_2}"
@@ -972,7 +982,6 @@ def _contact_geometry_for_pair(
         edge_1_ambiguous = False
         edge_2_ambiguous = False
     edge_pair = f"{edge_1}/{edge_2}" if edge_1 and edge_2 else ""
-    topology_strand_direction = _strand_direction(ctx, strand_1, strand_2)
     manual_glycosidic_orientation = (
         manual_geometry.get("glycosidic_orientation", "")
         if manual_lw_requested
@@ -1015,10 +1024,6 @@ def _contact_geometry_for_pair(
     has_provisional_contact_geometry = (
         provisional_unresolved
         and bool(contacts)
-        and bool(edge_1)
-        and bool(edge_2)
-        and not edge_1_ambiguous
-        and not edge_2_ambiguous
     )
     forced_noncanonical = bool(source_hoogsteen)
     if has_manual_frame_geometry:
@@ -1043,6 +1048,13 @@ def _contact_geometry_for_pair(
         # Coordinate-only/source annotations remain descriptive. They must not
         # silently replace the standard fitted calculation frames.
         frame_mode = "fitted_fallback"
+    frame_basis = (
+        "atom_contact_axis"
+        if frame_mode == "provisional_contact_geometry"
+        else "observed_edge"
+        if frame_mode == "contact_geometry"
+        else ""
+    )
 
     contact_supported_trans_ww = bool(
         edge_1 == edge_2 == "W"
@@ -1056,7 +1068,7 @@ def _contact_geometry_for_pair(
         or contact_supported_trans_ww
     )
     if provisional_unresolved and has_provisional_contact_geometry:
-        confidence = "provisional_single_contact_geometry"
+        confidence = "provisional_atom_contact_geometry"
     elif provisional_unresolved:
         confidence = "unresolved_geometry"
     elif manual_lw_requested:
@@ -1112,6 +1124,7 @@ def _contact_geometry_for_pair(
         ),
         "topology_strand_direction": topology_strand_direction,
         "frame_mode": frame_mode,
+        "frame_basis": frame_basis,
         "contact_atom_pairs": contacts,
         "contact_count": len(contacts),
         "confidence": confidence,

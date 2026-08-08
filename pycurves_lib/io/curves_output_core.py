@@ -696,6 +696,8 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "diagnostic_flags": list(row.get("diagnostic_flags") or []),
                 "contact_confidence": row.get("contact_confidence", ""),
                 "contact_count": self._contact_count(row),
+                "frame_mode": row.get("frame_mode", ""),
+                "frame_basis": row.get("frame_basis", ""),
                 "reference_pairing_mode": row.get(
                     "reference_pairing_mode", ""
                 ),
@@ -768,6 +770,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "strand_direction": row.get("strand_direction", ""),
                 "topology_strand_direction": row.get("topology_strand_direction", ""),
                 "frame_mode": row.get("frame_mode", ""),
+                "frame_basis": row.get("frame_basis", ""),
                 "normal_branch_mode": row.get("normal_branch_mode", ""),
                 "pair_normal_sign": row.get("pair_normal_sign"),
                 "glycosidic_state_1": row.get("glycosidic_state_1", ""),
@@ -846,6 +849,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "strand_direction": row.get("strand_direction", ""),
                 "topology_strand_direction": row.get("topology_strand_direction", ""),
                 "frame_mode": row.get("frame_mode", ""),
+                "frame_basis": row.get("frame_basis", ""),
                 "contact_confidence": row.get("contact_confidence", ""),
                 "contact_count": self._contact_count(row),
                 "source_pair_number": row.get("source_pair_number"),

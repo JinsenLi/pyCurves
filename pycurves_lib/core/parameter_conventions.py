@@ -62,11 +62,14 @@ def build_interaction_reference_frames(ctx):
     a stable provisional contact axis, ``params.shape_frames`` replaces both
     paired base frames with per-base interaction frames:
 
-    * X follows that base's observed interacting edge.
+    * Resolved LW pairs use X along each observed interacting edge.
+    * Unresolved pairs use Y along the directed atom-contact axis and derive X
+      in the fitted base plane without assigning an LW edge.
     * Y is oriented consistently along the strand-1 to partner contact axis.
     * Z lies on that base's fitted normal line; for non-cWW contact pairs its
       common sign is oriented from the coordinate-derived forward tangent.
-    * Origins are the centroids of the atoms defining the observed edge.
+    * Origins are the centroids of the atoms defining the observed edge, or
+      the participating contact atoms for an unresolved pair.
 
     Coordinate-confirmed left-handed cWW segments keep their standard fitted
     member frames and origins, but receive the same pair-normal branch
@@ -921,6 +924,32 @@ def _interaction_pair_reference_frames(
         first_contact_points.append(first_point)
         partner_contact_points.append(partner_point)
 
+    frame_basis = str(geometry.get("frame_basis") or "")
+    if frame_basis == "atom_contact_axis":
+        if not first_contact_points:
+            return None
+        first_contact_points = np.asarray(first_contact_points, dtype=float)
+        partner_contact_points = np.asarray(partner_contact_points, dtype=float)
+        hbond_axis_seed = np.mean(
+            partner_contact_points - first_contact_points,
+            axis=0,
+        )
+        hbond_axis = _unit(
+            hbond_axis_seed,
+            raw_frames[first_strand, level, 1, :],
+        )
+        first_frame = _atom_contact_member_reference_frame(
+            raw_frames[first_strand, level],
+            first_contact_points,
+            hbond_axis,
+        )
+        partner_frame = _atom_contact_member_reference_frame(
+            raw_frames[partner_strand, level],
+            partner_contact_points,
+            hbond_axis,
+        )
+        return first_frame, partner_frame
+
     first_points = _edge_points_for_frame(first_base, first_edge, first_atoms, first_contact_atoms)
     partner_points = _edge_points_for_frame(partner_base, partner_edge, partner_atoms, partner_contact_atoms)
     if len(first_points) < 2 or len(partner_points) < 2:
@@ -944,6 +973,30 @@ def _interaction_pair_reference_frames(
         hbond_axis,
     )
     return first_frame, partner_frame
+
+
+def _atom_contact_member_reference_frame(
+    raw_frame: np.ndarray,
+    contact_points: np.ndarray,
+    hbond_axis: np.ndarray,
+) -> np.ndarray:
+    """Return a family-neutral frame from a directed atom-contact axis."""
+    contact_points = np.asarray(contact_points, dtype=float)
+    z_axis = _unit(raw_frame[2], np.array([0.0, 0.0, 1.0]))
+    center = np.mean(contact_points, axis=0)
+    y_axis = hbond_axis - z_axis * float(np.dot(hbond_axis, z_axis))
+    y_axis = _unit(y_axis, raw_frame[1])
+    if float(np.dot(y_axis, hbond_axis)) < 0.0:
+        y_axis *= -1.0
+    x_axis = _unit(np.cross(y_axis, z_axis), raw_frame[0])
+    y_axis = _unit(np.cross(z_axis, x_axis), y_axis)
+
+    frame = np.asarray(raw_frame, dtype=float).copy()
+    frame[:3, :] = _orthonormalize_axes(
+        np.asarray([x_axis, y_axis, z_axis], dtype=float)
+    )
+    frame[3, :] = center
+    return frame
 
 
 def _edge_points_for_frame(base: str, edge: str, atom_map: dict, contact_atoms) -> np.ndarray:
@@ -1525,6 +1578,14 @@ class StandardParameterConvention(LegacyParameterConvention):
             or ""
         )
         provisional_contact = frame_mode == "provisional_contact_geometry"
+        frame_basis = str(
+            pair_geometry.get("frame_basis")
+            or (annotation or {}).get("frame_basis")
+            or ""
+        )
+        atom_contact_basis = (
+            provisional_contact and frame_basis == "atom_contact_axis"
+        )
         lw_strand_orientation = str(pair_geometry.get("lw_strand_orientation") or "").lower()
         if not lw_strand_orientation and not provisional_contact:
             lw_strand_orientation = infer_lw_strand_orientation(
@@ -1538,7 +1599,12 @@ class StandardParameterConvention(LegacyParameterConvention):
         other = self._base_frame(calc, partner_strand, level)
         if first is None or other is None:
             return None
-        if provisional_contact:
+        if atom_contact_basis:
+            # Both Y axes point from the primary contact atom toward its
+            # partner. Select only the determinant-preserving X/Z alternative
+            # so this directed axis cannot be reversed by an LW assumption.
+            other = self._aligned_atom_contact_partner_frame(first, other)
+        elif provisional_contact:
             # No LW family is authoritative here. Choose the member-frame
             # branch with the smaller physical rotation instead of allowing a
             # tentative cis/trans vote to imply parallel strand semantics.
@@ -1554,9 +1620,28 @@ class StandardParameterConvention(LegacyParameterConvention):
         else:
             prefer_parallel = self._is_hoogsteen_pair(calc, partner_strand, level)
             other = self._aligned_partner_frame(first, other, prefer_parallel=prefer_parallel)
-        if self._uses_contact_geometry_pair(calc, partner_strand, level):
+        if (
+            self._uses_contact_geometry_pair(calc, partner_strand, level)
+            and not atom_contact_basis
+        ):
             other = self._aligned_contact_partner_frame(first, other)
         return first, other
+
+    @staticmethod
+    def _aligned_atom_contact_partner_frame(
+        first: ParameterFrame,
+        other: ParameterFrame,
+    ) -> ParameterFrame:
+        """Choose the minimum-rotation normal branch while preserving Y."""
+        alternate = ParameterFrame(
+            origin=other.origin.copy(),
+            axes=PAIR_NORMAL_SIGN_FLIP @ other.axes,
+        )
+        direct_score = float(np.trace(first.axes @ other.axes.T))
+        alternate_score = float(np.trace(first.axes @ alternate.axes.T))
+        if alternate_score > direct_score + 1e-9:
+            return alternate
+        return other
 
     @staticmethod
     def _aligned_contact_partner_frame(
