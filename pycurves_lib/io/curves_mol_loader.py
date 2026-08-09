@@ -1181,6 +1181,23 @@ class MolecularLoader:
         details["probe_count"] = len(valid_probes)
 
         operation_id = parsed["operation_id"]
+        # NDB base-pair annotations reference the exact operator name in
+        # _pdbx_struct_oper_list, when present.  Its numeric prefix is not
+        # guaranteed to equal _space_group_symop.id (6L0Y uses 5_555 for
+        # space-group operation 4 and 12_555 for operation 17).  Prefer the
+        # exact named Cartesian transform before interpreting that prefix as
+        # an independent space-group operation ID.
+        transform_maps = operator_transforms or {}
+        exact_transforms = transform_maps.get("exact", transform_maps)
+        explicit_transform = exact_transforms.get(parsed["text"])
+        if explicit_transform is not None and parsed["standard"]:
+            return finish(
+                explicit_transform,
+                source="pdbx_struct_oper_list_exact",
+                recovery=False,
+                translation=parsed["translations"][0],
+            )
+
         official_operation = (symmetry_operations or {}).get(operation_id)
         if official_operation is not None and parsed["standard"]:
             transform = MolecularLoader._cif_crystal_transform(
@@ -1191,17 +1208,6 @@ class MolecularLoader:
             return finish(
                 transform,
                 source="space_group_symop",
-                recovery=False,
-                translation=parsed["translations"][0],
-            )
-
-        transform_maps = operator_transforms or {}
-        exact_transforms = transform_maps.get("exact", transform_maps)
-        explicit_transform = exact_transforms.get(parsed["text"])
-        if explicit_transform is not None and parsed["standard"]:
-            return finish(
-                explicit_transform,
-                source="pdbx_struct_oper_list_exact",
                 recovery=False,
                 translation=parsed["translations"][0],
             )
