@@ -1750,11 +1750,33 @@ class RobustTopologyInferrer:
             atom_map_2,
         )
         if not self._is_complementary(residue_1.base, residue_2.base):
-            generic_matches = self._generic_hbond_matches(residue_1, residue_2, atom_map_1, atom_map_2)
-            if len(pattern_matches) >= 1 or len(generic_matches) >= 2:
+            donor_acceptor_matches = self._generic_hbond_matches(
+                residue_1,
+                residue_2,
+                atom_map_1,
+                atom_map_2,
+                donor_acceptor_only=True,
+            )
+            fitted_geometry = self._fitted_pair_geometry(residue_1, residue_2)
+            if (
+                fitted_geometry is not None
+                and not bool(fitted_geometry.get("eligible"))
+                and not self._has_strong_coordinate_pair_support(
+                    residue_1,
+                    residue_2,
+                    atom_map_1,
+                    atom_map_2,
+                    pattern_matches=pattern_matches,
+                )
+            ):
+                # Register interpolation must not turn face-to-face stacking
+                # into a mismatch pair.  Strong chemical contacts may override
+                # an extreme fitted pose, but atom proximity alone may not.
+                return False
+            if len(pattern_matches) >= 1 or len(donor_acceptor_matches) >= 2:
                 return True
             return (
-                len(generic_matches) >= 1
+                len(donor_acceptor_matches) >= 1
                 and center_distance <= REGISTER_GAP_NONCANONICAL_SINGLE_CONTACT_CENTER_CUTOFF
                 and hbond_center_distance <= REGISTER_GAP_NONCANONICAL_SINGLE_CONTACT_HBOND_CENTER_CUTOFF
             )
