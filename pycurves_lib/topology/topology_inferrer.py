@@ -1156,8 +1156,7 @@ class RobustTopologyInferrer:
                 )
             )
             unresolved_contact_geometry = (
-                not self._is_complementary(residue_1.base, residue_2.base)
-                and bool(atom_pairs)
+                bool(atom_pairs)
                 and bool(edge_1)
                 and bool(edge_2)
                 and bool(orientation)
@@ -1174,7 +1173,10 @@ class RobustTopologyInferrer:
             )
             # Generic close-contact edge votes remain advisory. The supported
             # authoritative cases are fitted cWW, fitted/observed tWW, and
-            # chemically named Hoogsteen patterns.
+            # chemically named Hoogsteen patterns. Complementary identity is
+            # not enough to imply cWW: a distorted C-G or A-T/U pair with
+            # eligible fitted planes but unresolved contacts must retain an
+            # explicit family-neutral marker.
             if not (confident_trans_ww or confident_named_hoogsteen):
                 if unresolved_contact_geometry:
                     tag = "unresolved"
@@ -1188,6 +1190,7 @@ class RobustTopologyInferrer:
             or candidate.pair_family == "hbonded_noncanonical"
             or not self._is_complementary(residue_1.base, residue_2.base)
             or measured_noncanonical
+            or tag == "unresolved"
         )
         if not should_write:
             return None
