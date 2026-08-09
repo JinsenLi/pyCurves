@@ -143,6 +143,7 @@ class BasePairCandidate:
     is_hoogsteen: bool = False
     fitted_geometry: Optional[Dict[str, object]] = None
     lw_classification: Optional[LWClassification] = None
+    strong_contact_support: Optional[bool] = None
 
 
 @dataclass
@@ -429,10 +430,15 @@ class RobustTopologyInferrer:
         self,
         *,
         one_to_one: bool = True,
+        provisional_pairs: Optional[Iterable[Tuple[int, int]]] = None,
     ) -> List[BasePairCandidate]:
         """Detect current-coordinate pairs without source-table assistance."""
         self._collect_residues()
         self._trace_strands()
+        provisional_pair_keys = {
+            tuple(sorted((int(first), int(second))))
+            for first, second in (provisional_pairs or ())
+        }
         grouped: Dict[Tuple[int, int], List[BasePairCandidate]] = {}
         for i, first_strand in enumerate(self.strands):
             for j in range(i + 1, len(self.strands)):
@@ -450,7 +456,15 @@ class RobustTopologyInferrer:
                         ):
                             continue
                         candidate = self._score_base_pair(
-                            first, second, i, j, donor_acceptor_only=True
+                            first,
+                            second,
+                            i,
+                            j,
+                            donor_acceptor_only=True,
+                            allow_single_contact=(
+                                tuple(sorted((first, second)))
+                                in provisional_pair_keys
+                            ),
                         )
                         if candidate is not None:
                             candidates.append(candidate)
@@ -569,6 +583,7 @@ class RobustTopologyInferrer:
         second_strand: int,
         *,
         donor_acceptor_only: bool = False,
+        allow_single_contact: bool = False,
     ) -> Optional[BasePairCandidate]:
         residue_1 = self.residues[first]
         residue_2 = self.residues[second]
@@ -583,14 +598,6 @@ class RobustTopologyInferrer:
             residue_1, residue_2, atom_map_1, atom_map_2,
             donor_acceptor_only=donor_acceptor_only,
         )
-        strong_contact_support = self._has_strong_coordinate_pair_support(
-            residue_1,
-            residue_2,
-            atom_map_1,
-            atom_map_2,
-            pattern_matches=pattern_matches,
-        )
-
         if len(pattern_matches) >= 2:
             pair_family = pattern_family
             matches = pattern_matches
@@ -602,6 +609,17 @@ class RobustTopologyInferrer:
             # recoverable heavy-atom contact in an experimental model.
             pair_family = "lw_exemplar"
             matches = generic_matches
+        elif (
+            allow_single_contact
+            and generic_matches
+            and fitted_geometry is not None
+            and bool(fitted_geometry.get("eligible"))
+        ):
+            # A reference pair that already uses family-neutral contact
+            # geometry remains observable while its one donor-acceptor contact
+            # survives. Do not enable this relaxation for novel pairs.
+            pair_family = "provisional_contact"
+            matches = generic_matches
         else:
             return None
 
@@ -611,13 +629,21 @@ class RobustTopologyInferrer:
         # short, independent donor-acceptor contacts (1R2L level 11 is the
         # motivating example).  Evaluate those contacts before rejecting the
         # pair so a large deformation does not erase its LW geometry.
+        strong_contact_support: Optional[bool] = None
         if (
             fitted_geometry is not None
             and not bool(fitted_geometry["eligible"])
             and not confident_lw
-            and not strong_contact_support
         ):
-            return None
+            strong_contact_support = self._has_strong_coordinate_pair_support(
+                residue_1,
+                residue_2,
+                atom_map_1,
+                atom_map_2,
+                pattern_matches=pattern_matches,
+            )
+            if not strong_contact_support:
+                return None
 
         center_distance = float(np.linalg.norm(residue_1.center - residue_2.center))
         if center_distance > 9.0 and not confident_lw:
@@ -648,6 +674,7 @@ class RobustTopologyInferrer:
             is_hoogsteen=pair_family == "hoogsteen_like",
             fitted_geometry=fitted_geometry,
             lw_classification=lw_classification,
+            strong_contact_support=strong_contact_support,
         )
 
     def _has_strong_coordinate_pair_support(
@@ -713,6 +740,7 @@ class RobustTopologyInferrer:
             "watson_crick_or_wobble": -120.0,
             "hoogsteen_like": -90.0,
             "lw_exemplar": -80.0,
+            "provisional_contact": -70.0,
             "hbonded_noncanonical": -50.0,
         }.get(pair_family, -20.0)
         return family_priority - 2.0 * hbond_count + mean_distance + 0.05 * center_distance
@@ -1008,7 +1036,10 @@ class RobustTopologyInferrer:
         ):
             if subunit_1 <= 0 or subunit_2 <= 0:
                 continue
-            if (1, level) in pair_geometry_markers:
+            if any(
+                (strand_id, level) in pair_geometry_markers
+                for strand_id in (1, 2)
+            ):
                 continue
             residue_1 = self.residues[subunit_1]
             residue_2 = self.residues[subunit_2]
@@ -1080,19 +1111,29 @@ class RobustTopologyInferrer:
     ) -> Optional[Tuple[int, int, str]]:
         residue_1 = self.residues[candidate.first]
         residue_2 = self.residues[candidate.second]
-        atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
-        strong_contact_support = self._has_strong_coordinate_pair_support(
-            residue_1,
-            residue_2,
+        fitted_geometry_eligible = bool(
+            candidate.fitted_geometry
+            and candidate.fitted_geometry.get("eligible")
         )
+        strong_contact_support = candidate.strong_contact_support
+
+        def has_strong_contact_support() -> bool:
+            nonlocal strong_contact_support
+            if strong_contact_support is None:
+                strong_contact_support = self._has_strong_coordinate_pair_support(
+                    residue_1,
+                    residue_2,
+                )
+            return bool(strong_contact_support)
+
         if (
             candidate.fitted_geometry is not None
-            and not bool(candidate.fitted_geometry["eligible"])
+            and not fitted_geometry_eligible
             and not (
                 candidate.lw_classification is not None
                 and candidate.lw_classification.confident
             )
-            and not strong_contact_support
+            and not has_strong_contact_support()
         ):
             return None
 
@@ -1109,12 +1150,11 @@ class RobustTopologyInferrer:
         # shared edge atoms. This is especially important for mismatches:
         # non-complementary identity does not make a cWW pose trans-WW/cSW.
         fitted_cww = self._is_fitted_cww_pose(candidate.fitted_geometry)
-        if tag:
-            pass
-        elif fitted_cww:
+        if not tag and fitted_cww:
             edge_1 = edge_2 = "W"
             orientation = "c"
-        else:
+        elif not tag:
+            atom_pairs = candidate.atom_pairs or self._marker_atom_pairs(candidate)
             if not atom_pairs:
                 return None
             edge_1 = self._dominant_edge_for_atoms(
@@ -1147,26 +1187,7 @@ class RobustTopologyInferrer:
                 edge_1 == edge_2 == "W"
                 and orientation == "t"
                 and len(atom_pairs) >= 2
-                and (
-                    strong_contact_support
-                    or (
-                        candidate.fitted_geometry is not None
-                        and bool(candidate.fitted_geometry.get("eligible"))
-                    )
-                )
-            )
-            unresolved_contact_geometry = (
-                bool(atom_pairs)
-                and bool(edge_1)
-                and bool(edge_2)
-                and bool(orientation)
-                and (
-                    strong_contact_support
-                    or (
-                        candidate.fitted_geometry is not None
-                        and bool(candidate.fitted_geometry.get("eligible"))
-                    )
-                )
+                and (fitted_geometry_eligible or has_strong_contact_support())
             )
             confident_named_hoogsteen = (
                 candidate.is_hoogsteen or candidate.pair_family == "hoogsteen_like"
@@ -1178,7 +1199,7 @@ class RobustTopologyInferrer:
             # eligible fitted planes but unresolved contacts must retain an
             # explicit family-neutral marker.
             if not (confident_trans_ww or confident_named_hoogsteen):
-                if unresolved_contact_geometry:
+                if fitted_geometry_eligible or has_strong_contact_support():
                     tag = "unresolved"
                 else:
                     return None

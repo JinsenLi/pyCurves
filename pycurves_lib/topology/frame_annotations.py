@@ -21,7 +21,21 @@ def infer_frame_pair_observations(
 ) -> List[Dict[str, Any]]:
     """Return coordinate-only pair presence and mode for one trajectory frame."""
     inferrer = RobustTopologyInferrer(molecule)
-    candidates = inferrer.coordinate_pair_candidates(one_to_one=True)
+    provisional_pairs = set()
+    for row in reference_rows:
+        if not (
+            row.get("input_geometry_tag") == "unresolved"
+            or row.get("frame_mode") == "provisional_contact_geometry"
+            or row.get("geometry_resolution_status") == "unresolved"
+        ):
+            continue
+        key = _reference_pair_key(row)
+        if key is not None:
+            provisional_pairs.add(key)
+    candidates = inferrer.coordinate_pair_candidates(
+        one_to_one=True,
+        provisional_pairs=provisional_pairs,
+    )
     remaining = {
         _pair_key(candidate.first, candidate.second): candidate
         for candidate in candidates
@@ -120,6 +134,8 @@ def _candidate_observation(
         diagnostics.append("possible_hoogsteen")
     if candidate.pair_family == "hbonded_noncanonical":
         diagnostics.append("generic_donor_acceptor_contacts")
+    elif candidate.pair_family == "provisional_contact":
+        diagnostics.append("provisional_single_contact")
 
     row: Dict[str, Any] = {
         "pair_id": f"{min(first_subunit, second_subunit)}:{max(first_subunit, second_subunit)}",
@@ -152,6 +168,8 @@ def _candidate_observation(
             if lw is not None and lw.confident
             else "fitted_standard_frames"
             if observed_lw == "cWW"
+            else "provisional_atom_contact_geometry"
+            if candidate.pair_family == "provisional_contact"
             else "donor_acceptor_contacts"
         ),
         "is_canonical": False,
