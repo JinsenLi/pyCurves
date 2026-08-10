@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -21,12 +22,19 @@ def _resolve_path(path_text: Optional[str], json_path: Path) -> Optional[Path]:
 
 
 def _structure_format(path: Path) -> str:
-    suffix = path.suffix.lower()
+    suffix = path.with_suffix("").suffix.lower() if path.suffix.lower() == ".gz" else path.suffix.lower()
     if suffix in {".cif", ".mmcif"}:
         return "mmcif"
     if suffix in {".pdb", ".ent"}:
         return "pdb"
     return suffix.lstrip(".") or "pdb"
+
+
+def _read_structure_text(path: Path) -> str:
+    if path.suffix.lower() == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+            return handle.read()
+    return path.read_text(encoding="utf-8", errors="ignore")
 
 
 def _load_results(json_path: Path) -> Dict[str, Any]:
@@ -74,7 +82,7 @@ def write_viewer(json_file: str, output_file: Optional[str] = None, structure_fi
             "Could not find the source PDB/mmCIF file. Pass it explicitly with --structure."
         )
 
-    structure_text = structure_path.read_text(encoding="utf-8", errors="ignore")
+    structure_text = _read_structure_text(structure_path)
     output_path = Path(output_file) if output_file else json_path.with_suffix(".viewer.html")
     html = render_viewer_html(
         results=results,
