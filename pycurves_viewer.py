@@ -326,7 +326,6 @@ HTML_TEMPLATE = r"""<!doctype html>
       background: #c58a10;
     }
     .sequence-scroll {
-      --sequence-cell: 28px;
       overflow-x: auto;
       padding: 2px 0 4px;
       scrollbar-gutter: stable;
@@ -351,9 +350,9 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
     .sequence-base,
     .sequence-gap {
-      width: var(--sequence-cell);
+      width: 28px;
       height: 38px;
-      flex: 0 0 var(--sequence-cell);
+      flex: 0 0 28px;
     }
     .sequence-base {
       position: relative;
@@ -363,10 +362,9 @@ HTML_TEMPLATE = r"""<!doctype html>
       padding: 11px 0 0;
       color: var(--base-color);
       background: transparent;
-      font-size: clamp(11px, calc(var(--sequence-cell) * 0.6), 17px);
+      font-size: 17px;
       font-weight: 700;
       line-height: 22px;
-      overflow: hidden;
     }
     .sequence-base::before {
       content: attr(data-residue);
@@ -375,7 +373,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       left: 0;
       width: 100%;
       color: #8a93a3;
-      font-size: clamp(7px, calc(var(--sequence-cell) * 0.32), 9px);
+      font-size: 9px;
       font-weight: 400;
       line-height: 11px;
     }
@@ -396,30 +394,17 @@ HTML_TEMPLATE = r"""<!doctype html>
       background: #eaf3fb;
     }
     .sequence-controls {
-      display: grid;
-      grid-template-columns: minmax(220px, 1fr) minmax(190px, 240px);
-      gap: 12px;
-      padding-left: 70px;
-    }
-    .sequence-control {
       display: flex;
       align-items: center;
-      gap: 7px;
-      min-width: 0;
+      gap: 8px;
+      padding-left: 70px;
     }
-    .sequence-control label {
-      min-height: 0;
-      color: var(--muted);
-      cursor: default;
-      font-size: 11px;
-      white-space: nowrap;
-    }
-    .sequence-control input {
-      min-width: 0;
+    .sequence-controls input {
+      min-width: 160px;
       flex: 1;
     }
-    .sequence-control output {
-      min-width: 42px;
+    .sequence-controls output {
+      min-width: 58px;
       color: var(--muted);
       font-size: 11px;
       text-align: right;
@@ -547,10 +532,6 @@ HTML_TEMPLATE = r"""<!doctype html>
         grid-column: 1;
         grid-row: 3;
       }
-      .sequence-controls {
-        grid-template-columns: 1fr;
-        padding-left: 0;
-      }
       .parameters-panel {
         grid-column: 1;
         grid-row: 4;
@@ -602,16 +583,8 @@ HTML_TEMPLATE = r"""<!doctype html>
       </div>
       <div class="sequence-scroll" id="sequenceViewer"></div>
       <div class="sequence-controls">
-        <div class="sequence-control">
-          <label for="sequenceSlider">Position</label>
-          <input id="sequenceSlider" type="range">
-          <output id="sequenceLevel" for="sequenceSlider"></output>
-        </div>
-        <div class="sequence-control">
-          <label for="sequenceBlockSize">Base width</label>
-          <input id="sequenceBlockSize" type="range" min="14" max="42" value="28">
-          <output id="sequenceBlockSizeValue" for="sequenceBlockSize">28 px</output>
-        </div>
+        <input id="sequenceSlider" type="range" aria-label="DNA sequence level">
+        <output id="sequenceLevel" for="sequenceSlider"></output>
       </div>
     </section>
     <section class="parameters-panel" aria-labelledby="parametersTitle">
@@ -1230,14 +1203,6 @@ HTML_TEMPLATE = r"""<!doctype html>
       }
     }
 
-    function setSequenceBlockSize(value) {
-      const width = Math.max(14, Math.min(42, Number(value) || 28));
-      document.getElementById("sequenceViewer").style.setProperty("--sequence-cell", `${width}px`);
-      document.getElementById("sequenceBlockSizeValue").value = `${width} px`;
-      const selected = document.querySelector(".sequence-base.selected");
-      if (selected) selected.scrollIntoView({block: "nearest", inline: "center"});
-    }
-
     function renderSequenceNavigator() {
       const bases = VIS.base_origins || [];
       const panel = document.querySelector(".sequence-panel");
@@ -1296,9 +1261,6 @@ HTML_TEMPLATE = r"""<!doctype html>
       slider.value = minLevel;
       slider.addEventListener("input", event => highlightSequenceLevel(event.target.value));
       slider.addEventListener("change", event => selectSequenceLevel(event.target.value, true));
-      const blockSize = document.getElementById("sequenceBlockSize");
-      blockSize.addEventListener("input", event => setSequenceBlockSize(event.target.value));
-      setSequenceBlockSize(blockSize.value);
       highlightSequenceLevel(minLevel);
     }
 
