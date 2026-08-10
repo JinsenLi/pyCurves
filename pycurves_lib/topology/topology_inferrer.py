@@ -1238,7 +1238,6 @@ class RobustTopologyInferrer:
         measured_noncanonical = (edge_1, edge_2) != ("W", "W") or orientation == "t"
         should_write = (
             candidate.is_hoogsteen
-            or candidate.pair_family == "hbonded_noncanonical"
             or not self._is_complementary(residue_1.base, residue_2.base)
             or measured_noncanonical
             or tag == "unresolved"
