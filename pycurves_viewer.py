@@ -134,7 +134,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     .app {
       display: grid;
       grid-template-columns: 290px minmax(0, 1fr);
-      grid-template-rows: minmax(320px, 1fr) minmax(220px, 34vh);
+      grid-template-rows: minmax(260px, 1fr) auto minmax(220px, 32vh);
       height: 100vh;
     }
     aside {
@@ -279,9 +279,139 @@ HTML_TEMPLATE = r"""<!doctype html>
       background: #eaf3fb;
       font-weight: 700;
     }
-    .parameters-panel {
+    .sequence-panel {
       grid-column: 2;
       grid-row: 2;
+      min-width: 0;
+      padding: 8px 14px 9px;
+      border-top: 1px solid var(--line);
+      background: #ffffff;
+    }
+    .sequence-panel[hidden] {
+      display: none;
+    }
+    .sequence-head {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px 14px;
+      margin-bottom: 5px;
+    }
+    .sequence-head h2 {
+      margin: 0;
+    }
+    .sequence-summary {
+      flex: 1;
+      min-width: 220px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .sequence-legend {
+      display: flex;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .legend-mark {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 4px;
+      border-radius: 50%;
+    }
+    .legend-mark.critical {
+      background: #c23b22;
+    }
+    .legend-mark.warning {
+      background: #c58a10;
+    }
+    .sequence-scroll {
+      overflow-x: auto;
+      padding: 2px 0 4px;
+      scrollbar-gutter: stable;
+    }
+    .sequence-row {
+      display: flex;
+      width: max-content;
+      min-width: 100%;
+      align-items: flex-end;
+    }
+    .sequence-strand {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      width: 70px;
+      flex: 0 0 70px;
+      padding: 0 7px 7px 0;
+      color: var(--muted);
+      background: #ffffff;
+      font-size: 10px;
+      text-align: right;
+    }
+    .sequence-base,
+    .sequence-gap {
+      width: 28px;
+      height: 38px;
+      flex: 0 0 28px;
+    }
+    .sequence-base {
+      position: relative;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 4px;
+      padding: 11px 0 0;
+      color: var(--base-color);
+      background: transparent;
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 22px;
+    }
+    .sequence-base::before {
+      content: attr(data-residue);
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      color: #8a93a3;
+      font-size: 9px;
+      font-weight: 400;
+      line-height: 11px;
+    }
+    .sequence-base:hover {
+      background: #f1f5f9;
+    }
+    .sequence-base.critical {
+      border-bottom-color: #c23b22;
+      background: #fff2ee;
+    }
+    .sequence-base.warning {
+      border-bottom-color: #c58a10;
+      background: #fff8e7;
+    }
+    .sequence-base.selected {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      background: #eaf3fb;
+    }
+    .sequence-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-left: 70px;
+    }
+    .sequence-controls input {
+      min-width: 160px;
+      flex: 1;
+    }
+    .sequence-controls output {
+      min-width: 58px;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+    }
+    .parameters-panel {
+      grid-column: 2;
+      grid-row: 3;
       display: flex;
       min-width: 0;
       min-height: 0;
@@ -357,6 +487,25 @@ HTML_TEMPLATE = r"""<!doctype html>
       color: #111827;
       font-weight: 700;
     }
+    .annotation-badge {
+      display: inline-block;
+      min-width: 28px;
+      margin-right: 6px;
+      padding: 1px 4px;
+      border-radius: 999px;
+      color: #ffffff;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 14px;
+      text-align: center;
+      vertical-align: 1px;
+    }
+    .annotation-badge.critical {
+      background: #c23b22;
+    }
+    .annotation-badge.warning {
+      background: #c58a10;
+    }
     .empty {
       padding: 10px;
       color: var(--muted);
@@ -365,7 +514,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     @media (max-width: 820px) {
       .app {
         grid-template-columns: 1fr;
-        grid-template-rows: auto minmax(420px, 55vh) minmax(240px, 35vh);
+        grid-template-rows: auto minmax(420px, 55vh) auto minmax(240px, 35vh);
         height: auto;
         min-height: 100vh;
       }
@@ -379,9 +528,13 @@ HTML_TEMPLATE = r"""<!doctype html>
         grid-column: 1;
         grid-row: 2;
       }
-      .parameters-panel {
+      .sequence-panel {
         grid-column: 1;
         grid-row: 3;
+      }
+      .parameters-panel {
+        grid-column: 1;
+        grid-row: 4;
       }
     }
   </style>
@@ -419,6 +572,21 @@ HTML_TEMPLATE = r"""<!doctype html>
     <main>
       <div id="viewer"></div>
     </main>
+    <section class="sequence-panel" aria-labelledby="sequenceTitle">
+      <div class="sequence-head">
+        <h2 id="sequenceTitle">DNA sequence</h2>
+        <div class="sequence-summary" id="sequenceSummary">Choose a base to inspect it in 3D.</div>
+        <div class="sequence-legend" aria-label="Annotation legend">
+          <span><i class="legend-mark critical"></i>Critical</span>
+          <span><i class="legend-mark warning"></i>Review</span>
+        </div>
+      </div>
+      <div class="sequence-scroll" id="sequenceViewer"></div>
+      <div class="sequence-controls">
+        <input id="sequenceSlider" type="range" aria-label="DNA sequence level">
+        <output id="sequenceLevel" for="sequenceSlider"></output>
+      </div>
+    </section>
     <section class="parameters-panel" aria-labelledby="parametersTitle">
       <div class="parameters-head">
         <h2 id="parametersTitle">DNA shape</h2>
@@ -948,7 +1116,152 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
 
     function isUnusual(pair) {
-      return pair.is_hoogsteen || pair.is_mismatch || pair.has_modified_base || !pair.shape_parameters_supported || !pair.is_canonical;
+      return Boolean(pairAnnotation(pair));
+    }
+
+    function pairAnnotation(pair) {
+      if (!pair) return null;
+      const observed = String(pair.observed_lw_family || "").trim();
+      const family = String(pair.pair_family || "").trim().toLowerCase();
+      const status = String(pair.pair_status || "present").trim().toLowerCase();
+      if (pair.has_modified_base) {
+        return {kind: "critical", label: "Modified", detail: "Modified base in pair"};
+      }
+      if (pair.is_hoogsteen || family.includes("hoogsteen")) {
+        return {kind: "critical", label: "Hoogsteen", detail: "Hoogsteen base pair"};
+      }
+      if (pair.is_mismatch || family === "mismatch") {
+        return {kind: "critical", label: "Mismatch", detail: "Mismatched base pair"};
+      }
+      if ((observed && observed.toLowerCase() !== "cww") || family.includes("noncanonical")) {
+        const label = observed && observed.toLowerCase() !== "cww" ? observed : "Non-WC";
+        return {kind: "critical", label, detail: `Non-canonical contact${observed ? ": " + observed : ""}`};
+      }
+      if (!pair.shape_parameters_supported) {
+        return {kind: "critical", label: "No shape", detail: "Shape parameters are unsupported for this pair"};
+      }
+      if (status !== "present") {
+        return {kind: "warning", label: status || "Review", detail: `Pair status: ${status || "uncertain"}`};
+      }
+      const flags = (pair.diagnostic_flags || []).filter(Boolean);
+      if (flags.length) {
+        return {kind: "warning", label: "Review", detail: flags.map(flag => String(flag).replaceAll("_", " ")).join("; ")};
+      }
+      if (!pair.is_canonical) {
+        return {kind: "critical", label: "Non-WC", detail: "Non-canonical base pair"};
+      }
+      return null;
+    }
+
+    function highlightSequenceLevel(level) {
+      const numericLevel = Number(level);
+      document.querySelectorAll(".sequence-base.selected").forEach(base => base.classList.remove("selected"));
+      const selectedBases = document.querySelectorAll(`.sequence-base[data-level="${numericLevel}"]`);
+      selectedBases.forEach(base => base.classList.add("selected"));
+      if (selectedBases.length) selectedBases[0].scrollIntoView({block: "nearest", inline: "center"});
+      const slider = document.getElementById("sequenceSlider");
+      slider.value = numericLevel;
+      document.getElementById("sequenceLevel").value = `Level ${numericLevel}`;
+      const pair = pairAtLevel(numericLevel);
+      const annotation = pairAnnotation(pair);
+      const bases = (VIS.base_origins || []).filter(base => Number(base.level) === numericLevel);
+      const labels = bases.map(base => `${base.chain_id || "S" + base.strand}:${base.parent_base || base.residue_name}${base.residue_id}`).join(" / ");
+      document.getElementById("sequenceSummary").textContent = pair
+        ? `Level ${numericLevel} · ${pair.label || labels}${annotation ? " · " + annotation.detail : ""}`
+        : `Level ${numericLevel} · ${labels || "no base"} · no inferred base pair`;
+    }
+
+    function selectSequenceLevel(level, focusViewer = false) {
+      const numericLevel = Number(level);
+      highlightSequenceLevel(numericLevel);
+      const pair = pairAtLevel(numericLevel);
+      activeTab = "base_pair";
+      document.querySelectorAll(".tabs button").forEach(button => {
+        button.classList.toggle("active", button.dataset.tab === activeTab);
+      });
+      const entry = tableRowsForTab("base_pair").find(row => Number(row.level) === numericLevel);
+      selectedInspection = entry
+        ? Object.assign({}, entry, {type: pair ? "base_pair" : "sequence", feature: null, featureLabel: null, featureValue: null})
+        : {id: `sequence:${numericLevel}`, type: "sequence", level: numericLevel};
+      renderParameterTable();
+      redrawSelection();
+      const tableRow = document.querySelector("#parameterTable tbody tr.selected");
+      if (tableRow) tableRow.scrollIntoView({block: "nearest"});
+      if (focusViewer && viewer) {
+        const bases = pair
+          ? [pair.first, pair.second]
+          : (VIS.base_origins || []).filter(base => Number(base.level) === numericLevel);
+        const selections = bases.filter(Boolean).map(base => {
+          const selection = {resi: Number(base.residue_id)};
+          if (base.chain_id) selection.chain = base.chain_id;
+          return selection;
+        });
+        if (selections.length) {
+          viewer.center({or: selections}, 250);
+          viewer.render();
+        }
+      }
+    }
+
+    function renderSequenceNavigator() {
+      const bases = VIS.base_origins || [];
+      const panel = document.querySelector(".sequence-panel");
+      if (!bases.length) {
+        panel.hidden = true;
+        return;
+      }
+      const groups = new Map();
+      bases.forEach(base => {
+        const strand = Number(base.strand || 0);
+        if (!groups.has(strand)) groups.set(strand, new Map());
+        groups.get(strand).set(Number(base.level), base);
+      });
+      const levels = bases.map(base => Number(base.level));
+      const minLevel = Math.min(...levels);
+      const maxLevel = Math.max(...levels);
+      const pairByLevel = new Map((VIS.base_pairs || []).map(pair => [Number(pair.level), pair]));
+      const container = document.getElementById("sequenceViewer");
+      container.replaceChildren();
+      Array.from(groups.entries()).sort((left, right) => left[0] - right[0]).forEach(([strand, basesByLevel], index) => {
+        const row = document.createElement("div");
+        row.className = "sequence-row";
+        const strandLabel = document.createElement("span");
+        strandLabel.className = "sequence-strand";
+        strandLabel.textContent = `S${strand} ${index === 0 ? "5′→3′" : "3′→5′"}`;
+        row.appendChild(strandLabel);
+        for (let level = minLevel; level <= maxLevel; level += 1) {
+          const base = basesByLevel.get(level);
+          if (!base) {
+            const gap = document.createElement("span");
+            gap.className = "sequence-gap";
+            row.appendChild(gap);
+            continue;
+          }
+          const button = document.createElement("button");
+          const pair = pairByLevel.get(level);
+          const annotation = pair ? pairAnnotation(pair) : (groups.size > 1 ? {kind: "warning", detail: "No inferred base pair"} : null);
+          const letter = String(base.parent_base || base.residue_name || "?").replace(/^D/i, "").slice(0, 1).toUpperCase();
+          button.type = "button";
+          button.className = `sequence-base${annotation ? " " + annotation.kind : ""}`;
+          button.dataset.level = level;
+          button.dataset.residue = base.residue_id;
+          button.style.setProperty("--base-color", baseColor(letter));
+          button.textContent = letter;
+          button.title = `${base.chain_id || "Strand " + strand}:${base.residue_name}${base.residue_id} · level ${level}${annotation ? " · " + annotation.detail : ""}`;
+          button.setAttribute("aria-label", button.title);
+          button.addEventListener("click", () => selectSequenceLevel(level, true));
+          row.appendChild(button);
+        }
+        container.appendChild(row);
+      });
+      const slider = document.getElementById("sequenceSlider");
+      slider.min = minLevel;
+      slider.max = maxLevel;
+      slider.step = 1;
+      slider.value = minLevel;
+      slider.addEventListener("input", event => highlightSequenceLevel(event.target.value));
+      slider.addEventListener("change", event => selectSequenceLevel(event.target.value, true));
+      highlightSequenceLevel(minLevel);
     }
 
     function clearOverlays() {
@@ -1178,32 +1491,47 @@ HTML_TEMPLATE = r"""<!doctype html>
         return;
       }
       const headers = headersForTab(activeTab);
+      const annotations = rows.map(entry => {
+        if (activeTab !== "base_pair") return null;
+        const pair = pairAtLevel(entry.level, entry.partnerStrand);
+        return pairAnnotation(pair) || (!pair && baseAtLevel(1, entry.level)
+          ? {kind: "warning", label: "Unpaired", detail: "No inferred base pair"}
+          : null);
+      });
       container.innerHTML = `
         <table>
           <thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead>
           <tbody>
-            ${rows.map((entry, index) => `
-              <tr data-index="${index}" class="${selectedInspection && selectedInspection.id === entry.id ? "selected" : ""}">
+            ${rows.map((entry, index) => {
+              const annotation = annotations[index];
+              return `
+              <tr data-index="${index}" class="${selectedInspection && selectedInspection.id === entry.id ? "selected" : ""}${annotation ? " annotation-" + annotation.kind : ""}">
                 ${entry.cells.map((cell, cellIndex) => {
                   const feature = (entry.features || [])[cellIndex] || "";
                   const selected = feature && selectedInspection && selectedInspection.id === entry.id && selectedInspection.feature === feature;
-                  return `<td data-feature="${feature}" class="${selected ? "selected-feature" : ""}">${cell}</td>`;
+                  const badge = cellIndex === 0 && annotation ? `<span class="annotation-badge ${annotation.kind}">${annotation.label}</span>` : "";
+                  return `<td data-feature="${feature}" class="${selected ? "selected-feature" : ""}">${badge}${cell}</td>`;
                 }).join("")}
               </tr>
-            `).join("")}
+            `;
+            }).join("")}
           </tbody>
         </table>
       `;
       container.querySelectorAll("tbody tr").forEach(row => {
+        const annotation = annotations[Number(row.dataset.index)];
+        if (annotation) row.title = annotation.detail;
         row.addEventListener("click", event => {
           const entry = rows[Number(row.dataset.index)];
           const cell = event.target.closest("td");
           const feature = cell ? (cell.dataset.feature || null) : null;
           selectedInspection = Object.assign({}, entry, {
+            type: activeTab === "base_pair" && !pairAtLevel(entry.level, entry.partnerStrand) ? "sequence" : entry.type,
             feature,
             featureLabel: feature ? featureLabel(feature) : null,
             featureValue: feature ? entry.row[feature] : null
           });
+          highlightSequenceLevel(entry.level);
           renderParameterTable();
           redrawSelection();
         });
@@ -1272,6 +1600,12 @@ HTML_TEMPLATE = r"""<!doctype html>
       drawFrameGlyph(frame, 1.65, "#111827");
       if (entry.feature && drawFeatureMeasurement(frame, entry.feature, entry.featureValue, color)) return;
       addValueLabel(pair.frame_midpoint || pair.midpoint, `Pair frame level ${entry.level}`, color);
+    }
+
+    function drawSelectedSequence(entry) {
+      const bases = (VIS.base_origins || []).filter(base => Number(base.level) === Number(entry.level));
+      bases.forEach(base => drawBasePlate(base, null, "#ff2f00", {fillOpacity: 0.5, edgeRadius: 0.09}));
+      if (bases.length) addValueLabel(bases[0], `Sequence level ${entry.level}`, "#ff2f00");
     }
 
     function drawSelectedBasePairAxis(entry) {
@@ -1393,6 +1727,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function drawInspectionSelection() {
       if (!selectedInspection) return;
+      if (selectedInspection.type === "sequence") drawSelectedSequence(selectedInspection);
       if (selectedInspection.type === "base_pair") drawSelectedBasePair(selectedInspection);
       if (selectedInspection.type === "base_pair_axis") drawSelectedBasePairAxis(selectedInspection);
       if (selectedInspection.type === "base_axis") drawSelectedBaseAxis(selectedInspection);
@@ -1459,6 +1794,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     window.addEventListener("resize", () => {
       if (viewer) viewer.resize();
     });
+    renderSequenceNavigator();
     renderParameterTable();
     window.addEventListener("load", initialize);
   </script>
