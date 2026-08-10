@@ -11,10 +11,6 @@ def _all_finite(values) -> bool:
     return bool(np.all(np.isfinite(np.asarray(values, dtype=float))))
 
 
-def _level_has_pair(ni_map, level: int) -> bool:
-    return int(np.count_nonzero(np.asarray(ni_map)[:, level - 1] > 0)) >= 2
-
-
 class VisualizationPayloadMixin:
     def _visualization_payload(self, records: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Geometry overlays for external viewers.
@@ -173,8 +169,6 @@ class VisualizationPayloadMixin:
         if ctx.cfg.comb:
             _, _, axis_start, axis_end = calc._axis_bounds(0)
             for level in range(axis_start, axis_end + 1):
-                if not _level_has_pair(ctx.ni_map, level):
-                    continue
                 coords = np.asarray(p.ox[level], dtype=float)
                 direction = np.asarray(p.ux[level], dtype=float)
                 if not _all_finite(coords) or not _all_finite(direction):
