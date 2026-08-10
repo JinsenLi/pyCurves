@@ -24,7 +24,7 @@ def _resolve_path(path_text: Optional[str], json_path: Path) -> Optional[Path]:
 def _structure_format(path: Path) -> str:
     suffix = path.with_suffix("").suffix.lower() if path.suffix.lower() == ".gz" else path.suffix.lower()
     if suffix in {".cif", ".mmcif"}:
-        return "mmcif"
+        return "cif"
     if suffix in {".pdb", ".ent"}:
         return "pdb"
     return suffix.lstrip(".") or "pdb"
@@ -133,17 +133,22 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
     .app {
       display: grid;
-      grid-template-columns: 420px minmax(0, 1fr);
+      grid-template-columns: 290px minmax(0, 1fr);
+      grid-template-rows: minmax(320px, 1fr) minmax(220px, 34vh);
       height: 100vh;
     }
     aside {
+      grid-row: 1 / -1;
       border-right: 1px solid var(--line);
       background: var(--panel);
       padding: 18px 16px;
       overflow: auto;
     }
     main {
+      grid-column: 2;
+      grid-row: 1;
       min-width: 0;
+      min-height: 0;
       position: relative;
     }
     h1 {
@@ -213,6 +218,39 @@ HTML_TEMPLATE = r"""<!doctype html>
     button:hover {
       border-color: var(--accent);
     }
+    .view-actions {
+      display: flex;
+      margin: 14px 0;
+    }
+    .view-actions button {
+      width: auto;
+      padding: 0 12px;
+    }
+    .display-options {
+      margin-top: 14px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 0;
+    }
+    .display-options summary {
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .option-grid {
+      display: grid;
+      gap: 2px;
+      padding-top: 8px;
+    }
+    .select-label {
+      display: block;
+      min-height: 0;
+      margin: 7px 0 4px;
+      color: var(--muted);
+      cursor: default;
+      font-size: 12px;
+    }
     #viewer {
       position: absolute;
       inset: 0;
@@ -224,35 +262,58 @@ HTML_TEMPLATE = r"""<!doctype html>
       line-height: 1.4;
     }
     .tabs {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-      margin-bottom: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 0;
     }
     .tabs button {
+      width: auto;
       height: 30px;
       font-size: 12px;
-      padding: 0 6px;
+      padding: 0 10px;
     }
     .tabs button.active {
-      border-color: var(--accent);
-      color: #ffffff;
-      background: var(--accent);
+      border-color: #9fc4e5;
+      color: var(--accent);
+      background: #eaf3fb;
+      font-weight: 700;
+    }
+    .parameters-panel {
+      grid-column: 2;
+      grid-row: 2;
+      display: flex;
+      min-width: 0;
+      min-height: 0;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 14px 12px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+    .parameters-head {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+    }
+    .parameters-head h2 {
+      margin: 0;
     }
     .table-wrap {
-      max-height: 260px;
+      flex: 1;
+      min-height: 0;
       overflow: auto;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: #ffffff;
       scrollbar-gutter: stable both-edges;
-      padding-right: 18px;
     }
     table {
       min-width: 720px;
+      width: 100%;
       border-collapse: collapse;
       font-size: 12px;
-      margin-right: 18px;
     }
     th,
     td {
@@ -301,14 +362,26 @@ HTML_TEMPLATE = r"""<!doctype html>
       color: var(--muted);
       font-size: 13px;
     }
-    @media (max-width: 780px) {
+    @media (max-width: 820px) {
       .app {
         grid-template-columns: 1fr;
-        grid-template-rows: auto minmax(420px, 1fr);
+        grid-template-rows: auto minmax(420px, 55vh) minmax(240px, 35vh);
+        height: auto;
+        min-height: 100vh;
       }
       aside {
+        grid-column: 1;
+        grid-row: 1;
         border-right: 0;
         border-bottom: 1px solid var(--line);
+      }
+      main {
+        grid-column: 1;
+        grid-row: 2;
+      }
+      .parameters-panel {
+        grid-column: 1;
+        grid-row: 3;
       }
     }
   </style>
@@ -318,41 +391,48 @@ HTML_TEMPLATE = r"""<!doctype html>
     <aside>
       <h1 id="title"></h1>
       <div class="meta" id="meta"></div>
-
-      <h2>Display</h2>
-      <label><input type="checkbox" id="showOtherChains" checked> Show chains other than DNA</label>
-      <label><input type="checkbox" id="showCartoon" checked> Cartoon</label>
-      <label><input type="checkbox" id="showAllAtoms"> All atoms</label>
-      <select id="colorMode" aria-label="Color mode">
-        <option value="chain">Color by chain</option>
-        <option value="residue">Color by residue</option>
-        <option value="element">Color by element</option>
-      </select>
-      <label><input type="checkbox" id="showAxis" checked> Smoothed axis</label>
-      <label><input type="checkbox" id="showBackbone" checked> Backbone spline curve</label>
-      <label><input type="checkbox" id="showActualBlocks" checked> Actual base blocks</label>
-      <label><input type="checkbox" id="showAnalyticalBases"> Analytical base frames</label>
-      <label><input type="checkbox" id="showLabels"> Labels</label>
-      <label><input type="checkbox" id="showOnlyUnusual"> Only unusual pairs</label>
-
-      <h2>Parameters</h2>
-      <div class="tabs">
-        <button type="button" class="active" data-tab="base_pair">Base Pair</button>
-        <button type="button" data-tab="base_pair_axis">BP Axis</button>
-        <button type="button" data-tab="global_step">Global Step</button>
-        <button type="button" data-tab="local_step">Local Step</button>
-        <button type="button" data-tab="base_axis">Base Axis</button>
-        <button type="button" data-tab="groove">Groove</button>
+      <div class="view-actions">
+        <button id="resetView" type="button">Reset view</button>
       </div>
-      <div class="table-wrap" id="parameterTable"></div>
-
-      <h2>View</h2>
-      <button id="resetView" type="button">Reset View</button>
+      <details class="display-options">
+        <summary>Display options</summary>
+        <div class="option-grid">
+          <label><input type="checkbox" id="showOtherChains" checked> Show chains other than DNA</label>
+          <label><input type="checkbox" id="showCartoon" checked> Cartoon</label>
+          <label><input type="checkbox" id="showAllAtoms"> All atoms</label>
+          <label class="select-label" for="colorMode">Molecule color</label>
+          <select id="colorMode">
+            <option value="chain">By chain</option>
+            <option value="residue">By residue</option>
+            <option value="element">By element</option>
+          </select>
+          <label><input type="checkbox" id="showAxis" checked> Smoothed axis</label>
+          <label><input type="checkbox" id="showBackbone" checked> Backbone spline curve</label>
+          <label><input type="checkbox" id="showActualBlocks" checked> Actual base blocks</label>
+          <label><input type="checkbox" id="showAnalyticalBases"> Analytical base frames</label>
+          <label><input type="checkbox" id="showLabels"> Labels</label>
+          <label><input type="checkbox" id="showOnlyUnusual"> Only unusual pairs</label>
+        </div>
+      </details>
       <p class="load-error" id="loadError" hidden></p>
     </aside>
     <main>
       <div id="viewer"></div>
     </main>
+    <section class="parameters-panel" aria-labelledby="parametersTitle">
+      <div class="parameters-head">
+        <h2 id="parametersTitle">DNA shape</h2>
+        <div class="tabs">
+          <button type="button" class="active" data-tab="base_pair">Base Pair</button>
+          <button type="button" data-tab="base_pair_axis">BP Axis</button>
+          <button type="button" data-tab="global_step">Global Step</button>
+          <button type="button" data-tab="local_step">Local Step</button>
+          <button type="button" data-tab="base_axis">Base Axis</button>
+          <button type="button" data-tab="groove">Groove</button>
+        </div>
+      </div>
+      <div class="table-wrap" id="parameterTable"></div>
+    </section>
   </div>
 
   <script>
@@ -375,6 +455,9 @@ HTML_TEMPLATE = r"""<!doctype html>
     let viewer = null;
     let overlayShapes = [];
     let overlayLabels = [];
+    let selectionShapes = [];
+    let selectionLabels = [];
+    let drawingSelection = false;
     function initialParameterTab() {
       const params = VIS.parameters || {};
       if ((params.base_pair || []).length) return "base_pair";
@@ -463,8 +546,24 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
 
     function addShape(shape) {
-      overlayShapes.push(shape);
+      (drawingSelection ? selectionShapes : overlayShapes).push(shape);
       return shape;
+    }
+
+    function addLabel(label) {
+      (drawingSelection ? selectionLabels : overlayLabels).push(label);
+      return label;
+    }
+
+    function addCurve(points, color, radius, opacity = 1.0) {
+      if (!points || points.length < 2) return;
+      addShape(viewer.addCurve({
+        points: points.map(xyz),
+        radius,
+        color,
+        opacity,
+        smooth: 1
+      }));
     }
 
     function addSegment(a, b, color, radius, opacity = 1.0) {
@@ -629,12 +728,14 @@ HTML_TEMPLATE = r"""<!doctype html>
       const edgeOpacity = options.edgeOpacity ?? 0.95;
       const fillColor = options.fillColor || color;
       addFilledQuad(corners, fillColor, fillOpacity);
-      addSegment(corners[0], corners[1], outlineColor, edgeRadius, edgeOpacity);
-      addSegment(corners[1], corners[2], outlineColor, edgeRadius, edgeOpacity);
-      addSegment(corners[2], corners[3], outlineColor, edgeRadius, edgeOpacity);
-      addSegment(corners[3], corners[0], outlineColor, edgeRadius, edgeOpacity);
-      if (partner && options.highlightFacingEdge !== false) {
-        addSegment(corners[3], corners[0], outlineColor, edgeRadius * 1.9, 1.0);
+      if (options.outline !== false) {
+        addSegment(corners[0], corners[1], outlineColor, edgeRadius, edgeOpacity);
+        addSegment(corners[1], corners[2], outlineColor, edgeRadius, edgeOpacity);
+        addSegment(corners[2], corners[3], outlineColor, edgeRadius, edgeOpacity);
+        addSegment(corners[3], corners[0], outlineColor, edgeRadius, edgeOpacity);
+        if (partner && options.highlightFacingEdge !== false) {
+          addSegment(corners[3], corners[0], outlineColor, edgeRadius * 1.9, 1.0);
+        }
       }
     }
 
@@ -835,7 +936,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function addValueLabel(point, text, color = "#151a24") {
       if (!point || !text) return;
-      overlayLabels.push(viewer.addLabel(text, {
+      addLabel(viewer.addLabel(text, {
         position: xyz(point),
         fontSize: 11,
         fontColor: color,
@@ -853,8 +954,19 @@ HTML_TEMPLATE = r"""<!doctype html>
     function clearOverlays() {
       overlayShapes.forEach(shape => viewer.removeShape(shape));
       overlayLabels.forEach(label => viewer.removeLabel(label));
+      selectionShapes.forEach(shape => viewer.removeShape(shape));
+      selectionLabels.forEach(label => viewer.removeLabel(label));
       overlayShapes = [];
       overlayLabels = [];
+      selectionShapes = [];
+      selectionLabels = [];
+    }
+
+    function clearSelection() {
+      selectionShapes.forEach(shape => viewer.removeShape(shape));
+      selectionLabels.forEach(label => viewer.removeLabel(label));
+      selectionShapes = [];
+      selectionLabels = [];
     }
 
     function drawStructure() {
@@ -928,11 +1040,9 @@ HTML_TEMPLATE = r"""<!doctype html>
           ? strandColors[index % strandColors.length]
           : "#00a7c7";
         group.sort((a, b) => Number(a.level) - Number(b.level));
-        for (let i = 1; i < group.length; i += 1) {
-          addSegment(group[i - 1], group[i], "#07111f", 0.34, 0.28);
-          addSegment(group[i - 1], group[i], color, 0.23, 1.0);
-        }
-        group.forEach(point => addPoint(point, color, 0.34));
+        if (group.length === 1) addPoint(group[0], color, 0.34);
+        addCurve(group, "#07111f", 0.34, 0.28);
+        addCurve(group, color, 0.23, 1.0);
       });
     }
 
@@ -941,15 +1051,9 @@ HTML_TEMPLATE = r"""<!doctype html>
         const color = strandColors[index % strandColors.length];
         const points = (backbone.spline_points && backbone.spline_points.length > 1) ? backbone.spline_points : (backbone.points || []);
         const usingSpline = backbone.spline_points && backbone.spline_points.length > 1;
-        for (let i = 1; i < points.length; i += 1) {
-          addSegment(points[i - 1], points[i], "#101820", usingSpline ? 0.24 : 0.32, 0.42);
-          addSegment(points[i - 1], points[i], color, usingSpline ? 0.15 : 0.22, 1.0);
-        }
-        if (usingSpline) {
-          (backbone.points || []).forEach(point => addPoint(point, color, 0.16));
-        } else {
-          points.forEach(point => addPoint(point, color, 0.28));
-        }
+        if (points.length === 1) addPoint(points[0], color, usingSpline ? 0.16 : 0.28);
+        addCurve(points, "#101820", usingSpline ? 0.24 : 0.32, 0.42);
+        addCurve(points, color, usingSpline ? 0.15 : 0.22, 1.0);
       });
     }
 
@@ -1101,7 +1205,7 @@ HTML_TEMPLATE = r"""<!doctype html>
             featureValue: feature ? entry.row[feature] : null
           });
           renderParameterTable();
-          redraw();
+          redrawSelection();
         });
       });
     }
@@ -1113,7 +1217,7 @@ HTML_TEMPLATE = r"""<!doctype html>
         button.classList.toggle("active", button.dataset.tab === tab);
       });
       renderParameterTable();
-      redraw();
+      redrawSelection();
     }
 
     function drawActualBlocks() {
@@ -1124,11 +1228,11 @@ HTML_TEMPLATE = r"""<!doctype html>
         const color = pairColor(pair);
         const first = actualBlockForPair(pair.first, pair);
         const second = actualBlockForPair(pair.second, pair);
-        drawBasePlate(first, second, color);
-        drawBasePlate(second, first, color);
+        drawBasePlate(first, second, color, {outline: false});
+        drawBasePlate(second, first, color, {outline: false});
         addSegment(pair.first, pair.second, color, pair.is_canonical ? 0.05 : 0.08, pair.is_canonical ? 0.35 : 0.7);
         if (showLabels && pair.midpoint) {
-          overlayLabels.push(viewer.addLabel(pair.label || `Level ${pair.level}`, {
+          addLabel(viewer.addLabel(pair.label || `Level ${pair.level}`, {
             position: xyz(pair.midpoint),
             fontSize: 10,
             fontColor: "#162033",
@@ -1296,6 +1400,18 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (selectedInspection.type === "groove") drawSelectedGroove(selectedInspection);
     }
 
+    function redrawSelection() {
+      if (!viewer) return;
+      clearSelection();
+      drawingSelection = true;
+      try {
+        drawInspectionSelection();
+      } finally {
+        drawingSelection = false;
+      }
+      viewer.render();
+    }
+
     function redraw() {
       if (!viewer) return;
       clearOverlays();
@@ -1304,7 +1420,12 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (document.getElementById("showBackbone").checked) drawBackbones();
       if (document.getElementById("showActualBlocks").checked) drawActualBlocks();
       if (document.getElementById("showAnalyticalBases").checked) drawAnalyticalBaseFrames();
-      drawInspectionSelection();
+      drawingSelection = true;
+      try {
+        drawInspectionSelection();
+      } finally {
+        drawingSelection = false;
+      }
       viewer.render();
     }
 
@@ -1334,6 +1455,9 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (!viewer) return;
       viewer.zoomTo();
       viewer.render();
+    });
+    window.addEventListener("resize", () => {
+      if (viewer) viewer.resize();
     });
     renderParameterTable();
     window.addEventListener("load", initialize);
