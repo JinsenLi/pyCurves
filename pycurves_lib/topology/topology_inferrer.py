@@ -991,6 +991,23 @@ class RobustTopologyInferrer:
         )
         self._collapse_opposing_internal_gap_pairs(row_1, row_2)
 
+        # Sparse contact anchors may interleave partner-only levels with holes
+        # in the primary strand. Such a map cannot define one continuous axis.
+        if not self._primary_level_path_is_contiguous(row_1, primary_strand):
+            partner_by_primary = {
+                primary: partner
+                for primary, partner in zip(row_1, row_2)
+                if primary > 0
+            }
+            mapped_primary = [subunit for subunit in row_1 if subunit > 0]
+            if mapped_primary:
+                start = primary_position[mapped_primary[0]]
+                stop = primary_position[mapped_primary[-1]] + 1
+                row_1 = list(primary_strand[start:stop])
+            else:
+                row_1 = list(primary_strand)
+            row_2 = [partner_by_primary.get(subunit, 0) for subunit in row_1]
+
         paired_count = sum(1 for left, right in zip(row_1, row_2) if left > 0 and right > 0)
         # Curves uses the signed magnitude to determine how many aligned
         # mapping columns to read. Internal zero/gap entries still occupy a
@@ -1059,6 +1076,19 @@ class RobustTopologyInferrer:
             grv=paired_count >= 4,
             pair_geometry_markers=pair_geometry_markers,
         )
+
+    @staticmethod
+    def _primary_level_path_is_contiguous(
+        row: Sequence[int],
+        primary_strand: Sequence[int],
+    ) -> bool:
+        """Return whether every inferred level follows one primary backbone."""
+        mapped = [subunit for subunit in row if subunit > 0]
+        if not mapped:
+            return False
+        start = primary_strand.index(mapped[0])
+        stop = primary_strand.index(mapped[-1]) + 1
+        return mapped == list(primary_strand[start:stop]) and len(mapped) == len(row)
 
     @staticmethod
     def _partner_orientation_scores(
