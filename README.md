@@ -389,3 +389,10 @@ values so sequence-indexed tables stay aligned; each row also reports `valid`,
 `status`, `warnings`, and `missing_parameters`. Residue names and chain IDs are
 stored separately. CSV output writes one file per dataframe using the
 `--output-file` value as the prefix.
+
+## Code Guides
+
+For a file-by-file map of the top-level commands, see
+[`SCRIPT_REFERENCE.md`](SCRIPT_REFERENCE.md). Each Python package directory has
+the same two-level documentation pattern: a short `README.md` and a detailed
+`SCRIPT_REFERENCE.md`.
