@@ -161,7 +161,7 @@ or `uncertain`. `pairing_mode` uses controlled values: `watson_crick`,
 do not enter that field: for example, Section M renders
 `candidate_mode=hoogsteen` with `classification_status=possible` as “possible
 Hoogsteen.” Records keep `observed_lw_family` separate from
-`reference_lw_family`, and retain diagnostic flags and evidence provenance.
+`reference_lw_family`, and retain diagnostic flags.
 
 ## MD Trajectories
 
@@ -191,8 +191,39 @@ contains pair presence, observed/reference LW family, named pairing mode,
 classification status, and diagnostic flags in the
 `pycurves-trajectory-slim-v2` schema. Calculation-frame, contact, and
 glycosidic details remain internal rather than being repeated per pair. In
-`summary` mode this table
-becomes a categorical state profile:
+JSON, `frame` and `time` belong to the containing frame object; flattened CSV
+rows include them as columns.
+
+Each per-frame `base_pair_observations` row contains exactly these keys:
+
+| Key | What users should expect |
+| --- | --- |
+| `pair_id` | Stable pair identifier made from the two sorted molecular subunit IDs, for example `2:129`. |
+| `reference_pair` | `true` for a pair from the reference map; `false` for a pair newly detected in this frame. |
+| `level` | Curves reference level, or `null` for a newly detected pair that has no reference level. |
+| `residue_1`, `residue_2` | Human-readable chain, residue name, and residue number, for example `B:DT2`. |
+| `pair_status` | `present`, `absent`, or `uncertain` from current-frame coordinate evidence. |
+| `pairing_mode` | Definitive named mode: `watson_crick`, `reverse_watson_crick`, `hoogsteen`, `reverse_hoogsteen`, `wobble`, or `other_noncanonical`; otherwise an empty string. |
+| `observed_lw_family` | Confident current-frame LW family such as `cWW`, `tWW`, `cHW`, or `tWH`; otherwise an empty string. |
+| `reference_lw_family` | LW family supplied by the reference/input topology; may be populated when `observed_lw_family` is empty. |
+| `candidate_mode` | Tentative named mode when the evidence supports a possibility but not a definitive assignment; otherwise an empty string. |
+| `classification_status` | `assigned`, `possible`, `unassigned`, or `conflict`. |
+| `diagnostic_flags` | Machine-readable reasons requiring review; normally an empty list. |
+
+Empty `pairing_mode` and `observed_lw_family` values mean **unclassified**, not
+noncanonical. For example, `pair_status="present"`,
+`reference_lw_family="cWW"`, and `observed_lw_family=""` means that the
+reference pair is present but the current coordinates did not support a
+definitive observed LW assignment.
+
+The separate `annotations` table does not repeat base-pair rows. A
+`modified_base` row contains `annotation_type`, `severity`, `level`,
+`location`, `code`, `message`, `residue`, and `parent_base`. A `backbone_link`
+row contains `annotation_type`, `severity`, `level`, `location`, `code`,
+`message`, `source_subunit`, `target_subunit`, `bond_source`, and `distance`.
+The table is empty when neither event type occurs.
+
+In `summary` mode `base_pair_observations` becomes a categorical state profile:
 each row reports one pair/status/mode/LW combination with `frame_count` and
 `frame_fraction`. Identifiers and diagnostic fields are not numerically
 averaged. The separate `annotations` table is reserved for modified-base and
