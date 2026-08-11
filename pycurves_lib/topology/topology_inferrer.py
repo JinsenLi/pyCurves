@@ -1175,6 +1175,7 @@ class RobustTopologyInferrer:
             orientation = tag[0]
         else:
             tag = ""
+        possible_cww = False
 
         # Relative standard-frame pose is stronger evidence than a vote over
         # shared edge atoms. This is especially important for mismatches:
@@ -1209,6 +1210,10 @@ class RobustTopologyInferrer:
                 and pattern_family == "watson_crick_or_wobble"
                 and len(pattern_matches) >= 2
             )
+            possible_cww = bool(
+                canonical_watson_contacts
+                and (fitted_geometry_eligible or has_strong_contact_support())
+            )
             orientation = "c" if canonical_watson_contacts else (
                 self._measured_glycosidic_orientation(candidate, atom_pairs)
                 or self._lw_orientation_from_edges(edge_1, edge_2, strand_direction)
@@ -1222,13 +1227,13 @@ class RobustTopologyInferrer:
             confident_named_hoogsteen = (
                 candidate.is_hoogsteen or candidate.pair_family == "hoogsteen_like"
             )
-            # Generic close-contact edge votes remain advisory. The supported
-            # authoritative cases are fitted cWW, fitted/observed tWW, and
-            # chemically named Hoogsteen patterns. Complementary identity is
-            # not enough to imply cWW: a distorted C-G or A-T/U pair with
-            # eligible fitted planes but unresolved contacts must retain an
-            # explicit family-neutral marker.
-            if not (confident_trans_ww or confident_named_hoogsteen):
+            # A complete named Watson-contact pattern is sufficient to emit an
+            # explicit cWW marker even when the fitted-frame envelope is too
+            # strict for a highly opened pair. Generic edge votes remain
+            # advisory for every other family.
+            if possible_cww:
+                tag = "cWW"
+            elif not (confident_trans_ww or confident_named_hoogsteen):
                 if fitted_geometry_eligible or has_strong_contact_support():
                     tag = "unresolved"
                 else:
@@ -1240,6 +1245,7 @@ class RobustTopologyInferrer:
             candidate.is_hoogsteen
             or not self._is_complementary(residue_1.base, residue_2.base)
             or measured_noncanonical
+            or possible_cww
             or tag == "unresolved"
         )
         if not should_write:
