@@ -188,8 +188,10 @@ pycurves-md topology.pdb trajectory.xtc --topology-mode annotate --mode both --o
 reports missing reference pairs as absent, and adds newly detected pairs with
 `reference_pair=false`. The authoritative `base_pair_observations` table
 contains pair presence, observed/reference LW family, named pairing mode,
-contact confidence, and diagnostic evidence in the
-`pycurves-trajectory-slim-v2` schema. In `summary` mode this table
+classification status, and diagnostic flags in the
+`pycurves-trajectory-slim-v2` schema. Calculation-frame, contact, and
+glycosidic details remain internal rather than being repeated per pair. In
+`summary` mode this table
 becomes a categorical state profile:
 each row reports one pair/status/mode/LW combination with `frame_count` and
 `frame_fraction`. Identifiers and diagnostic fields are not numerically

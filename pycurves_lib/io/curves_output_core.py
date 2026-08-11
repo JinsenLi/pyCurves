@@ -669,45 +669,17 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "pair_id": row.get("pair_id", ""),
                 "reference_pair": bool(row.get("reference_pair", True)),
                 "level": row.get("level"),
-                "strand_1": row.get("strand_1"),
-                "strand_2": row.get("strand_2"),
-                "subunit_1": row.get("subunit_1"),
-                "subunit_2": row.get("subunit_2"),
                 "residue_1": row.get("residue_1"),
                 "residue_2": row.get("residue_2"),
-                "base_1": row.get("base_1"),
-                "base_2": row.get("base_2"),
                 "pair_status": row.get("pair_status", "uncertain"),
+                "pairing_mode": row.get("pairing_mode", ""),
                 "observed_lw_family": base_pair_observed_geometry_tag(row),
                 "reference_lw_family": row.get("reference_lw_family", ""),
-                "candidate_lw_family": row.get("candidate_lw_family", ""),
-                "input_geometry_tag": row.get("input_geometry_tag", ""),
-                "geometry_resolution_status": row.get(
-                    "geometry_resolution_status", ""
-                ),
-                "pairing_mode": row.get("pairing_mode", ""),
                 "candidate_mode": row.get("candidate_mode", ""),
                 "classification_status": row.get(
                     "classification_status", "unassigned"
                 ),
-                "evidence_source": row.get("evidence_source", ""),
                 "diagnostic_flags": list(row.get("diagnostic_flags") or []),
-                "contact_confidence": row.get("contact_confidence", ""),
-                "contact_count": self._contact_count(row),
-                "frame_mode": row.get("frame_mode", ""),
-                "frame_basis": row.get("frame_basis", ""),
-                "reference_pairing_mode": row.get(
-                    "reference_pairing_mode", ""
-                ),
-                "reference_classification_status": row.get(
-                    "reference_classification_status", ""
-                ),
-                "normal_branch_mode": row.get("normal_branch_mode", ""),
-                "pair_normal_sign": row.get("pair_normal_sign"),
-                "glycosidic_state_1": row.get("glycosidic_state_1", ""),
-                "glycosidic_state_2": row.get("glycosidic_state_2", ""),
-                "glycosidic_chi_1": row.get("glycosidic_chi_1"),
-                "glycosidic_chi_2": row.get("glycosidic_chi_2"),
             })
         return rows
 
@@ -745,16 +717,6 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "distance": row.get("distance"),
             })
         return rows
-
-    @staticmethod
-    def _contact_count(row: Dict[str, Any]) -> int:
-        count = row.get("contact_count")
-        if count is not None:
-            try:
-                return int(count)
-            except (TypeError, ValueError):
-                pass
-        return len(row.get("contact_atom_pairs") or [])
 
     def _groove_records(self, groove_params: Dict[str, Any]) -> Dict[str, Any]:
         groove = _to_jsonable(groove_params)

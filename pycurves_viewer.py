@@ -1184,11 +1184,23 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (pair.has_modified_base) {
         return {kind: "critical", label: "Modified", detail: "Modified base in pair"};
       }
-      if (mode === "reverse_hoogsteen") {
-        return {kind: "critical", label: "Reversed Hoogsteen", detail: "Reversed Hoogsteen base pair"};
+      const namedModes = {
+        reverse_watson_crick: ["Reverse WC", "Reverse Watson-Crick base pair"],
+        hoogsteen: ["Hoogsteen", "Hoogsteen base pair"],
+        reverse_hoogsteen: ["Reverse Hoogsteen", "Reverse Hoogsteen base pair"],
+        wobble: ["Wobble", "Wobble base pair"]
+      };
+      if (namedModes[mode]) {
+        return {kind: "critical", label: namedModes[mode][0], detail: namedModes[mode][1]};
+      }
+      if (mode === "other_noncanonical") {
+        return {kind: "critical", label: observed || "Noncanonical", detail: `Other noncanonical base pair${observed ? ": " + observed : ""}`};
       }
       if (pair.is_hoogsteen || family.includes("hoogsteen")) {
         return {kind: "critical", label: "Hoogsteen", detail: "Hoogsteen base pair"};
+      }
+      if (family === "wobble") {
+        return {kind: "critical", label: "Wobble", detail: "Wobble base pair"};
       }
       if (pair.is_mismatch || family === "mismatch") {
         return {kind: "critical", label: "Mismatch", detail: "Mismatched base pair"};
@@ -1206,9 +1218,6 @@ HTML_TEMPLATE = r"""<!doctype html>
       const flags = (pair.diagnostic_flags || []).filter(Boolean);
       if (flags.length) {
         return {kind: "warning", label: "Review", detail: flags.map(flag => String(flag).replaceAll("_", " ")).join("; ")};
-      }
-      if (!pair.is_canonical) {
-        return {kind: "critical", label: "Non-WC", detail: "Non-canonical base pair"};
       }
       return null;
     }
