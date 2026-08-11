@@ -155,11 +155,13 @@ mismatches even when they have a clear edge-contact geometry. Pair geometry in
 The annotation report is part of the Curves text output, and annotation records
 are always included in JSON/CSV results. Pair presence is `present`, `absent`,
 or `uncertain`. `pairing_mode` uses controlled values: `watson_crick`,
-`hoogsteen`, `reverse_hoogsteen`, `wobble`, or `other`. Uncertain calls do
-not enter that field: for example, Section M renders `candidate_mode=hoogsteen`
-with `classification_status=possible` as “possible Hoogsteen.” Records keep
-`observed_lw_family` separate from `reference_lw_family`, and retain
-diagnostic flags and evidence provenance.
+`reverse_watson_crick`, `hoogsteen`, `reverse_hoogsteen`, `wobble`, or
+`other_noncanonical`. A confident `tWW` observation is named
+`reverse_watson_crick`. Uncertain calls
+do not enter that field: for example, Section M renders
+`candidate_mode=hoogsteen` with `classification_status=possible` as “possible
+Hoogsteen.” Records keep `observed_lw_family` separate from
+`reference_lw_family`, and retain diagnostic flags and evidence provenance.
 
 ## MD Trajectories
 
@@ -184,14 +186,16 @@ pycurves-md topology.pdb trajectory.xtc --topology-mode annotate --mode both --o
 `--topology-mode reference` is the default and keeps the reference pair map.
 `annotate` reruns coordinate-only pair detection after parameter calculation,
 reports missing reference pairs as absent, and adds newly detected pairs with
-`reference_pair=false`. The compact `base_pair_observations` table contains
-pair presence and pairing mode; detailed geometry remains available elsewhere
-in the JSON. In `summary` mode this table becomes a categorical state profile:
+`reference_pair=false`. The authoritative `base_pair_observations` table
+contains pair presence, observed/reference LW family, named pairing mode,
+contact confidence, and diagnostic evidence in the
+`pycurves-trajectory-slim-v2` schema. In `summary` mode this table
+becomes a categorical state profile:
 each row reports one pair/status/mode/LW combination with `frame_count` and
 `frame_fraction`. Identifiers and diagnostic fields are not numerically
-averaged, and the detailed `annotations` and `noncanonical_base_pairs` tables
-are retained only by `per-frame` or `both` output. This mode is currently
-implemented only in `pycurves-md`, not `pycurves-md-batch`.
+averaged. The separate `annotations` table is reserved for modified-base and
+backbone-connectivity events. This mode is currently implemented only in
+`pycurves-md`, not `pycurves-md-batch`.
 
 Summary tables report numeric columns as `*_mean` and `*_stddev`. Angular columns
 use a circular mean and the resultant-length standard deviation
@@ -345,7 +349,7 @@ inp_files = runner.generate_inp(prefix="1QNB_auto")
 
 ## Output
 
-JSON output uses the `pycurves-slim-v1` schema. It contains metadata plus flat
+JSON output uses the `pycurves-slim-v2` schema. It contains metadata plus flat
 `dataframes` records for local/global parameters, backbone, groove, curvature,
 and annotations. Gapped or uncomputed backbone positions are kept with `null`
 values so sequence-indexed tables stay aligned; each row also reports `valid`,

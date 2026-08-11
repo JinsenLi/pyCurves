@@ -13,7 +13,6 @@ import numpy as np
 from pycurves_lib.data.modified_bases import parent_base_name
 from pycurves_lib.topology.base_annotations import (
     annotate_context,
-    base_pair_observed_geometry_annotation,
     base_pair_observed_geometry_tag,
     render_section_m,
 )
@@ -175,7 +174,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         dataframes = self._build_dataframes()
         payload = {
             "program": "pyCurves",
-            "format": "pycurves-slim-v1",
+            "format": "pycurves-slim-v2",
             "frame_convention": self._frame_convention_payload(),
             "analysis_options": self._analysis_options_payload(),
             "inputs": {
@@ -533,7 +532,6 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             annotations
         )
         records["annotations"] = self._slim_annotation_records(annotations)
-        records["noncanonical_base_pairs"] = self._noncanonical_base_pair_records(annotations)
 
         return records
 
@@ -716,70 +714,6 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
     def _slim_annotation_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        for row in self._base_pair_rows(annotations):
-            if not self._is_reportable_base_pair_annotation(row):
-                continue
-            left_handed_cww = row.get("normal_branch_mode") == "left_handed_cww"
-            unresolved_geometry = (
-                row.get("geometry_resolution_status") == "unresolved"
-            )
-            candidate_lw = str(row.get("candidate_lw_family") or "").strip()
-            rows.append({
-                "annotation_type": "base_pair",
-                "severity": "warn" if row.get("is_mismatch") else "info",
-                "level": row.get("level"),
-                "location": f"level {row.get('level')}",
-                "code": (
-                    "left_handed_cww"
-                    if left_handed_cww
-                    else "unresolved_contact_geometry"
-                    if unresolved_geometry
-                    else row.get("pair_family", "")
-                ),
-                "message": (
-                    "coordinate-derived left-handed cWW normal branch"
-                    if left_handed_cww
-                    else (
-                        "provisional contact geometry; no LW family assigned"
-                        + (f"; possible [{candidate_lw}]" if candidate_lw else "")
-                    )
-                    if unresolved_geometry
-                    else row.get("pair_subtype", "")
-                ),
-                "pairing_mode": row.get("pairing_mode", ""),
-                "pair_status": row.get("pair_status", "uncertain"),
-                "geometry_annotation": base_pair_observed_geometry_annotation(row),
-                "leontis_westhof": base_pair_observed_geometry_tag(row),
-                "reference_lw_family": row.get("reference_lw_family", ""),
-                "candidate_lw_family": row.get("candidate_lw_family", ""),
-                "input_geometry_tag": row.get("input_geometry_tag", ""),
-                "geometry_resolution_status": row.get(
-                    "geometry_resolution_status", ""
-                ),
-                "candidate_mode": row.get("candidate_mode", ""),
-                "classification_status": row.get("classification_status", "unassigned"),
-                "diagnostic_flags": list(row.get("diagnostic_flags") or []),
-                "evidence_source": row.get("evidence_source", ""),
-                "residue_1": row.get("residue_1"),
-                "residue_2": row.get("residue_2"),
-                "base_1": row.get("base_1"),
-                "base_2": row.get("base_2"),
-                "edge_pair": row.get("edge_pair", ""),
-                "glycosidic_orientation": row.get("glycosidic_orientation", ""),
-                "lw_strand_orientation": row.get("lw_strand_orientation", ""),
-                "strand_direction": row.get("strand_direction", ""),
-                "topology_strand_direction": row.get("topology_strand_direction", ""),
-                "frame_mode": row.get("frame_mode", ""),
-                "frame_basis": row.get("frame_basis", ""),
-                "normal_branch_mode": row.get("normal_branch_mode", ""),
-                "pair_normal_sign": row.get("pair_normal_sign"),
-                "glycosidic_state_1": row.get("glycosidic_state_1", ""),
-                "glycosidic_state_2": row.get("glycosidic_state_2", ""),
-                "contact_confidence": row.get("contact_confidence", ""),
-                "contact_count": self._contact_count(row),
-                "shape_parameters_supported": row.get("shape_parameters_supported", True),
-                "shape_skip_reason": row.get("shape_skip_reason", ""),
-            })
         for row in annotations.get("modified_base_annotations", []):
             rows.append({
                 "annotation_type": "modified_base",
@@ -811,85 +745,6 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "distance": row.get("distance"),
             })
         return rows
-
-    def _noncanonical_base_pair_records(self, annotations: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        rows: List[Dict[str, Any]] = []
-        for row in self._base_pair_rows(annotations):
-            if not self._is_noncanonical_base_pair(row):
-                continue
-            rows.append({
-                "level": row.get("level"),
-                "strand_1": row.get("strand_1"),
-                "strand_2": row.get("strand_2"),
-                "residue_1": row.get("residue_1"),
-                "residue_2": row.get("residue_2"),
-                "base_1": row.get("base_1"),
-                "base_2": row.get("base_2"),
-                "pair_family": row.get("pair_family", ""),
-                "pair_subtype": row.get("pair_subtype", ""),
-                "pairing_mode": row.get("pairing_mode", ""),
-                "pair_status": row.get("pair_status", "uncertain"),
-                "geometry_annotation": base_pair_observed_geometry_annotation(row),
-                "leontis_westhof": base_pair_observed_geometry_tag(row),
-                "reference_lw_family": row.get("reference_lw_family", ""),
-                "candidate_lw_family": row.get("candidate_lw_family", ""),
-                "input_geometry_tag": row.get("input_geometry_tag", ""),
-                "geometry_resolution_status": row.get(
-                    "geometry_resolution_status", ""
-                ),
-                "candidate_mode": row.get("candidate_mode", ""),
-                "classification_status": row.get("classification_status", "unassigned"),
-                "diagnostic_flags": list(row.get("diagnostic_flags") or []),
-                "evidence_source": row.get("evidence_source", ""),
-                "edge_pair": row.get("edge_pair", ""),
-                "edge_1": row.get("edge_1", ""),
-                "edge_2": row.get("edge_2", ""),
-                "glycosidic_orientation": row.get("glycosidic_orientation", ""),
-                "lw_strand_orientation": row.get("lw_strand_orientation", ""),
-                "strand_direction": row.get("strand_direction", ""),
-                "topology_strand_direction": row.get("topology_strand_direction", ""),
-                "frame_mode": row.get("frame_mode", ""),
-                "frame_basis": row.get("frame_basis", ""),
-                "contact_confidence": row.get("contact_confidence", ""),
-                "contact_count": self._contact_count(row),
-                "source_pair_number": row.get("source_pair_number"),
-                "manual_geometry_tag": row.get("manual_geometry_tag", ""),
-                "shape_parameters_supported": row.get("shape_parameters_supported", True),
-                "shape_skip_reason": row.get("shape_skip_reason", ""),
-            })
-        return rows
-
-    @staticmethod
-    def _is_reportable_base_pair_annotation(row: Dict[str, Any]) -> bool:
-        return bool(
-            row.get("is_hoogsteen")
-            or row.get("is_mismatch")
-            or row.get("has_modified_base")
-            or row.get("pair_family") not in {"watson_crick", ""}
-            or row.get("diagnostic_flags")
-            or row.get("candidate_mode")
-            or row.get("pair_status") != "present"
-            or row.get("frame_mode") in {
-                "contact_geometry",
-                "provisional_contact_geometry",
-            }
-            or row.get("normal_branch_mode") == "left_handed_cww"
-        )
-
-    @staticmethod
-    def _is_noncanonical_base_pair(row: Dict[str, Any]) -> bool:
-        return bool(
-            row.get("is_hoogsteen")
-            or row.get("is_mismatch")
-            or row.get("pair_family") not in {"watson_crick", ""}
-            or row.get("diagnostic_flags")
-            or row.get("candidate_mode")
-            or row.get("pair_status") != "present"
-            or row.get("frame_mode") in {
-                "contact_geometry",
-                "provisional_contact_geometry",
-            }
-        )
 
     @staticmethod
     def _contact_count(row: Dict[str, Any]) -> int:

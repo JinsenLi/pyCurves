@@ -26,10 +26,11 @@ HOOGSTEEN_BASE_SETS = {frozenset(("A", "T")), frozenset(("A", "U")), frozenset((
 HOOGSTEEN_PURINES = {"A", "G"}
 PAIRING_MODE_LABELS = {
     "watson_crick": "Watson-Crick",
+    "reverse_watson_crick": "reverse Watson-Crick",
     "hoogsteen": "Hoogsteen",
     "reverse_hoogsteen": "reverse Hoogsteen",
     "wobble": "wobble",
-    "other": "other",
+    "other_noncanonical": "other noncanonical",
 }
 PAIRING_MODES = frozenset(PAIRING_MODE_LABELS)
 CLASSIFICATION_STATUSES = frozenset({"assigned", "possible", "unassigned", "conflict"})
@@ -359,6 +360,8 @@ def base_pair_pairing_classification(
 ) -> Dict[str, Any]:
     """Classify a present pair without mixing its mode with uncertainty."""
     stored_mode = str(row.get("pairing_mode") or "").strip()
+    if stored_mode == "other":
+        stored_mode = "other_noncanonical"
     if stored_mode and stored_mode not in PAIRING_MODES:
         stored_mode = ""
 
@@ -402,7 +405,7 @@ def base_pair_pairing_classification(
         elif (base_1, base_2) in WOBBLE_PAIRS:
             mode = "wobble"
         else:
-            mode = "other"
+            mode = "other_noncanonical"
         return {
             "pairing_mode": mode,
             "candidate_mode": "",
@@ -416,7 +419,7 @@ def base_pair_pairing_classification(
         and tag[2].upper() in {"W", "H", "S"}
     ):
         return {
-            "pairing_mode": "other",
+            "pairing_mode": "other_noncanonical",
             "candidate_mode": "",
             "classification_status": "assigned",
             "diagnostic_flags": diagnostics,
@@ -482,6 +485,7 @@ def base_pair_pairing_mode(row: Dict[str, Any], source_mode: str = "") -> str:
             "Hoogsteen": "hoogsteen",
             "reverse Hoogsteen": "reverse_hoogsteen",
             "wobble": "wobble",
+            "other": "other_noncanonical",
             **{mode: mode for mode in PAIRING_MODES},
         }
         normalized = reverse.get(normalized, "")
@@ -500,6 +504,8 @@ def _pairing_mode_from_lw_tag(tag: str, base_1: str, base_2: str) -> str:
     orientation = normalized[0].lower()
     edge_1 = normalized[1].upper()
     edge_2 = normalized[2].upper()
+    if orientation == "t" and edge_1 == edge_2 == "W":
+        return "reverse_watson_crick"
     if not _has_classic_hoogsteen_edges(base_1, edge_1, base_2, edge_2):
         return ""
     if orientation == "c":
@@ -703,6 +709,8 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
         mode = pair_row["pairing_mode"]
         if mode in {"hoogsteen", "reverse_hoogsteen"}:
             pair_row["pair_family"] = "hoogsteen"
+        elif mode == "reverse_watson_crick":
+            pair_row["pair_family"] = mode
         pair_row["is_canonical"] = (
             pair_status == "present" and mode == "watson_crick"
         )
@@ -1606,7 +1614,7 @@ def _source_pairing_assignment(row: Dict[str, Any]) -> Dict[str, Any]:
         elif (base_1, base_2) in WOBBLE_PAIRS:
             tag_mode = "wobble"
         else:
-            tag_mode = "other"
+            tag_mode = "other_noncanonical"
 
     diagnostics: List[str] = []
     diagnostics.extend(_hoogsteen_protonation_diagnostics(

@@ -43,7 +43,27 @@ def _load_results(json_path: Path) -> Dict[str, Any]:
 
 
 def render_viewer_html(results: Dict[str, Any], structure_text: str, structure_format: str, title: str) -> str:
-    visualization = results.get("visualization", {})
+    visualization = dict(results.get("visualization", {}))
+    parameters = dict(visualization.get("parameters", {}))
+    for name in (
+        "global_base_axis",
+        "global_base_pair_axis",
+        "curvesplus_base_pair_axis",
+        "global_base_base",
+        "global_inter_base",
+        "global_inter_base_pair",
+        "global_axis_curvature",
+        "global_axis_bending",
+        "global_axis_bending_summary",
+        "local_base_base",
+        "local_inter_base",
+        "local_inter_base_pair",
+        "backbone",
+    ):
+        rows = results.get("dataframes", {}).get(name)
+        if isinstance(rows, list):
+            parameters[name] = rows
+    visualization["parameters"] = parameters
     inputs = results.get("inputs", {})
     summary = {
         "program": results.get("program", "pyCurves"),
@@ -278,6 +298,25 @@ HTML_TEMPLATE = r"""<!doctype html>
       color: var(--accent);
       background: #eaf3fb;
       font-weight: 700;
+    }
+    .feature-groups {
+      display: flex;
+      min-width: 0;
+      flex: 1;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+    }
+    .feature-group {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px 8px;
+    }
+    .feature-group > span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
     }
     .sequence-panel {
       grid-column: 2;
@@ -590,13 +629,30 @@ HTML_TEMPLATE = r"""<!doctype html>
     <section class="parameters-panel" aria-labelledby="parametersTitle">
       <div class="parameters-head">
         <h2 id="parametersTitle">DNA shape</h2>
-        <div class="tabs">
-          <button type="button" class="active" data-tab="base_pair">Base Pair</button>
-          <button type="button" data-tab="base_pair_axis">BP Axis</button>
-          <button type="button" data-tab="global_step">Global Step</button>
-          <button type="button" data-tab="local_step">Local Step</button>
-          <button type="button" data-tab="base_axis">Base Axis</button>
-          <button type="button" data-tab="groove">Groove</button>
+        <div class="feature-groups">
+          <div class="feature-group" data-feature-group="global">
+            <span>Global features</span>
+            <div class="tabs">
+              <button type="button" data-tab="global_base_axis">Base Axis</button>
+              <button type="button" data-tab="global_base_pair_axis">BP Axis</button>
+              <button type="button" data-tab="global_base_pair">Base Pair</button>
+              <button type="button" data-tab="global_strand_step">Strand Step</button>
+              <button type="button" data-tab="global_base_pair_step">BP Step</button>
+              <button type="button" data-tab="global_axis_curvature">Axis Curvature</button>
+              <button type="button" data-tab="global_axis_bending">Axis Bending</button>
+              <button type="button" data-tab="global_axis_bending_summary">Bending Summary</button>
+            </div>
+          </div>
+          <div class="feature-group" data-feature-group="local">
+            <span>Local features</span>
+            <div class="tabs">
+              <button type="button" data-tab="local_base_pair">Base Pair</button>
+              <button type="button" data-tab="local_strand_step">Strand Step</button>
+              <button type="button" data-tab="local_base_pair_step">BP Step</button>
+              <button type="button" data-tab="backbone">Backbone</button>
+              <button type="button" data-tab="groove">Groove</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="table-wrap" id="parameterTable"></div>
@@ -626,15 +682,15 @@ HTML_TEMPLATE = r"""<!doctype html>
     let selectionShapes = [];
     let selectionLabels = [];
     let drawingSelection = false;
+    const parameterTabOrder = [
+      "global_base_axis", "global_base_pair_axis", "global_base_pair",
+      "global_strand_step", "global_base_pair_step", "global_axis_curvature",
+      "global_axis_bending", "global_axis_bending_summary", "local_base_pair",
+      "local_strand_step", "local_base_pair_step", "backbone", "groove"
+    ];
+
     function initialParameterTab() {
-      const params = VIS.parameters || {};
-      if ((params.base_pair || []).length) return "base_pair";
-      if ((params.base_pair_axis || []).length) return "base_pair_axis";
-      if ((params.global_step || []).length) return "global_step";
-      if ((params.local_step || []).length) return "local_step";
-      if ((params.base_axis || []).length) return "base_axis";
-      if ((params.groove || []).length) return "groove";
-      return "base_pair";
+      return parameterTabOrder.find(tab => tableRowsForTab(tab).length) || "global_base_pair";
     }
 
     let activeTab = initialParameterTab();
@@ -1123,9 +1179,13 @@ HTML_TEMPLATE = r"""<!doctype html>
       if (!pair) return null;
       const observed = String(pair.observed_lw_family || "").trim();
       const family = String(pair.pair_family || "").trim().toLowerCase();
+      const mode = String(pair.pairing_mode || "").trim().toLowerCase();
       const status = String(pair.pair_status || "present").trim().toLowerCase();
       if (pair.has_modified_base) {
         return {kind: "critical", label: "Modified", detail: "Modified base in pair"};
+      }
+      if (mode === "reverse_hoogsteen") {
+        return {kind: "critical", label: "Reversed Hoogsteen", detail: "Reversed Hoogsteen base pair"};
       }
       if (pair.is_hoogsteen || family.includes("hoogsteen")) {
         return {kind: "critical", label: "Hoogsteen", detail: "Hoogsteen base pair"};
@@ -1175,11 +1235,11 @@ HTML_TEMPLATE = r"""<!doctype html>
       const numericLevel = Number(level);
       highlightSequenceLevel(numericLevel);
       const pair = pairAtLevel(numericLevel);
-      activeTab = "base_pair";
+      activeTab = tableRowsForTab("global_base_pair").length ? "global_base_pair" : "local_base_pair";
       document.querySelectorAll(".tabs button").forEach(button => {
         button.classList.toggle("active", button.dataset.tab === activeTab);
       });
-      const entry = tableRowsForTab("base_pair").find(row => Number(row.level) === numericLevel);
+      const entry = tableRowsForTab(activeTab).find(row => Number(row.level) === numericLevel);
       selectedInspection = entry
         ? Object.assign({}, entry, {type: pair ? "base_pair" : "sequence", feature: null, featureLabel: null, featureValue: null})
         : {id: `sequence:${numericLevel}`, type: "sequence", level: numericLevel};
@@ -1372,9 +1432,16 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function tableRowsForTab(tab) {
       const params = VIS.parameters || {};
-      if (tab === "base_pair") {
-        return (params.base_pair || []).map(row => ({
-          id: `base_pair:${row.partner_strand || 0}:${row.level}`,
+      const rowsFor = (name, fallback = null) => {
+        if (Object.prototype.hasOwnProperty.call(params, name)) return params[name] || [];
+        return fallback ? (params[fallback] || []) : [];
+      };
+      if (tab === "global_base_pair" || tab === "local_base_pair") {
+        const source = tab === "global_base_pair"
+          ? rowsFor("global_base_base", "base_pair")
+          : rowsFor("local_base_base", "local_base_pair");
+        return source.map(row => ({
+          id: `${tab}:${row.partner_strand || 0}:${row.level}`,
           type: "base_pair",
           level: Number(row.level),
           partnerStrand: row.partner_strand === undefined || row.partner_strand === null ? null : Number(row.partner_strand),
@@ -1392,9 +1459,12 @@ HTML_TEMPLATE = r"""<!doctype html>
           row
         }));
       }
-      if (tab === "base_pair_axis") {
-        return (params.base_pair_axis || []).map(row => ({
-          id: `base_pair_axis:${row.partner_strand || 0}:${row.level}`,
+      if (tab === "global_base_pair_axis") {
+        const source = rowsFor("global_base_pair_axis").length
+          ? rowsFor("global_base_pair_axis")
+          : (rowsFor("curvesplus_base_pair_axis").length ? rowsFor("curvesplus_base_pair_axis") : rowsFor("base_pair_axis"));
+        return source.map(row => ({
+          id: `${tab}:${row.partner_strand || 0}:${row.level}`,
           type: "base_pair_axis",
           level: Number(row.level),
           partnerStrand: row.partner_strand === undefined || row.partner_strand === null ? null : Number(row.partner_strand),
@@ -1410,9 +1480,9 @@ HTML_TEMPLATE = r"""<!doctype html>
           row
         }));
       }
-      if (tab === "base_axis") {
-        return (params.base_axis || []).map(row => ({
-          id: `base_axis:${row.strand || 0}:${row.level}`,
+      if (tab === "global_base_axis") {
+        return rowsFor("global_base_axis", "base_axis").map(row => ({
+          id: `${tab}:${row.strand || 0}:${row.level}`,
           type: "base_axis",
           level: Number(row.level),
           strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
@@ -1429,8 +1499,15 @@ HTML_TEMPLATE = r"""<!doctype html>
           row
         }));
       }
-      if (tab === "global_step" || tab === "local_step") {
-        const source = tab === "global_step" ? (params.global_step || []) : (params.local_step || []);
+      if (["global_strand_step", "global_base_pair_step", "local_strand_step", "local_base_pair_step"].includes(tab)) {
+        const sources = {
+          global_strand_step: ["global_inter_base", "global_strand_step"],
+          global_base_pair_step: ["global_inter_base_pair", "global_step"],
+          local_strand_step: ["local_inter_base", "local_strand_step"],
+          local_base_pair_step: ["local_inter_base_pair", "local_step"]
+        };
+        const [name, fallback] = sources[tab];
+        const source = rowsFor(name, fallback);
         return source.map(row => ({
           id: `${tab}:${row.strand || row.partner_strand || 0}:${row.level}`,
           type: "step",
@@ -1449,6 +1526,96 @@ HTML_TEMPLATE = r"""<!doctype html>
             fmt(row.tilt),
             fmt(row.roll),
             fmt(row.twist),
+          ],
+          row
+        }));
+      }
+      if (tab === "global_axis_curvature") {
+        return rowsFor(tab).map(row => ({
+          id: `${tab}:${row.strand || 0}:${row.level}`,
+          type: "data",
+          level: Number(row.level),
+          strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
+          features: [null, null, null, null, "ax", "ay", "ainc", "atip", "adis", "angle", "path", null],
+          cells: [
+            row.level,
+            row.next_level,
+            row.strand,
+            row.step || "",
+            fmt(row.ax),
+            fmt(row.ay),
+            fmt(row.ainc),
+            fmt(row.atip),
+            fmt(row.adis),
+            fmt(row.angle),
+            fmt(row.path),
+            fmt(row.dc),
+          ],
+          row
+        }));
+      }
+      if (tab === "global_axis_bending") {
+        return rowsFor(tab).map(row => ({
+          id: `${tab}:${row.strand || 0}:${row.level}`,
+          type: "data",
+          level: Number(row.level),
+          strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
+          features: [null, null, null, "offset", "local_direction"],
+          cells: [
+            row.level,
+            row.strand,
+            `${row.residue_name || ""} ${row.residue_id || ""}`.trim(),
+            fmt(row.offset),
+            fmt(row.local_direction),
+          ],
+          row
+        }));
+      }
+      if (tab === "global_axis_bending_summary") {
+        return rowsFor(tab).map(row => ({
+          id: `${tab}:${row.strand || 0}`,
+          type: "data",
+          level: null,
+          strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
+          features: [null, "path_length", "end_to_end", "shortening_percent", "overall_bend_uu", "overall_bend_pp"],
+          cells: [
+            row.strand,
+            fmt(row.path_length),
+            fmt(row.end_to_end),
+            fmt(row.shortening_percent),
+            fmt(row.overall_bend_uu),
+            fmt(row.overall_bend_pp),
+          ],
+          row
+        }));
+      }
+      if (tab === "backbone") {
+        return rowsFor(tab).map(row => ({
+          id: `${tab}:${row.strand || 0}:${row.level}`,
+          type: "data",
+          level: Number(row.level),
+          strand: row.strand === undefined || row.strand === null ? null : Number(row.strand),
+          features: [null, null, null, null, null, "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime", "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta"],
+          cells: [
+            row.level,
+            row.strand,
+            `${row.residue_name || ""} ${row.residue_id || ""}`.trim(),
+            row.status || "",
+            row.pucker || "",
+            fmt(row.c1_c2),
+            fmt(row.c2_c3),
+            fmt(row.phase),
+            fmt(row.amplitude),
+            fmt(row.c1_prime),
+            fmt(row.c2_prime),
+            fmt(row.c3_prime),
+            fmt(row.chi),
+            fmt(row.gamma),
+            fmt(row.delta),
+            fmt(row.epsilon),
+            fmt(row.zeta),
+            fmt(row.alpha),
+            fmt(row.beta),
           ],
           row
         }));
@@ -1475,11 +1642,14 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
 
     function headersForTab(tab) {
-      if (tab === "base_pair") return ["Level", "Pair", "Shear", "Stretch", "Stagger", "Buckle", "Propel", "Open"];
-      if (tab === "base_pair_axis") return ["Level", "Pair", "Xdisp", "Ydisp", "Inclin", "Tip"];
-      if (tab === "base_axis") return ["Level", "Strand", "Residue", "Xdisp", "Ydisp", "Inclin", "Tip"];
-      if (tab === "global_step") return ["Step", "Residues", "Shift", "Slide", "Rise", "Tilt", "Roll", "Twist"];
-      if (tab === "local_step") return ["Step", "Residues", "Shift", "Slide", "Rise", "Tilt", "Roll", "Twist"];
+      if (tab === "global_base_pair" || tab === "local_base_pair") return ["Level", "Pair", "Shear", "Stretch", "Stagger", "Buckle", "Propel", "Open"];
+      if (tab === "global_base_pair_axis") return ["Level", "Pair", "Xdisp", "Ydisp", "Inclin", "Tip"];
+      if (tab === "global_base_axis") return ["Level", "Strand", "Residue", "Xdisp", "Ydisp", "Inclin", "Tip"];
+      if (["global_strand_step", "global_base_pair_step", "local_strand_step", "local_base_pair_step"].includes(tab)) return ["Step", "Residues", "Shift", "Slide", "Rise", "Tilt", "Roll", "Twist"];
+      if (tab === "global_axis_curvature") return ["Level", "Next", "Strand", "Step", "Ax", "Ay", "Ainc", "Atip", "Adis", "Angle", "Path", "DC"];
+      if (tab === "global_axis_bending") return ["Level", "Strand", "Residue", "Offset", "Local Direction"];
+      if (tab === "global_axis_bending_summary") return ["Strand", "Path Length", "End-to-End", "Shortening %", "Bend UU", "Bend PP"];
+      if (tab === "backbone") return ["Level", "Strand", "Residue", "Status", "Pucker", "C1-C2", "C2-C3", "Phase", "Amplitude", "C1'", "C2'", "C3'", "Chi", "Gamma", "Delta", "Epsilon", "Zeta", "Alpha", "Beta"];
       return ["Level", "Pair", "Minor W", "Minor D", "Minor A", "Major W", "Major D", "Major A", "Diam"];
     }
 
@@ -1492,7 +1662,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       }
       const headers = headersForTab(activeTab);
       const annotations = rows.map(entry => {
-        if (activeTab !== "base_pair") return null;
+        if (!["global_base_pair", "local_base_pair"].includes(activeTab)) return null;
         const pair = pairAtLevel(entry.level, entry.partnerStrand);
         return pairAnnotation(pair) || (!pair && baseAtLevel(1, entry.level)
           ? {kind: "warning", label: "Unpaired", detail: "No inferred base pair"}
@@ -1526,12 +1696,12 @@ HTML_TEMPLATE = r"""<!doctype html>
           const cell = event.target.closest("td");
           const feature = cell ? (cell.dataset.feature || null) : null;
           selectedInspection = Object.assign({}, entry, {
-            type: activeTab === "base_pair" && !pairAtLevel(entry.level, entry.partnerStrand) ? "sequence" : entry.type,
+            type: ["global_base_pair", "local_base_pair"].includes(activeTab) && !pairAtLevel(entry.level, entry.partnerStrand) ? "sequence" : entry.type,
             feature,
             featureLabel: feature ? featureLabel(feature) : null,
             featureValue: feature ? entry.row[feature] : null
           });
-          highlightSequenceLevel(entry.level);
+          if (Number.isFinite(Number(entry.level))) highlightSequenceLevel(entry.level);
           renderParameterTable();
           redrawSelection();
         });
@@ -1782,8 +1952,12 @@ HTML_TEMPLATE = r"""<!doctype html>
       input.addEventListener("change", redraw);
     });
     document.querySelectorAll(".tabs button").forEach(button => {
+      button.hidden = !tableRowsForTab(button.dataset.tab).length;
       button.classList.toggle("active", button.dataset.tab === activeTab);
       button.addEventListener("click", () => setActiveTab(button.dataset.tab));
+    });
+    document.querySelectorAll(".feature-group").forEach(group => {
+      group.hidden = !Array.from(group.querySelectorAll("button")).some(button => !button.hidden);
     });
     document.getElementById("colorMode").addEventListener("change", redraw);
     document.getElementById("resetView").addEventListener("click", () => {

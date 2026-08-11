@@ -181,8 +181,8 @@ def _candidate_observation(
     mode = row["pairing_mode"]
     if mode in {"hoogsteen", "reverse_hoogsteen"}:
         row["pair_family"] = "hoogsteen"
-    elif mode == "watson_crick":
-        row["pair_family"] = "watson_crick"
+    elif mode in {"watson_crick", "reverse_watson_crick"}:
+        row["pair_family"] = mode
     elif mode == "wobble":
         row["pair_family"] = "wobble"
     row["is_canonical"] = mode == "watson_crick"

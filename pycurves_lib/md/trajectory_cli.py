@@ -164,7 +164,7 @@ class MDTrajectoryAnalyzer:
 
         payload = {
             "program": "pyCurves",
-            "format": "pycurves-trajectory-slim-v1",
+            "format": "pycurves-trajectory-slim-v2",
             "inputs": {
                 "topology_file": self.topology_file,
                 "reference_topology_file": self.reference_topology_file,
@@ -328,7 +328,7 @@ class MDTrajectoryAnalyzer:
                     total_frames=total_frames,
                 )
                 continue
-            if name in {"annotations", "noncanonical_base_pairs"}:
+            if name == "annotations":
                 # These are categorical event/detail tables. Treating residue,
                 # strand, status, and diagnostic fields as generic grouping keys
                 # produces misleading columns such as strand_1_mean. Pair-state
@@ -705,4 +705,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
