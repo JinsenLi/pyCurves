@@ -6,14 +6,14 @@ scientific implementation lives under [`pycurves_lib`](pycurves_lib/README.md).
 
 ## Installed commands
 
-| File | Installed command | Responsibility |
-| --- | --- | --- |
-| `pycurves.py` | `pycurves` | Thin static-analysis entry point. It delegates argument parsing and execution to `pycurves_lib.cli.pycurves_main` and turns expected user-facing exceptions into clean process exits. |
-| `pycurves_md.py` | `pycurves-md` | Public trajectory API and CLI facade. It extends the core trajectory analyzer with optional DSSR-selected reference topology, then reuses that topology for every frame. |
+| File                   | Installed command   | Responsibility                                                                                                                                                                             |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pycurves.py`          | `pycurves`          | Thin static-analysis entry point. It delegates argument parsing and execution to `pycurves_lib.cli.pycurves_main` and turns expected user-facing exceptions into clean process exits.      |
+| `pycurves_md.py`       | `pycurves-md`       | Public trajectory API and CLI facade. It extends the core trajectory analyzer with optional DSSR-selected reference topology, then reuses that topology for every frame.                   |
 | `pycurves_md_batch.py` | `pycurves-md-batch` | Experimental vectorized trajectory runner for standard base frames and the Curves+ axis. It buffers coordinates, processes NumPy batches, and emits per-frame or streaming summary output. |
-| `pycurves_md_plot.py` | `pycurves-md-plot` | Reads trajectory JSON, extracts named result tables into Pandas, filters or reshapes them, finds outliers, and writes overview plots or CSV files. |
-| `pycurves_viewer.py` | `pycurves-viewer` | Combines visualization JSON and its source PDB/mmCIF into a self-contained HTML viewer built around 3Dmol.js. |
-| `pycurves_pymol.py` | `pycurves-pymol` | Converts the same visualization payload into a structure-free PyMOL `.pml` overlay with grouped axis, backbone, base-pair, and groove objects. |
+| `pycurves_md_plot.py`  | `pycurves-md-plot`  | Reads trajectory JSON, extracts named result tables into Pandas, filters or reshapes them, finds outliers, and writes overview plots or CSV files.                                         |
+| `pycurves_viewer.py`   | `pycurves-viewer`   | Combines visualization JSON and its source PDB/mmCIF into a self-contained HTML viewer built around 3Dmol.js.                                                                              |
+| `pycurves_pymol.py`    | `pycurves-pymol`    | Converts the same visualization payload into a structure-free PyMOL `.pml` overlay with grouped axis, backbone, base-pair, and groove objects.                                             |
 
 The command names are declared in `pyproject.toml`. All modules also expose a
 `main()` function and can be run directly with Python.
@@ -53,15 +53,3 @@ reruns the scientific analysis.
 - `pycurves_viewer.render_viewer_html(...)` and
   `pycurves_pymol.render_pymol_script(...)` render already-loaded result
   dictionaries.
-
-## Focused root regression tests
-
-| File | Coverage |
-| --- | --- |
-| `test_possible_cww_marker.py` | A coordinate-supported possible cWW contact produces an explicit `[cWW]` input marker. |
-| `test_topology_regression.py` | Discontinuous contact maps retain the primary backbone register, and ordinary canonical cWW pairs do not receive redundant markers. |
-| `test_viewer_gzip.py` | Gzipped structures, paired-level axis filtering, and essential HTML viewer controls. |
-| `test_viewer_shape_tables.py` | All global/local shape tables are embedded and grouped correctly in the viewer. |
-
-The larger DSSR-specific checks are documented in
-[`dssr_tests/SCRIPT_REFERENCE.md`](dssr_tests/SCRIPT_REFERENCE.md).
