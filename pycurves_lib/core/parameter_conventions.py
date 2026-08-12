@@ -204,7 +204,11 @@ def build_axis_reference_frames(ctx):
     adjustments = []
     for strand, level in sorted(contact_levels):
         current = shape_frames[strand, level]
-        if ctx.li[level, strand] < 0 or not np.all(np.isfinite(current)):
+        if (
+            ctx.li[level, strand] < 0
+            or _axis_support_weight(ctx, strand, level) <= 0.0
+            or not np.all(np.isfinite(current))
+        ):
             continue
 
         anchors = _nearest_fitted_axis_anchors(
@@ -239,7 +243,10 @@ def _nearest_fitted_axis_anchors(ctx, frames, contact_levels, strand: int, level
     for direction in (-1, 1):
         neighbor = level + direction
         while 1 <= neighbor <= ctx.nux:
-            if ctx.li[neighbor, strand] < 0:
+            if (
+                ctx.li[neighbor, strand] < 0
+                or _axis_support_weight(ctx, strand, neighbor) <= 0.0
+            ):
                 break
             if (strand, neighbor) not in contact_levels:
                 frame = frames[strand, neighbor]
@@ -248,6 +255,13 @@ def _nearest_fitted_axis_anchors(ctx, frames, contact_levels, strand: int, level
                 break
             neighbor += direction
     return anchors
+
+
+def _axis_support_weight(ctx, strand: int, level: int) -> float:
+    weights = getattr(ctx, "axis_support_weights", None)
+    if weights is None:
+        return 1.0
+    return float(weights[level, strand])
 
 
 def _has_level(ctx, strand: int, level: int) -> bool:
@@ -1276,28 +1290,32 @@ class LegacyParameterConvention(BaseParameterConvention):
         standard = StandardParameterConvention()
         for strand in range(calc.ctx.nst):
             _, _, iste, iene = calc._axis_bounds(strand)
-            continuous_frames = {}
-            previous = None
-            for level in range(iste, iene + 1):
-                frame = standard._oriented_strand_frame(calc, strand, level)
-                if frame is None:
-                    previous = None
-                    continue
-                if previous is not None:
-                    frame = standard._most_continuous_equivalent_frame(previous, frame)
-                continuous_frames[level] = frame
-                previous = frame
-
             for level in range(iste + 1, iene + 1):
+                previous_contact = standard._uses_contact_geometry_level(
+                    calc, strand, level - 1
+                )
+                current_contact = standard._uses_contact_geometry_level(
+                    calc, strand, level
+                )
                 if not (
-                    standard._uses_contact_geometry_level(calc, strand, level - 1)
-                    or standard._uses_contact_geometry_level(calc, strand, level)
+                    previous_contact
+                    or current_contact
                     or standard._is_hoogsteen_level(calc, strand, level - 1)
                     or standard._is_hoogsteen_level(calc, strand, level)
                 ):
                     continue
-                previous_frame = continuous_frames.get(level - 1)
-                current_frame = continuous_frames.get(level)
+                previous_frame = standard._oriented_strand_frame(
+                    calc,
+                    strand,
+                    level - 1,
+                    axis_reference=previous_contact,
+                )
+                current_frame = standard._oriented_strand_frame(
+                    calc,
+                    strand,
+                    level,
+                    axis_reference=current_contact,
+                )
                 if previous_frame is None or current_frame is None:
                     continue
                 values = standard._rigid_body_values(
@@ -1422,21 +1440,25 @@ class StandardParameterConvention(LegacyParameterConvention):
     def fill_local_strand_steps(self, calc) -> None:
         for strand in range(calc.ctx.nst):
             _, _, iste, iene = calc._axis_bounds(strand)
-            continuous_frames = {}
-            previous = None
-            for level in range(iste, iene + 1):
-                frame = self._oriented_strand_frame(calc, strand, level)
-                if frame is None:
-                    previous = None
-                    continue
-                if previous is not None:
-                    frame = self._most_continuous_equivalent_frame(previous, frame)
-                continuous_frames[level] = frame
-                previous = frame
-
             for level in range(iste + 1, iene + 1):
-                previous_frame = continuous_frames.get(level - 1)
-                current_frame = continuous_frames.get(level)
+                previous_contact = self._uses_contact_geometry_level(
+                    calc, strand, level - 1
+                )
+                current_contact = self._uses_contact_geometry_level(
+                    calc, strand, level
+                )
+                previous_frame = self._oriented_strand_frame(
+                    calc,
+                    strand,
+                    level - 1,
+                    axis_reference=previous_contact,
+                )
+                current_frame = self._oriented_strand_frame(
+                    calc,
+                    strand,
+                    level,
+                    axis_reference=current_contact,
+                )
                 if previous_frame is None or current_frame is None:
                     continue
                 values = self._rigid_body_values(
@@ -1449,10 +1471,21 @@ class StandardParameterConvention(LegacyParameterConvention):
                 values[3:] = [self._wrap_180(value) for value in values[3:]]
                 calc.pal[level, :, strand] = values
 
-    def _base_frame(self, calc, strand: int, level: int) -> Optional[ParameterFrame]:
+    def _base_frame(
+        self,
+        calc,
+        strand: int,
+        level: int,
+        *,
+        axis_reference: bool = False,
+    ) -> Optional[ParameterFrame]:
         if not calc._has_level(strand, level):
             return None
-        frames = getattr(calc.ctx.params, "shape_frames", None)
+        frames = (
+            getattr(calc.ctx.params, "axis_frames", None)
+            if axis_reference
+            else getattr(calc.ctx.params, "shape_frames", None)
+        )
         if (
             frames is None
             or frames.shape != calc.ctx.params.frames.shape
@@ -1464,8 +1497,21 @@ class StandardParameterConvention(LegacyParameterConvention):
             return None
         return ParameterFrame(origin=raw[3].copy(), axes=raw[:3].copy())
 
-    def _oriented_strand_frame(self, calc, strand: int, level: int) -> Optional[ParameterFrame]:
-        frame = self._base_frame(calc, strand, level)
+    def _oriented_strand_frame(
+        self,
+        calc,
+        strand: int,
+        level: int,
+        *,
+        axis_reference: bool = False,
+    ) -> Optional[ParameterFrame]:
+        """Return a chemically directed frame, or an anchored contact frame."""
+        frame = self._base_frame(
+            calc,
+            strand,
+            level,
+            axis_reference=axis_reference,
+        )
         if frame is None:
             return None
         if calc.ctx.cfg.comb and strand > 0:
@@ -1478,17 +1524,6 @@ class StandardParameterConvention(LegacyParameterConvention):
                 axes[1] *= -1.0
             frame = ParameterFrame(origin=frame.origin.copy(), axes=axes)
         return frame
-
-    def _most_continuous_equivalent_frame(
-        self,
-        previous: ParameterFrame,
-        current: ParameterFrame,
-    ) -> ParameterFrame:
-        best_axes = max(
-            (sign_flip @ current.axes for sign_flip in self._EQUIVALENT_AXIS_SIGN_FLIPS),
-            key=lambda axes: float(np.trace(previous.axes @ axes.T)),
-        )
-        return ParameterFrame(origin=current.origin.copy(), axes=best_axes.copy())
 
     def _step_aligned_frames(
         self,

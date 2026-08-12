@@ -43,17 +43,6 @@ SUGAR_PUCKERS = (
     "C3'-exo", "C4'-endo", "O1'-exo", "C1'-endo", "C2'-exo",
 )
 
-SIGN_FLIPS = np.asarray(
-    [
-        np.diag([1.0, 1.0, 1.0]),
-        np.diag([1.0, -1.0, -1.0]),
-        np.diag([-1.0, 1.0, -1.0]),
-        np.diag([-1.0, -1.0, 1.0]),
-    ],
-    dtype=float,
-)
-
-
 @dataclass(frozen=True)
 class BaseFitTemplate:
     strand: int
@@ -941,7 +930,7 @@ class BatchCurvesPlusMDAnalyzer:
     def _local_inter_base(self, frames: np.ndarray) -> np.ndarray:
         batch = frames.shape[0]
         values = np.full((batch, self.ctx.nst, self.ctx.nux + 1, 6), np.nan, dtype=float)
-        oriented = self._continuous_oriented_strand_frames(frames)
+        oriented = self._oriented_strand_frames(frames)
         records = [
             (strand, level)
             for strand in range(self.ctx.nst)
@@ -971,7 +960,9 @@ class BatchCurvesPlusMDAnalyzer:
             values[:, strand, level - 1, :] = step[:, index, :]
         return values
 
-    def _continuous_oriented_strand_frames(self, frames: np.ndarray) -> np.ndarray:
+    def _oriented_strand_frames(self, frames: np.ndarray) -> np.ndarray:
+        # Standard fitted axes are chemically directed; a frayed frame must
+        # not select a sign-equivalent branch for the rest of its strand.
         oriented = frames.copy()
         for strand in range(1, self.ctx.nst):
             if self.ctx.idr[strand] < 0:
@@ -981,27 +972,6 @@ class BatchCurvesPlusMDAnalyzer:
                 oriented[:, strand, :, 0, :] *= -1.0
                 oriented[:, strand, :, 1, :] *= -1.0
 
-        batch = frames.shape[0]
-        for strand in range(self.ctx.nst):
-            previous_axes = None
-            previous_valid = np.zeros(batch, dtype=bool)
-            for level in range(1, self.ctx.nux + 1):
-                if not self._has_level(strand, level):
-                    previous_axes = None
-                    previous_valid[:] = False
-                    continue
-                axes = oriented[:, strand, level, :3, :]
-                finite = np.all(np.isfinite(axes), axis=(1, 2))
-                if previous_axes is not None:
-                    candidates = np.einsum("fij,bjk->fbik", SIGN_FLIPS, axes)
-                    scores = np.einsum("bij,fbij->bf", previous_axes, candidates)
-                    best = np.argmax(scores, axis=1)
-                    selected = candidates[best, np.arange(batch)]
-                    use = previous_valid & finite
-                    oriented[use, strand, level, :3, :] = selected[use]
-                    axes = oriented[:, strand, level, :3, :]
-                previous_axes = axes.copy()
-                previous_valid = finite
         return oriented
 
     def _local_base_base_and_pair_frames(self, frames: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:

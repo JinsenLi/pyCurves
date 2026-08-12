@@ -201,7 +201,6 @@ class CurvesWrapper:
         locator = BaseLocator(BaseGeometryConstants(), reference_library=reference_library)
         log_parts.append(self._capture_call(lambda: locator.locate_all(self.ctx), echo=verbose))
         annotate_context(self.ctx)
-        build_axis_reference_frames(self.ctx)
         self.ctx.axis_support_weights = axis_support_weights(
             np.swapaxes(self.ctx.params.frames, 0, 1),
             self.ctx.li,
@@ -211,6 +210,7 @@ class CurvesWrapper:
                 and self.ctx.nst > 1
             ),
         )
+        build_axis_reference_frames(self.ctx)
 
         self.bak = BackboneAnalyzer()
         log_parts.append(self._capture_call(lambda: self.bak.analyze(self.ctx), echo=verbose))
