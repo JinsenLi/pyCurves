@@ -1353,6 +1353,9 @@ class BatchCurvesPlusMDAnalyzer:
                 sugar_pucker[:, strands, levels, 0] = amp_out
                 sugar_pucker[:, strands, levels, 1] = phase
 
+        # Match regular output: the legacy Curves 999 sentinel means missing.
+        torsions[torsions >= 900.0] = np.nan
+        sugar_pucker[sugar_pucker >= 900.0] = np.nan
         return torsions, sugar_pucker
 
     def _backbone_rows(self, torsions: np.ndarray, sugar_pucker: np.ndarray) -> List[Dict]:
