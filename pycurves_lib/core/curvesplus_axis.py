@@ -27,12 +27,16 @@ class CurvesPlusAxisMixin:
         if not (self.ctx.cfg.comb and self.ctx.nst > 1):
             return
 
+        nux = self.ctx.n_levels
         ref = self._curvesplus_reference_frames()
         upm = self._curvesplus_base_pair_frames(ref)
-        uvw = self._curvesplus_smoothed_axis(ref, upm)
+        support = np.asarray(
+            getattr(self.ctx, "axis_support_weights", np.ones((nux + 2, self.ctx.nst))),
+            dtype=float,
+        )
+        uvw = self._curvesplus_smoothed_axis(ref, upm, support)
         invert = self._curvesplus_inversion_flags(upm)
 
-        nux = self.ctx.n_levels
         self.curvesplus_reference_frames = ref
         self.curvesplus_base_pair_frames = upm
         self.curvesplus_axis_base_pair_frames = upm.copy()
@@ -133,16 +137,24 @@ class CurvesPlusAxisMixin:
                         break
         return upm
 
-    def _curvesplus_smoothed_axis(self, ref, upm):
+    def _curvesplus_smoothed_axis(self, ref, upm, support=None):
         nux = self.ctx.n_levels
         nst = self.ctx.nst
         upl = np.zeros((nux + 1, 9, 6), dtype=float)
+        upl_weights = np.zeros((nux + 1, 9), dtype=float)
         npl = np.zeros(nux + 1, dtype=int)
+        if support is None:
+            support = np.ones((nux + 1, nst), dtype=float)
+        support = np.asarray(support, dtype=float)[:nux + 1, :nst]
+        level_support = np.max(support, axis=1)
 
         for upper in range(2, nux + 1):
             lower = upper - 1
             for strand in range(nst):
                 if not (self._has_level(strand, lower) and self._has_level(strand, upper)):
+                    continue
+                edge_weight = min(support[lower, strand], support[upper, strand])
+                if edge_weight <= 0.0:
                     continue
                 axis, point = self._curvesplus_screw_axis(ref[lower, strand], ref[upper, strand])
                 for level in (lower, upper):
@@ -152,14 +164,25 @@ class CurvesPlusAxisMixin:
                     projected = point + np.dot(delta, axis) * axis
                     upl[level, idx, :3] = axis
                     upl[level, idx, 3:] = projected
+                    upl_weights[level, idx] = edge_weight
 
         averaged = np.zeros((nux + 1, 6), dtype=float)
         for level in range(1, nux + 1):
             count = npl[level]
             if count == 0:
                 continue
-            axis = self.parameter_convention.unit(np.sum(upl[level, 1:count + 1, :3], axis=0))
-            point = np.mean(upl[level, 1:count + 1, 3:], axis=0)
+            edge_weights = upl_weights[level, 1:count + 1]
+            weight_sum = np.sum(edge_weights)
+            if weight_sum <= 0.0:
+                continue
+            axis = self.parameter_convention.unit(np.sum(
+                upl[level, 1:count + 1, :3] * edge_weights[:, None],
+                axis=0,
+            ))
+            point = np.sum(
+                upl[level, 1:count + 1, 3:] * edge_weights[:, None],
+                axis=0,
+            ) / weight_sum
             delta = upm[level, 3] - point
             averaged[level, :3] = axis
             averaged[level, 3:] = point + np.dot(delta, axis) * axis
@@ -172,6 +195,8 @@ class CurvesPlusAxisMixin:
             weights[-offset] = weights[offset]
 
         for level in range(1, nux + 1):
+            if level_support[level] <= 0.0:
+                continue
             origin = upm[level, 3]
             axis_sum = np.zeros(3, dtype=float)
             point_sum = np.zeros(3, dtype=float)
@@ -180,15 +205,20 @@ class CurvesPlusAxisMixin:
                 source = level + offset
                 if source < 1 or source > nux:
                     continue
+                lower, upper = sorted((level, source))
+                if np.any(level_support[lower:upper + 1] <= 0.0):
+                    continue
                 axis = averaged[source, :3]
                 point = averaged[source, 3:]
                 if np.linalg.norm(axis) < 1e-12:
                     continue
-                weight = weights[offset]
+                weight = weights[offset] * level_support[source]
                 axis_sum += axis * weight
                 projected = point + np.dot(origin - point, axis) * axis
                 point_sum += projected * weight
                 weight_sum += weight
+            if weight_sum <= 0.0:
+                continue
             axis = self.parameter_convention.unit(axis_sum, upm[level, 2])
             point = point_sum / weight_sum
             point = point + np.dot(origin - point, axis) * axis

@@ -40,6 +40,7 @@ class MDTrajectoryAnalyzer:
         output_dir: str = ".",
         frame_convention: str = "standard",
         axis_convention: str = "legacy",
+        axis_weighting: Optional[bool] = None,
         continuous_strands: bool = False,
         altloc: Optional[str] = None,
         fit_override: Optional[bool] = None,
@@ -63,6 +64,7 @@ class MDTrajectoryAnalyzer:
         self.mini_override = mini_override
         self.comb_override = comb_override
         self.ends_override = ends_override
+        self.axis_weighting = axis_weighting
         topology_mode = str(topology_mode).strip().lower()
         if topology_mode not in {"reference", "annotate"}:
             raise ValueError("topology_mode must be one of: reference, annotate")
@@ -75,6 +77,7 @@ class MDTrajectoryAnalyzer:
             "altloc": self.altloc,
             "frame_convention": self.frame_convention,
             "axis_convention": self.axis_convention,
+            "axis_weighting": axis_weighting,
             "fit_override": fit_override,
             "grv_override": grv_override,
             "mini_override": mini_override,
@@ -181,6 +184,7 @@ class MDTrajectoryAnalyzer:
                 "comb": self.comb_override,
                 "ends": self.ends_override,
                 "axis_convention": self.axis_convention,
+                "axis_weighting": bool(runner.ctx.cfg.axis_weighting),
                 "topology_mode": self.topology_mode,
             },
             "selection": {
@@ -582,6 +586,7 @@ def analyze_trajectory(
     mode: str = "per-frame",
     frame_convention: str = "standard",
     axis_convention: str = "legacy",
+    axis_weighting: Optional[bool] = None,
     continuous_strands: bool = False,
     altloc: Optional[str] = None,
     fit: Optional[bool] = None,
@@ -613,6 +618,7 @@ def analyze_trajectory(
         output_dir=output_dir,
         frame_convention=frame_convention,
         axis_convention=axis_convention,
+        axis_weighting=axis_weighting,
         continuous_strands=continuous_strands,
         altloc=altloc,
         fit_override=fit,

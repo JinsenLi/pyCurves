@@ -53,6 +53,12 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
         default="legacy",
         help="Global-axis convention. Default keeps the pyCurves legacy minimization axis; 'curvesplus' reproduces Curves+ axis/smooth output.",
     )
+    parser.add_argument(
+        "--axis-weighting",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Weight axis construction by fitted-pair geometry (default: disabled).",
+    )
 
 def pycurves_runner_kwargs(args) -> dict:
     """Return CurvesWrapper keyword arguments from shared CLI options."""
@@ -61,6 +67,7 @@ def pycurves_runner_kwargs(args) -> dict:
         "altloc": getattr(args, "altloc", None),
         "frame_convention": getattr(args, "frame_convention", "standard"),
         "axis_convention": getattr(args, "axis_convention", "legacy"),
+        "axis_weighting": getattr(args, "axis_weighting", None),
         "fit_override": getattr(args, "fit", None),
         "grv_override": getattr(args, "grooves", None),
         "mini_override": getattr(args, "mini", None),

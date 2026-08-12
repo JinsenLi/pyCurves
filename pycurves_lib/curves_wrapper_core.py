@@ -17,6 +17,7 @@ from pycurves_lib.io.curves_config_loader import ConfigLoader
 from pycurves_lib.core.curves_analyzer import BackboneAnalyzer, HelicalOptimizer
 from pycurves_lib.core.curves_calculator import HelicalCalculator
 from pycurves_lib.core.parameter_conventions import build_axis_reference_frames
+from pycurves_lib.core.axis_support import axis_support_weights
 from pycurves_lib.io.curves_output import CurvesOutputFormatter
 from pycurves_lib.topology.topology_inferrer import RobustTopologyInferrer
 from pycurves_lib.topology.base_annotations import annotate_context
@@ -37,6 +38,7 @@ class CurvesWrapper:
         altloc: Optional[str] = None,
         frame_convention: str = "standard",
         axis_convention: str = "legacy",
+        axis_weighting: Optional[bool] = None,
         fit_override: Optional[bool] = None,
         grv_override: Optional[bool] = None,
         mini_override: Optional[bool] = None,
@@ -53,6 +55,7 @@ class CurvesWrapper:
         self.continuous_strands = continuous_strands
         self.altloc = MolecularLoader.normalize_altloc(altloc)
         self.frame_convention, self.axis_convention = self.normalize_conventions(frame_convention, axis_convention)
+        self.axis_weighting = axis_weighting
         self.fit_override = fit_override
         self.grv_override = grv_override
         self.mini_override = mini_override
@@ -199,6 +202,15 @@ class CurvesWrapper:
         log_parts.append(self._capture_call(lambda: locator.locate_all(self.ctx), echo=verbose))
         annotate_context(self.ctx)
         build_axis_reference_frames(self.ctx)
+        self.ctx.axis_support_weights = axis_support_weights(
+            np.swapaxes(self.ctx.params.frames, 0, 1),
+            self.ctx.li,
+            enabled=bool(
+                self.ctx.cfg.axis_weighting
+                and self.ctx.cfg.comb
+                and self.ctx.nst > 1
+            ),
+        )
 
         self.bak = BackboneAnalyzer()
         log_parts.append(self._capture_call(lambda: self.bak.analyze(self.ctx), echo=verbose))
@@ -273,6 +285,7 @@ class CurvesWrapper:
             "ends": self.ends_override,
             "frame_convention": self.frame_convention,
             "axis_convention": self.axis_convention,
+            "axis_weighting": self.axis_weighting,
         }
 
     def run(self, output: bool = True, mini: Optional[bool] = None, verbose: bool = False, output_format: str = "curves", visualization: bool = False):

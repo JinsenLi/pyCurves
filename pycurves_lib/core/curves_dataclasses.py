@@ -721,6 +721,7 @@ class HelicalConfig:
     axonly: bool = False  # Axis-only calculation.
     frame_convention: str = "standard"  # Base reference-frame convention: standard or legacy.
     axis_convention: str = "legacy"  # Global axis convention: legacy optimizer or curvesplus axis/smooth.
+    axis_weighting: bool = False  # Opt in to downweighting geometrically unsupported axis pairs.
 
     # Fortran hel(0,*,*) and hel(nux+1,*,*) terminal rows used when ends=.t.
     # Columns are Xdisp, Ydisp, Rise, Inclination, Tip, Twist.

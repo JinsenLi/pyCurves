@@ -125,6 +125,9 @@ Common options:
   frames by default, or choose legacy Curves 5.3-compatible frames.
 - `--axis-convention legacy|curvesplus`: choose the legacy pyCurves/JAX axis or
   the Curves+ smooth-axis path.
+- `--axis-weighting` / `--no-axis-weighting`: opt in to smoothly downweighting
+  requested pairs whose fitted Curves base origins separate by 4--8 A during
+  axis construction. The default is the historical unweighted axis.
 - `--generate-inp-only` / `--inp-only`: infer `.inp` files and exit before
   fitting, minimization, or parameter calculation.
 - `--continuous-strands`: treat connected split-chain helices as one biological
@@ -193,6 +196,13 @@ classification status, and diagnostic flags in the
 glycosidic details remain internal rather than being repeated per pair. In
 JSON, `frame` and `time` belong to the containing frame object; flattened CSV
 rows include them as columns.
+
+Axis weighting is independent of topology annotation: it never changes the
+requested residue map or assigns a pairing family. It affects both legacy
+global-axis optimization and Curves+ local smoothing; local base, base-pair,
+step, and backbone parameters remain calculated from the fixed input topology.
+Axis-dependent rows report `axis_weight`, and geometrically unsupported
+base-pair-axis values are null.
 
 Each per-frame `base_pair_observations` row contains exactly these keys:
 

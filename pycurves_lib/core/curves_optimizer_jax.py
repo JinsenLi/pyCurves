@@ -24,6 +24,7 @@ class JAXOptState(NamedTuple):
     j_spec_col: jnp.ndarray
     j_spec_is_angle: jnp.ndarray
     j_iact: jnp.ndarray
+    j_axis_weights: jnp.ndarray
 
 def _jax_rotate_axis_angle(v, axis, ca, sa):
     rx, ry, rz = axis
@@ -33,8 +34,17 @@ def _jax_rotate_axis_angle(v, axis, ca, sa):
     tz = (rx * rz * (1.0 - ca) - ry * sa) * xx + (ry * rz * (1.0 - ca) + rx * sa) * yy + (rz * rz + (1.0 - rz * rz) * ca) * zz
     return jnp.array([tx, ty, tz], dtype=jnp.float64)
 
-@partial(jax.jit, static_argnums=(2, 3, 4, 5, 6))
-def _compiled_jax_objective_and_grad(z, state: JAXOptState, cdr: float, nst: int, comb: bool, brk: int, bounds: tuple):
+@partial(jax.jit, static_argnums=(2, 3, 4, 5, 6, 7))
+def _compiled_jax_objective_and_grad(
+    z,
+    state: JAXOptState,
+    cdr: float,
+    nst: int,
+    comb: bool,
+    axis_weighting: bool,
+    brk: int,
+    bounds: tuple,
+):
     z = jnp.asarray(z, dtype=jnp.float64)
     
     def _jax_pack_helical(z_in):
@@ -225,6 +235,11 @@ def _compiled_jax_objective_and_grad(z, state: JAXOptState, cdr: float, nst: int
                 & (state.j_li[step_idx - 1, no] >= 0)
                 & (state.j_li[step_idx, no] >= 0)
             ).astype(jnp.float64)
+            if axis_weighting:
+                step_valid *= jnp.minimum(
+                    state.j_axis_weights[step_idx - 1, no],
+                    state.j_axis_weights[step_idx, no],
+                )
 
             r1 = state.j_frames[no, step_idx - 1, :3, :]
             r2 = state.j_frames[no, step_idx, :3, :]
@@ -252,6 +267,11 @@ def _compiled_jax_objective_and_grad(z, state: JAXOptState, cdr: float, nst: int
                 & (state.j_li[kink_idx - 1, no] >= 0)
                 & (state.j_li[kink_idx, no] >= 0)
             ).astype(jnp.float64)
+            if axis_weighting:
+                kink_valid *= jnp.minimum(
+                    state.j_axis_weights[kink_idx - 1, no],
+                    state.j_axis_weights[kink_idx, no],
+                )
 
             ux_kink = ux[kink_idx] if comb else ux[kink_idx, no, :]
             ux_kink_prev = ux[kink_idx - 1] if comb else ux[kink_idx - 1, no, :]
@@ -314,6 +334,10 @@ class HelicalOptimizerJAX(HelicalOptimizer):
         self._j_spec_col = jnp.asarray(spec[:, 2], dtype=jnp.int32)
         self._j_spec_is_angle = jnp.asarray(spec[:, 3].astype(bool))
         self._j_iact = jnp.asarray(self.iact, dtype = jnp.int32)
+        self._j_axis_weights = jnp.asarray(
+            getattr(self.ctx, "axis_support_weights", np.ones_like(self.ctx.li, dtype=float)),
+            dtype=jnp.float64,
+        )
         
         self._jax_opt_state = JAXOptState(
             j_li=self._j_li,
@@ -329,7 +353,8 @@ class HelicalOptimizerJAX(HelicalOptimizer):
             j_spec_strand=self._j_spec_strand,
             j_spec_col=self._j_spec_col,
             j_spec_is_angle=self._j_spec_is_angle,
-            j_iact=self._j_iact
+            j_iact=self._j_iact,
+            j_axis_weights=self._j_axis_weights,
         )
         self._jax_bounds = tuple(
             (int(self.ist_by_strand[no]), int(self.ien_by_strand[no]), int(self.iste_by_strand[no]), int(self.iene_by_strand[no]))
@@ -398,6 +423,7 @@ class HelicalOptimizerJAX(HelicalOptimizer):
                 float(self.cdr),
                 int(self.nst),
                 bool(self.ctx.cfg.comb),
+                bool(getattr(self.ctx.cfg, "axis_weighting", False)),
                 int(getattr(self.ctx.cfg, 'break_lvl', 0)),
                 self._jax_bounds
             )

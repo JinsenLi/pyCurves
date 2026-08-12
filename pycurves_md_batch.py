@@ -90,6 +90,7 @@ def run_batch(args) -> Dict:
         include_grooves=args.grooves,
         include_curvesplus_axis_steps=args.curvesplus_axis_steps,
         include_fit_quality=args.fit_quality,
+        axis_weighting=args.axis_weighting,
         altloc=args.altloc,
     )
 
@@ -150,6 +151,7 @@ def run_batch(args) -> Dict:
             "ends": False if args.ends is None else args.ends,
             "mini": False,
             "axis_convention": "curvesplus",
+            "axis_weighting": bool(analyzer.ctx.cfg.axis_weighting),
             "grooves": analyzer.include_grooves,
             "curvesplus_axis_steps": args.curvesplus_axis_steps,
             "fit_quality": args.fit_quality,
@@ -193,6 +195,7 @@ def analyze_trajectory_batch(
     axis_convention: str = "curvesplus",
     curvesplus_axis_steps: bool = False,
     fit_quality: bool = False,
+    axis_weighting: Optional[bool] = None,
 ) -> Dict:
     """Run the vectorized Curves+/standard-frame MD path from Python.
 
@@ -224,6 +227,7 @@ def analyze_trajectory_batch(
         axis_convention=axis_convention,
         curvesplus_axis_steps=curvesplus_axis_steps,
         fit_quality=fit_quality,
+        axis_weighting=axis_weighting,
         altloc=altloc,
     )
     try:
@@ -258,6 +262,12 @@ def main() -> None:
     parser.add_argument("--grooves", action=argparse.BooleanOptionalAction, default=None, help="Override groove analysis; defaults to the .inp grv setting.")
     parser.add_argument("--frame-convention", default="standard", help="Currently only standard is supported.")
     parser.add_argument("--axis-convention", default="curvesplus", help="Currently only curvesplus is supported.")
+    parser.add_argument(
+        "--axis-weighting",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Weight smooth-axis construction by fitted-pair geometry (default: disabled).",
+    )
     parser.add_argument("--curvesplus-axis-steps", action="store_true", help="Include the Curves+ smooth-axis inter-base-pair step table.")
     parser.add_argument("--fit-quality", action="store_true", help="Include vectorized base-fitting RMSD diagnostics.")
     args = parser.parse_args()
@@ -284,7 +294,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
 
 

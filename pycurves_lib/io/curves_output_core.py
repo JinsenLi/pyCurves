@@ -208,6 +208,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             "ends": bool(getattr(cfg, "ends", False)),
             "mini": bool(getattr(cfg, "mini", False)),
             "axis_convention": getattr(cfg, "axis_convention", "legacy"),
+            "axis_weighting": bool(getattr(cfg, "axis_weighting", False)),
             "altloc": getattr(self.runner.ctx.molecule, "altloc_selection", "first"),
             "available_altlocs": list(getattr(self.runner.ctx.molecule, "available_altlocs", ())),
         }
@@ -319,6 +320,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                         level=level,
                         duplex=duplex,
                     )
+                    axis_row["axis_weight"] = calc._axis_pair_weight(partner_strand, level)
                     bp_axis.append(axis_row)
 
                     if curvesplus_axis or partner_strand != 1:

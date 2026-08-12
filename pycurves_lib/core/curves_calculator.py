@@ -68,6 +68,22 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             return p.frames
         return axis_frames
 
+    def _axis_step_weight(self, strand: int, first_level: int, second_level: int) -> float:
+        if not bool(getattr(self.ctx.cfg, "axis_weighting", False)):
+            return 1.0
+        weights = getattr(self.ctx, "axis_support_weights", None)
+        if weights is None:
+            return 1.0
+        return float(min(weights[first_level, strand], weights[second_level, strand]))
+
+    def _axis_pair_weight(self, partner_strand: int, level: int) -> float:
+        if not bool(getattr(self.ctx.cfg, "axis_weighting", False)):
+            return 1.0
+        weights = getattr(self.ctx, "axis_support_weights", None)
+        if weights is None:
+            return 1.0
+        return float(min(weights[level, 0], weights[level, partner_strand]))
+
     def calculate_all(self):
         """Run the regular Curves calculation stages in Fortran call order."""
         self._set_axis_directions()
@@ -90,7 +106,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             for i in range(ist + 1, ien + 1):
                 u_sum = self.optimizer.uho[i, :, k] + self.optimizer.uho[i-1, :, k]
                 h_diff = self.optimizer.hho[i, :, k] - self.optimizer.hho[i-1, :, k]
-                rise_sum += np.sign(np.dot(u_sum, h_diff))
+                rise_sum += self._axis_step_weight(k, i - 1, i) * np.sign(np.dot(u_sum, h_diff))
             
             self.inv[k] = 1
             if (self.ctx.idr[k] == 1 and rise_sum < 0) or (self.ctx.idr[k] == -1 and rise_sum > 0):
@@ -137,7 +153,11 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             u_sum = self.optimizer.uho[iste+1:iene+1, :, k] + self.optimizer.uho[iste:iene, :, k]
             h_diff = self.optimizer.hho[iste+1:iene+1, :, k] - self.optimizer.hho[iste:iene, :, k]
             dots = np.einsum('ij,ij->i', u_sum, h_diff)
-            rise_sum = np.sum(np.sign(dots))
+            step_weights = np.asarray([
+                self._axis_step_weight(k, level - 1, level)
+                for level in range(iste + 1, iene + 1)
+            ])
+            rise_sum = np.sum(step_weights * np.sign(dots))
             
             self.inv[k] = 1
             if (self.ctx.idr[k] == 1 and rise_sum < 0) or (self.ctx.idr[k] == -1 and rise_sum > 0):
@@ -390,10 +410,11 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         """Return Section C global base-pair axis values for strand 1 with partner_strand."""
         if self._use_curvesplus_axis_convention() and hasattr(self, "curvesplus_bp_axis") and partner_strand == 1:
             values = self.curvesplus_bp_axis[level]
-            if np.all(np.isfinite(values)):
-                return values.copy()
+            return values.copy() if np.all(np.isfinite(values)) else None
 
         if not (self._has_level(0, level) and self._has_level(partner_strand, level)):
+            return None
+        if self._axis_pair_weight(partner_strand, level) <= 0.0:
             return None
 
         p = self.ctx.params
