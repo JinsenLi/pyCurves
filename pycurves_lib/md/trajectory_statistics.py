@@ -270,6 +270,7 @@ class BatchSummaryAccumulator:
                 out["count"] = int(group["count"])
                 for name, stats in group["stats"].items():
                     summary = stats.summary()
+                    out[f"{name}_count"] = int(stats.count)
                     out[f"{name}_mean"] = summary.mean
                     out[f"{name}_stddev"] = summary.stddev
                 rows.append(out)

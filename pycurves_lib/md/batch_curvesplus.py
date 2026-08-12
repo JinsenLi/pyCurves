@@ -1295,7 +1295,7 @@ class BatchCurvesPlusMDAnalyzer:
     def _backbone_values(self, coordinates: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         batch = coordinates.shape[0]
         n3 = self.ctx.nux + 2
-        store = np.full((batch, self.ctx.nst, n3, 16), 999.0, dtype=float)
+        store = np.full((batch, self.ctx.nst, n3, 16), np.nan, dtype=float)
         tasks = self.backbone_tasks
 
         if tasks.torsion_atoms.size:
@@ -1317,8 +1317,8 @@ class BatchCurvesPlusMDAnalyzer:
             )
             store[:, tasks.angle_strands, tasks.angle_levels, tasks.angle_indices] = values
 
-        torsions = np.full((batch, self.ctx.nst, n3, 13), 999.0, dtype=float)
-        sugar_pucker = np.full((batch, self.ctx.nst, n3, 2), 999.0, dtype=float)
+        torsions = np.full((batch, self.ctx.nst, n3, 13), np.nan, dtype=float)
+        sugar_pucker = np.full((batch, self.ctx.nst, n3, 2), np.nan, dtype=float)
         torsions[:, :, :, 0:6] = store[:, :, :, 0:6]
         torsions[:, :, :, 6:13] = store[:, :, :, 9:16]
 
@@ -1335,27 +1335,24 @@ class BatchCurvesPlusMDAnalyzer:
                 ],
                 axis=2,
             )
-            valid = np.all(np.isfinite(v), axis=2) & ~np.any(v >= 900.0, axis=2)
+            valid = np.all(np.isfinite(v), axis=2)
             if np.any(valid):
                 theta = np.radians(144.0 * np.arange(5, dtype=float))
                 a = (2.0 / 5.0) * np.sum(v * np.cos(theta), axis=2)
                 b = (-2.0 / 5.0) * np.sum(v * np.sin(theta), axis=2)
                 amp = np.sqrt(a * a + b * b)
-                phase = np.full_like(amp, 999.0)
+                phase = np.full_like(amp, np.nan)
                 nonzero = valid & (amp > 0.0)
                 if np.any(nonzero):
                     cp = np.clip(a[nonzero] / amp[nonzero], -1.0, 1.0)
                     phase_nonzero = np.degrees(np.arccos(cp))
                     phase_nonzero[b[nonzero] < 0.0] = 360.0 - phase_nonzero[b[nonzero] < 0.0]
                     phase[nonzero] = phase_nonzero
-                amp_out = np.full_like(amp, 999.0)
+                amp_out = np.full_like(amp, np.nan)
                 amp_out[valid] = amp[valid]
                 sugar_pucker[:, strands, levels, 0] = amp_out
                 sugar_pucker[:, strands, levels, 1] = phase
 
-        # Match regular output: the legacy Curves 999 sentinel means missing.
-        torsions[torsions >= 900.0] = np.nan
-        sugar_pucker[sugar_pucker >= 900.0] = np.nan
         return torsions, sugar_pucker
 
     def _backbone_rows(self, torsions: np.ndarray, sugar_pucker: np.ndarray) -> List[Dict]:
@@ -1448,7 +1445,7 @@ class BatchCurvesPlusMDAnalyzer:
             number = float(value)
         except (TypeError, ValueError):
             return None
-        return number if np.isfinite(number) and number < 900.0 else None
+        return number if np.isfinite(number) else None
 
     def _curvesplus_inter_base_pair_rows(self, values: np.ndarray) -> List[Dict]:
         return self._local_inter_base_pair_rows(values)

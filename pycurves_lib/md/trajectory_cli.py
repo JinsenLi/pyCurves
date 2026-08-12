@@ -381,6 +381,7 @@ class MDTrajectoryAnalyzer:
                         stats = circular_degree_summary(vals)
                     else:
                         stats = linear_summary(vals)
+                    out[f"{col}_count"] = int(np.count_nonzero(np.isfinite(vals)))
                     out[f"{col}_mean"] = stats.mean
                     out[f"{col}_stddev"] = stats.stddev
                 table_summary.append(out)

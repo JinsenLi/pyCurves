@@ -15,6 +15,8 @@ from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 from pycurves_lib.md.trajectory_statistics import (
     BatchSummaryAccumulator,
 )
+from pycurves_lib.md.batch_curvesplus import BatchCurvesPlusMDAnalyzer
+
 from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
 
 
@@ -68,8 +70,6 @@ def _write_csv_payload(payload: Dict, prefix: str) -> None:
 
 
 def run_batch(args) -> Dict:
-    from pycurves_lib.md.batch_curvesplus import BatchCurvesPlusMDAnalyzer
-
     if args.axis_convention.lower().replace("-", "_") not in {"curvesplus", "curves_plus", "curves+", "canal"}:
         raise SystemExit("pycurves-md-batch currently supports only --axis-convention curvesplus.")
     if args.frame_convention.lower().replace("-", "_") not in {"standard", "curvesplus", "curves_plus", "curves+", "x3dna", "3dna"}:

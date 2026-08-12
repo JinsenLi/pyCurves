@@ -84,11 +84,8 @@ def _json_number(value):
     return number if np.isfinite(number) else None
 
 def _backbone_number(value):
-    """Return None for non-finite values and the legacy Curves 999 sentinel."""
-    number = _json_number(value)
-    if number is None or number >= 900.0:
-        return None
-    return number
+    """Return a finite backbone value, otherwise None."""
+    return _json_number(value)
 
 
 

@@ -976,8 +976,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
 
                         duplex_id = f"{res_name_1}{res_num_1:3d}-{res_name_k}{res_num_k:3d}"
 
-                        nav += 1
-
                         xdi = (p.helical[0, i, 0] + p.helical[k, i, 0]) / 2.0
                         ydi = (p.helical[0, i, 1] - p.helical[k, i, 1]) / 2.0
                         cln = (p.helical[0, i, 3] + p.helical[k, i, 3]) / 2.0
@@ -988,7 +986,8 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                         if not self._all_finite([xdi, ydi, cln, tip]):
                             print(f"  {i:3d})      -")
                             continue
-                        
+                        nav += 1
+
                         print(f"  {i:3d}) {duplex_id}  {xdi:8.2f} {ydi:8.2f} {cln:8.2f} {tip:8.2f} "
                               f"{self.bcod[i, 0]:7d} {self.tcod[i, 0]:7d}")
                         
@@ -1095,8 +1094,6 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                     if (self._has_level(0, i - 1) and self._has_level(0, i) and
                             self._has_level(k, i - 1) and self._has_level(k, i)):
                         step_id = self._step_label(0, i)
-                        nav += 1
-
                         xs = (p.helical[0, i, 0] + p.helical[k, i, 0]) / 2.0
                         xm = (p.helical[0, i - 1, 0] + p.helical[k, i - 1, 0]) / 2.0
                         ys = (p.helical[0, i, 1] - p.helical[k, i, 1]) / 2.0
@@ -1123,6 +1120,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                         if not self._all_finite(vals):
                             print(f"  {i:3d})      -")
                             continue
+                        nav += 1
                         hela += vals
 
                         print(f"  {i:3d}) {step_id:11s} {shif:8.2f} {slid:8.2f} {rise:8.2f} "

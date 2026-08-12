@@ -791,15 +791,14 @@ class CurvesContext:
         self._initialize_li_status()
         self.level_status = self.li
 
-        
+
         self.molecule = MolecularStructure()
         self.backbone = BackboneTopology(
-            # 999.0 is the Curves sentinel for missing torsion/angle values.
-            torsions = np.full((self.n_strands, n3, 13), 999.0),
-            
-            angles = np.full((self.n_strands, n3, 2), 999.0),
-            
-            sugar_pucker = np.full((self.n_strands, n3, 2), 999.0),
+            torsions = np.full((self.n_strands, n3, 13), np.nan),
+
+            angles = np.full((self.n_strands, n3, 2), np.nan),
+
+            sugar_pucker = np.full((self.n_strands, n3, 2), np.nan),
             
             # Atom indices are Python 0-based; -1 means "not found".
             atom_map = np.full((self.n_strands, n3, 15), -1, dtype=int),

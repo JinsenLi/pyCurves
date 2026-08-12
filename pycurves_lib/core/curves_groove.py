@@ -113,7 +113,7 @@ class GrooveAnalysisMixin:
 
     @staticmethod
     def _torsion_field(value: float) -> str:
-        if np.isfinite(value) and value < 990.0:
+        if np.isfinite(value):
             return f"{value:8.2f}"
         return "  ......"
 

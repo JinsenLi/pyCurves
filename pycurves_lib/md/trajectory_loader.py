@@ -67,29 +67,6 @@ class TrajectoryLoader:
 
         explicit_indices = getattr(frame_selector, "explicit_indices", None)
         mdtraj_range = getattr(frame_selector, "mdtraj_range", None)
-        if mdtraj_range is not None:
-            start, stop, stride = mdtraj_range
-            output_index = 0
-            # Some large XTC files have offset tables that fail random seeking
-            # late in the file. Read sequentially with stride and discard early
-            # frames instead of using mdtraj's `skip=` seek path.
-            for chunk in md.iterload(trajectory_file, top=topology_file, chunk=1, stride=int(stride)):
-                idx = int(output_index * stride)
-                output_index += chunk.n_frames
-                if idx < start:
-                    continue
-                if stop is not None and idx >= stop:
-                    break
-                if not frame_selector(idx):
-                    continue
-                time = float(chunk.time[0]) if getattr(chunk, "time", None) is not None and len(chunk.time) else None
-                yield TrajectoryFrame(
-                    index=idx,
-                    time=time,
-                    coordinates=np.asarray(chunk.xyz[0], dtype=float) * 10.0,
-                )
-            return
-
         if explicit_indices is not None:
             for idx in explicit_indices:
                 if not frame_selector(idx):
@@ -103,11 +80,16 @@ class TrajectoryLoader:
                 )
             return
 
-        for chunk_index, chunk in enumerate(md.iterload(trajectory_file, top=topology_file, chunk=50)):
-            base_index = chunk_index * 50
+        stop = mdtraj_range[1] if mdtraj_range is not None else None
+        next_index = 0
+        # Some large XTC offset tables fail random seeking. Sequential chunks
+        # keep arbitrary start/step selections correct without using `skip=`.
+        for chunk in md.iterload(trajectory_file, top=topology_file, chunk=50):
             times = getattr(chunk, "time", None)
             for offset in range(chunk.n_frames):
-                idx = base_index + offset
+                idx = next_index + offset
+                if stop is not None and idx >= stop:
+                    return
                 if not frame_selector(idx):
                     continue
                 time = float(times[offset]) if times is not None and len(times) > offset else None
@@ -116,6 +98,7 @@ class TrajectoryLoader:
                     time=time,
                     coordinates=np.asarray(chunk.xyz[offset], dtype=float) * 10.0,
                 )
+            next_index += chunk.n_frames
 
     @staticmethod
     def _iter_multimodel_pdb(pdb_file: str, frame_selector) -> Iterator[TrajectoryFrame]:

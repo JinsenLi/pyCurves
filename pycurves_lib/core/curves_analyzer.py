@@ -127,7 +127,7 @@ class BackboneAnalyzer:
                     continue
 
                 atom_map = ctx.backbone.atom_map[k, i]
-                store = np.full(16, 999.0, dtype=float)
+                store = np.full(16, np.nan, dtype=float)
                 isg = 0
 
                 for l in range(16):
@@ -173,7 +173,7 @@ class BackboneAnalyzer:
                 #print(ctx.backbone.torsions[k, i])
 
                 v = np.array([store[5], store[6], store[7], store[8], store[4]], dtype=float)
-                if not np.all(np.isfinite(v)) or np.any(v >= 900.0):
+                if not np.all(np.isfinite(v)):
                     continue
 
                 a = 0.0
