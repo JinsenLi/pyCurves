@@ -38,6 +38,10 @@ from pycurves_lib.md.trajectory_statistics import (
 STEP_PARAMETERS = ("shift", "slide", "rise", "tilt", "roll", "twist")
 BASE_BASE_PARAMETERS = ("shear", "stretch", "stagger", "buckle", "propel", "opening")
 AXIS_PARAMETERS = ("xdisp", "ydisp", "inclin", "tip")
+BACKBONE_PARAMETERS = (
+    "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime",
+    "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta",
+)
 SUGAR_PUCKERS = (
     "C3'-endo", "C4'-exo", "O1'-endo", "C1'-exo", "C2'-endo",
     "C3'-exo", "C4'-endo", "O1'-exo", "C1'-endo", "C2'-exo",
@@ -242,12 +246,13 @@ def _rigid_body_values_and_middle_frame_batch(
 def _parameter_row(values: Optional[Sequence[float]], names: Sequence[str], **metadata) -> Dict:
     row = dict(metadata)
     if values is None:
-        for name in names:
-            row[name] = None
+        row.update(dict.fromkeys(names))
         return row
     values = np.asarray(values, dtype=float)
-    for name, value in zip(names, values):
-        row[name] = float(value) if np.isfinite(value) else None
+    row.update({
+        name: float(value) if finite else None
+        for name, value, finite in zip(names, values, np.isfinite(values))
+    })
     return row
 
 
@@ -770,10 +775,7 @@ class BatchCurvesPlusMDAnalyzer:
 
     def _accumulate_backbone_summary(self, accumulator, torsions: np.ndarray, sugar_pucker: np.ndarray) -> None:
         accumulator.ensure_table("backbone")
-        names = (
-            "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime",
-            "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta",
-        )
+        names = BACKBONE_PARAMETERS
         for strand in range(self.ctx.nst):
             for level in range(1, self.ctx.nux + 1):
                 if not self._has_level(strand, level):
@@ -1360,10 +1362,7 @@ class BatchCurvesPlusMDAnalyzer:
         for strand in range(self.ctx.nst):
             for level in range(1, self.ctx.nux + 1):
                 if not self._has_level(strand, level):
-                    missing = [
-                        "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime",
-                        "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta",
-                    ]
+                    missing = list(BACKBONE_PARAMETERS)
                     rows.append({
                         "strand": strand + 1, "level": level,
                         "residue_name": None, "residue_id": None, "chain_id": None,
@@ -1381,7 +1380,12 @@ class BatchCurvesPlusMDAnalyzer:
                 insertion_code = str(self.template_molecule.insertion_codes[atom_idx]).strip() if self.template_molecule.insertion_codes is not None else ""
                 tor = torsions[strand, level]
                 pucker = sugar_pucker[strand, level]
-                phase = self._json_number(pucker[1])
+                raw_parameters = np.asarray([
+                    tor[4], tor[5], pucker[1], pucker[0], tor[0], tor[1], tor[2],
+                    tor[12], tor[8], tor[9], tor[6], tor[7], tor[10], tor[11],
+                ], dtype=float)
+                parameters = _parameter_row(raw_parameters, BACKBONE_PARAMETERS)
+                phase = parameters["phase"]
                 pucker_label = None
                 if phase is not None:
                     pucker_index = int((phase % 360.0) / 36.0)
@@ -1395,27 +1399,10 @@ class BatchCurvesPlusMDAnalyzer:
                     "chain_id": chain_id,
                     "insertion_code": insertion_code,
                     "gap": False,
-                    "c1_c2": self._json_number(tor[4]),
-                    "c2_c3": self._json_number(tor[5]),
-                    "phase": phase,
-                    "amplitude": self._json_number(pucker[0]),
                     "pucker": pucker_label,
-                    "c1_prime": self._json_number(tor[0]),
-                    "c2_prime": self._json_number(tor[1]),
-                    "c3_prime": self._json_number(tor[2]),
-                    "chi": self._json_number(tor[12]),
-                    "gamma": self._json_number(tor[8]),
-                    "delta": self._json_number(tor[9]),
-                    "epsilon": self._json_number(tor[6]),
-                    "zeta": self._json_number(tor[7]),
-                    "alpha": self._json_number(tor[10]),
-                    "beta": self._json_number(tor[11]),
+                    **parameters,
                 }
-                parameter_names = (
-                    "c1_c2", "c2_c3", "phase", "amplitude", "c1_prime", "c2_prime",
-                    "c3_prime", "chi", "gamma", "delta", "epsilon", "zeta", "alpha", "beta",
-                )
-                missing_parameters = [name for name in parameter_names if row[name] is None]
+                missing_parameters = [name for name in BACKBONE_PARAMETERS if row[name] is None]
                 warnings = ["missing_parameter_values"] if missing_parameters else []
                 row.update({
                     "valid": not warnings,
