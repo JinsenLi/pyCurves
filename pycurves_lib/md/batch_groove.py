@@ -15,8 +15,10 @@ import numpy as np
 
 try:
     from numba import njit as _numba_njit
+    from numba import prange as _numba_prange
 except Exception:  # pragma: no cover - optional accelerator
     _numba_njit = None
+    _numba_prange = range
 
 
 GROOVE_ATOMS = ["C1'", "C2'", "C3'", "C4'", "O1'", "O3'", "P", "O5'", "C5'"]
@@ -116,8 +118,34 @@ def compute_batch_grooves(analyzer, coordinates: np.ndarray, frames: np.ndarray,
         uxb,
     )
 
-    rows_by_frame: List[List[Dict]] = []
     total_levels = abs(int(ctx.nu[0])) if hasattr(ctx, "nu") else int(ctx.nux)
+    raw_values = _scan_grooves_batch(
+        axis_tables["bp_axis"],
+        uxb,
+        cor,
+        dya,
+        ind,
+        nma,
+        box,
+        nsu,
+        spline_start,
+        num,
+        numa,
+        vdw,
+    )
+    if raw_values is not None:
+        return _groove_rows_from_batch(
+            analyzer,
+            raw_values,
+            nma,
+            num,
+            numa,
+            atom_name,
+            total_levels,
+            nlevel,
+        )
+
+    rows_by_frame: List[List[Dict]] = []
     for frame_index in range(coordinates.shape[0]):
         rows = _scan_groove_frame(
             analyzer,
@@ -888,11 +916,105 @@ def _scan_window_from_box_kernel(
     )
 
 
+def _scan_grooves_batch_kernel(
+    bp_axis,
+    uxb,
+    cor,
+    dya,
+    ind,
+    nma,
+    box,
+    nsu,
+    spline_start,
+    num,
+    numa,
+    vdw,
+):
+    """Scan all independent frame/level windows inside one compiled call."""
+    batch = box.shape[0]
+    level_count = numa - num + 1
+    max_sub = int(np.max(nma[:, num:numa + 1]))
+    output = np.full((batch, level_count, max_sub, 9), np.nan, dtype=np.float64)
+
+    for task in _numba_prange(batch * level_count):
+        frame = task // level_count
+        level_offset = task - frame * level_count
+        level = num + level_offset
+
+        lookup = min(max(level, 1), bp_axis.shape[1] - 1)
+        xdi0 = bp_axis[frame, lookup, 0]
+        tip0 = bp_axis[frame, lookup, 3]
+        if not (math.isfinite(xdi0) and math.isfinite(tip0)):
+            xdi0 = 0.0
+            tip0 = 0.0
+        if math.cos(math.radians(tip0)) < 0.0:
+            xdi0 = -xdi0
+
+        next_lookup = min(max(level + 1, 1), bp_axis.shape[1] - 1)
+        xdi1 = bp_axis[frame, next_lookup, 0]
+        tip1 = bp_axis[frame, next_lookup, 3]
+        if not (math.isfinite(xdi1) and math.isfinite(tip1)):
+            xdi1 = 0.0
+            tip1 = 0.0
+        if math.cos(math.radians(tip1)) < 0.0:
+            xdi1 = -xdi1
+
+        nmi = int(nma[frame, level])
+        for sub in range(nmi):
+            kpt = int(ind[frame, level, sub])
+            center = cor[frame, kpt]
+            dyad = dya[frame, kpt]
+            uvec = uxb[frame, level, sub]
+            tvec = np.empty(3, dtype=np.float64)
+            tvec[0] = uvec[1] * dyad[2] - uvec[2] * dyad[1]
+            tvec[1] = uvec[2] * dyad[0] - uvec[0] * dyad[2]
+            tvec[2] = uvec[0] * dyad[1] - uvec[1] * dyad[0]
+
+            first_center = 20 * (level - int(spline_start[0]))
+            second_center = 20 * (level - int(spline_start[1]))
+            inin = max(0, first_center - 110)
+            inma = min(int(nsu[0]), first_center + 90)
+            jnin = max(0, second_center - 110)
+            jnma = min(int(nsu[1]), second_center + 90)
+            values = _SCAN_WINDOW_FROM_BOX_FAST(
+                box[frame],
+                center,
+                dyad,
+                uvec,
+                tvec,
+                inin,
+                inma,
+                jnin,
+                jnma,
+                int(nsu[0]),
+                int(nsu[1]),
+                xdi0 - 3.0,
+                xdi0 + 4.0,
+                xdi1 - 3.0,
+                xdi1 + 4.0,
+                nmi,
+                sub,
+                vdw,
+            )
+            output[frame, level_offset, sub, 0] = values[0]
+            output[frame, level_offset, sub, 1] = values[1]
+            output[frame, level_offset, sub, 2] = values[2]
+            output[frame, level_offset, sub, 3] = values[3]
+            output[frame, level_offset, sub, 4] = values[4]
+            output[frame, level_offset, sub, 5] = values[5]
+            output[frame, level_offset, sub, 6] = values[6]
+            output[frame, level_offset, sub, 7] = values[7]
+            output[frame, level_offset, sub, 8] = values[8]
+    return output
+
+
 _SCAN_WINDOW_VALUES_FAST = None
 _SCAN_WINDOW_FROM_BOX_FAST = None
+_SCAN_GROOVES_BATCH_FAST = None
 if _numba_njit is not None:  # pragma: no cover - depends on optional numba
     _SCAN_WINDOW_VALUES_FAST = _numba_njit(cache=True)(_scan_window_values_kernel)
     _SCAN_WINDOW_FROM_BOX_FAST = _numba_njit(cache=True)(_scan_window_from_box_kernel)
+    _SCAN_GROOVES_BATCH_FAST = _numba_njit(cache=True, parallel=True)(_scan_grooves_batch_kernel)
 
 
 def _scan_window_values(*args):
@@ -917,12 +1039,106 @@ def _scan_window_from_box(*args):
         return None
 
 
+def _scan_grooves_batch(*args):
+    global _SCAN_GROOVES_BATCH_FAST
+    if _SCAN_GROOVES_BATCH_FAST is None:
+        return None
+    try:
+        return _SCAN_GROOVES_BATCH_FAST(*args)
+    except Exception:  # pragma: no cover - defensive fallback for optional JIT
+        _SCAN_GROOVES_BATCH_FAST = None
+        return None
+
+
 def _depth_reference(bp_axis: np.ndarray, level: int) -> Tuple[float, float]:
     lookup = min(max(int(level), 1), bp_axis.shape[0] - 1)
     values = bp_axis[lookup]
     if np.all(np.isfinite(values[[0, 3]])):
         return float(values[0]), float(values[3])
     return 0.0, 0.0
+
+
+def _groove_row(
+    analyzer,
+    raw_values,
+    level: int,
+    sub: int,
+    atom_name: str,
+    total_levels: int,
+    nlevel: int,
+) -> Dict:
+    values = []
+    for offset in (0, 3):
+        width = round(float(raw_values[offset]), 2) if np.isfinite(raw_values[offset]) else None
+        depth = round(float(raw_values[offset + 1]), 2) if np.isfinite(raw_values[offset + 1]) else None
+        angle = float(raw_values[offset + 2]) if np.isfinite(raw_values[offset + 2]) else None
+        values.extend((width, depth, angle))
+    diameter = round(float(raw_values[6]), 2) if np.isfinite(raw_values[6]) else None
+
+    label = analyzer._residue_labels.get((0, level))
+    label1 = analyzer._residue_labels.get((1, level))
+    if label and label1:
+        bp_name = f"{label[0]}-{label1[0]}"
+    elif label:
+        bp_name = f"{label[0]}-"
+    elif label1:
+        bp_name = f"-{label1[0]}"
+    else:
+        bp_name = ""
+    return {
+        "atom_defining_backbone": atom_name.strip(),
+        "total_levels": total_levels,
+        "total_sub_levels": nlevel,
+        "level": level,
+        "base_pair": bp_name,
+        "sub_level": sub,
+        "minor_width": _parameter_or_none(values[0]),
+        "minor_depth": _parameter_or_none(values[1]),
+        "minor_angle": _parameter_or_none(values[2]),
+        "major_width": _parameter_or_none(values[3]),
+        "major_depth": _parameter_or_none(values[4]),
+        "major_angle": _parameter_or_none(values[5]),
+        "diameter": _parameter_or_none(diameter),
+        "_minor_interpolated": bool(raw_values[7]),
+        "_major_interpolated": bool(raw_values[8]),
+    }
+
+
+def _finish_groove_rows(rows: List[Dict]) -> List[Dict]:
+    _clear_terminal_interpolated(rows, "minor")
+    _clear_terminal_interpolated(rows, "major")
+    for row in rows:
+        row.pop("_minor_interpolated", None)
+        row.pop("_major_interpolated", None)
+    return rows
+
+
+def _groove_rows_from_batch(
+    analyzer,
+    raw_values: np.ndarray,
+    nma: np.ndarray,
+    num: int,
+    numa: int,
+    atom_name: str,
+    total_levels: int,
+    nlevel: int,
+) -> List[List[Dict]]:
+    rows_by_frame = []
+    for frame in range(raw_values.shape[0]):
+        rows = []
+        for level in range(num, numa + 1):
+            for sub in range(int(nma[frame, level])):
+                rows.append(_groove_row(
+                    analyzer,
+                    raw_values[frame, level - num, sub],
+                    level,
+                    sub,
+                    atom_name,
+                    total_levels,
+                    nlevel,
+                ))
+        rows_by_frame.append(_finish_groove_rows(rows))
+    return rows_by_frame
 
 
 def _scan_groove_frame(
@@ -1049,58 +1265,17 @@ def _scan_groove_frame(
                     sub,
                     vdw,
                 )
-            width = [None, None]
-            depth = [None, None]
-            angle = [None, None]
-            for side_index, offset in enumerate((0, 3)):
-                raw_width = raw_values[offset]
-                raw_depth = raw_values[offset + 1]
-                raw_angle = raw_values[offset + 2]
-                if np.isfinite(raw_width):
-                    width[side_index] = round(float(raw_width), 2)
-                if np.isfinite(raw_depth):
-                    depth[side_index] = round(float(raw_depth), 2)
-                if np.isfinite(raw_angle):
-                    angle[side_index] = float(raw_angle)
-            raw_diameter = raw_values[6]
-            diameter = round(float(raw_diameter), 2) if np.isfinite(raw_diameter) else None
-            minor_interpolated = bool(raw_values[7])
-            major_interpolated = bool(raw_values[8])
+            rows.append(_groove_row(
+                analyzer,
+                raw_values,
+                level,
+                sub,
+                atom_name,
+                total_levels,
+                nlevel,
+            ))
 
-            label = analyzer._residue_labels.get((0, level))
-            label1 = analyzer._residue_labels.get((1, level))
-            if label and label1:
-                bp_name = f"{label[0]}-{label1[0]}"
-            elif label:
-                bp_name = f"{label[0]}-"
-            elif label1:
-                bp_name = f"-{label1[0]}"
-            else:
-                bp_name = ""
-            rows.append({
-                "atom_defining_backbone": atom_name.strip(),
-                "total_levels": total_levels,
-                "total_sub_levels": nlevel,
-                "level": level,
-                "base_pair": bp_name,
-                "sub_level": sub,
-                "minor_width": _parameter_or_none(width[0]),
-                "minor_depth": _parameter_or_none(depth[0]),
-                "minor_angle": _parameter_or_none(angle[0]),
-                "major_width": _parameter_or_none(width[1]),
-                "major_depth": _parameter_or_none(depth[1]),
-                "major_angle": _parameter_or_none(angle[1]),
-                "diameter": _parameter_or_none(diameter),
-                "_minor_interpolated": minor_interpolated,
-                "_major_interpolated": major_interpolated,
-            })
-
-    _clear_terminal_interpolated(rows, "minor")
-    _clear_terminal_interpolated(rows, "major")
-    for row in rows:
-        row.pop("_minor_interpolated", None)
-        row.pop("_major_interpolated", None)
-    return rows
+    return _finish_groove_rows(rows)
 
 
 def _clear_terminal_interpolated(rows: List[Dict], groove_name: str) -> None:
