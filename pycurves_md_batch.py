@@ -42,6 +42,7 @@ def _flush_batch(
         frame_indices,
         times,
         accumulator=summary_accumulator if mode == "both" else None,
+        collect_table_records=False,
     )
     if mode in {"per-frame", "both"}:
         if frame_sink is None:

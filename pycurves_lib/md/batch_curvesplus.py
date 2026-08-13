@@ -256,6 +256,14 @@ def _parameter_row(values: Optional[Sequence[float]], names: Sequence[str], **me
     return row
 
 
+def _json_array(values: np.ndarray) -> list:
+    """Convert one numerical batch to JSON-safe Python values in one pass."""
+    values = np.asarray(values, dtype=float)
+    result = values.astype(object)
+    result[~np.isfinite(values)] = None
+    return result.tolist()
+
+
 class BatchCurvesPlusMDAnalyzer:
     """Experimental vectorized MD path for standard-frame Curves+ analyses.
 
@@ -332,6 +340,7 @@ class BatchCurvesPlusMDAnalyzer:
             for level in range(1, self.ctx.nux + 1)
             if self._has_level(strand, level)
         }
+        self._row_templates = self._build_row_templates()
 
     @staticmethod
     def _resolve_inp(
@@ -529,12 +538,263 @@ class BatchCurvesPlusMDAnalyzer:
                 return int(residue_atoms[alias])
         return None
 
+    def _build_row_templates(self) -> Dict[str, List[Dict]]:
+        """Build frame-independent row metadata once for the trajectory."""
+        levels = self.ctx.nux + 1
+        templates = {
+            "local_inter_base": self._local_inter_base_rows(
+                np.full((self.ctx.nst, levels, len(STEP_PARAMETERS)), np.nan)
+            ),
+            "local_base_base": self._local_base_base_rows(
+                np.full((levels, len(BASE_BASE_PARAMETERS)), np.nan)
+            ),
+            "local_inter_base_pair": self._local_inter_base_pair_rows(
+                np.full((levels, len(STEP_PARAMETERS)), np.nan)
+            ),
+            "curvesplus_base_pair_axis": self._curvesplus_base_pair_axis_rows(
+                np.full((levels, len(AXIS_PARAMETERS)), np.nan),
+                np.full((levels, 2), np.nan),
+            ),
+            "backbone": self._backbone_rows(
+                np.full((self.ctx.nst, levels + 1, 13), np.nan),
+                np.full((self.ctx.nst, levels + 1, 2), np.nan),
+            ),
+        }
+        if self.include_curvesplus_axis_steps:
+            templates["curvesplus_inter_base_pair"] = templates["local_inter_base_pair"]
+        if self.include_fit_quality:
+            templates["base_fit_quality"] = self._base_fit_quality_rows(
+                np.full((self.ctx.nst, levels), np.nan)
+            )
+        return templates
+
+    @staticmethod
+    def _parameter_rows_from_batch(
+        values: np.ndarray,
+        names: Sequence[str],
+        templates: Sequence[Dict],
+        frame_indices: Sequence[int],
+        times: Sequence[Optional[float]],
+    ) -> List[List[Dict]]:
+        rows_by_frame = []
+        for frame_values, frame_id, time_value in zip(
+            _json_array(values), frame_indices, times
+        ):
+            rows = []
+            for template, row_values in zip(templates, frame_values):
+                row = template.copy()
+                row.update(zip(names, row_values))
+                row["frame"] = frame_id
+                row["time"] = time_value
+                rows.append(row)
+            rows_by_frame.append(rows)
+        return rows_by_frame
+
+    def _backbone_rows_from_batch(
+        self,
+        torsions: np.ndarray,
+        sugar_pucker: np.ndarray,
+        frame_indices: Sequence[int],
+        times: Sequence[Optional[float]],
+    ) -> List[List[Dict]]:
+        templates = self._row_templates["backbone"]
+        strands = np.fromiter((row["strand"] - 1 for row in templates), dtype=int)
+        levels = np.fromiter((row["level"] for row in templates), dtype=int)
+        tor = torsions[:, strands, levels]
+        pucker = sugar_pucker[:, strands, levels]
+        values = np.concatenate(
+            (
+                tor[:, :, 4:6],
+                pucker[:, :, [1, 0]],
+                tor[:, :, 0:3],
+                tor[:, :, 12:13],
+                tor[:, :, 8:10],
+                tor[:, :, 6:8],
+                tor[:, :, 10:12],
+            ),
+            axis=2,
+        )
+        gaps = np.fromiter((row["gap"] for row in templates), dtype=bool)
+        if np.any(gaps):
+            values[:, gaps] = np.nan
+
+        finite_by_frame = np.isfinite(values)
+        rows_by_frame = []
+        for frame_values, frame_finite, frame_id, time_value in zip(
+            _json_array(values), finite_by_frame, frame_indices, times
+        ):
+            rows = []
+            for template, row_values, finite in zip(templates, frame_values, frame_finite):
+                row = template.copy()
+                row.update(zip(BACKBONE_PARAMETERS, row_values))
+                phase = row["phase"]
+                if phase is None:
+                    pucker_label = None
+                else:
+                    pucker_index = max(
+                        0,
+                        min(len(SUGAR_PUCKERS) - 1, int((phase % 360.0) / 36.0)),
+                    )
+                    pucker_label = SUGAR_PUCKERS[pucker_index]
+
+                missing = [
+                    name for name, is_finite in zip(BACKBONE_PARAMETERS, finite)
+                    if not is_finite
+                ]
+                if template["gap"]:
+                    warnings = ["topology_gap", "missing_parameter_values"]
+                    status = "gap"
+                else:
+                    warnings = ["missing_parameter_values"] if missing else []
+                    status = "partial" if warnings else "complete"
+                row.update({
+                    "pucker": pucker_label,
+                    "valid": not warnings,
+                    "status": status,
+                    "warnings": warnings,
+                    "missing_parameters": missing,
+                    "frame": frame_id,
+                    "time": time_value,
+                })
+                rows.append(row)
+            rows_by_frame.append(rows)
+        return rows_by_frame
+
+    def _materialize_batch_rows(
+        self,
+        frame_indices: Sequence[int],
+        times: Sequence[Optional[float]],
+        local_inter_base: np.ndarray,
+        local_base_base: np.ndarray,
+        local_inter_bp: np.ndarray,
+        axis_tables: Dict[str, np.ndarray],
+        backbone_torsions: np.ndarray,
+        backbone_pucker: np.ndarray,
+        rmsd: np.ndarray,
+        groove_rows_by_frame: Optional[List[List[Dict]]],
+        collect_table_records: bool,
+    ) -> Tuple[List[Dict], Dict[str, List[Dict]]]:
+        frame_indices = [int(frame_id) for frame_id in frame_indices]
+        times = [None if value is None else float(value) for value in times]
+        templates = self._row_templates
+
+        local_templates = templates["local_inter_base"]
+        local_strands = np.fromiter((row["strand"] - 1 for row in local_templates), dtype=int)
+        local_levels = np.fromiter((row["level"] for row in local_templates), dtype=int)
+
+        pair_templates = templates["local_base_base"]
+        pair_levels = np.fromiter((row["level"] for row in pair_templates), dtype=int)
+
+        inter_pair_templates = templates["local_inter_base_pair"]
+        inter_pair_levels = np.fromiter((row["level"] for row in inter_pair_templates), dtype=int)
+
+        axis_templates = templates["curvesplus_base_pair_axis"]
+        axis_levels = np.fromiter((row["level"] for row in axis_templates), dtype=int)
+        axis_values = np.concatenate(
+            (
+                axis_tables["bp_axis"][:, axis_levels],
+                np.min(
+                    axis_tables["axis_support_weights"][:, axis_levels, :2],
+                    axis=2,
+                    keepdims=True,
+                ),
+            ),
+            axis=2,
+        )
+
+        table_rows = {
+            "local_inter_base": self._parameter_rows_from_batch(
+                local_inter_base[:, local_strands, local_levels],
+                STEP_PARAMETERS,
+                local_templates,
+                frame_indices,
+                times,
+            ),
+            "local_base_base": self._parameter_rows_from_batch(
+                local_base_base[:, pair_levels],
+                BASE_BASE_PARAMETERS,
+                pair_templates,
+                frame_indices,
+                times,
+            ),
+            "local_inter_base_pair": self._parameter_rows_from_batch(
+                local_inter_bp[:, inter_pair_levels],
+                STEP_PARAMETERS,
+                inter_pair_templates,
+                frame_indices,
+                times,
+            ),
+            "curvesplus_base_pair_axis": self._parameter_rows_from_batch(
+                axis_values,
+                AXIS_PARAMETERS + ("axis_weight",),
+                axis_templates,
+                frame_indices,
+                times,
+            ),
+            "backbone": self._backbone_rows_from_batch(
+                backbone_torsions,
+                backbone_pucker,
+                frame_indices,
+                times,
+            ),
+        }
+
+        if self.include_grooves:
+            groove_rows = groove_rows_by_frame or [[] for _ in frame_indices]
+            for rows, frame_id, time_value in zip(groove_rows, frame_indices, times):
+                for row in rows:
+                    row["frame"] = frame_id
+                    row["time"] = time_value
+            table_rows["groove"] = groove_rows
+
+        if self.include_curvesplus_axis_steps:
+            table_rows["curvesplus_inter_base_pair"] = self._parameter_rows_from_batch(
+                axis_tables["inter_bp"][:, inter_pair_levels],
+                STEP_PARAMETERS,
+                templates["curvesplus_inter_base_pair"],
+                frame_indices,
+                times,
+            )
+
+        if self.include_fit_quality:
+            fit_templates = templates["base_fit_quality"]
+            fit_strands = np.fromiter((row["strand"] - 1 for row in fit_templates), dtype=int)
+            fit_levels = np.fromiter((row["level"] for row in fit_templates), dtype=int)
+            table_rows["base_fit_quality"] = self._parameter_rows_from_batch(
+                rmsd[:, fit_strands, fit_levels, None],
+                ("rmsd",),
+                fit_templates,
+                frame_indices,
+                times,
+            )
+
+        batch_rows = [
+            {
+                "frame": frame_id,
+                "time": time_value,
+                "dataframes": {
+                    name: rows_by_frame[batch_index]
+                    for name, rows_by_frame in table_rows.items()
+                },
+            }
+            for batch_index, (frame_id, time_value) in enumerate(zip(frame_indices, times))
+        ]
+        table_records = (
+            {
+                name: [row for rows in rows_by_frame for row in rows]
+                for name, rows_by_frame in table_rows.items()
+            }
+            if collect_table_records else {}
+        )
+        return batch_rows, table_records
+
     def analyze_batch(
         self,
         coordinates: np.ndarray,
         frame_indices: Sequence[int],
         times: Sequence[Optional[float]],
         accumulator=None,
+        collect_table_records: bool = True,
     ) -> Tuple[List[Dict], Dict[str, List[Dict]]]:
         coordinates = np.asarray(coordinates, dtype=float)
         if coordinates.ndim != 3 or coordinates.shape[1:] != self.template_molecule.coordinates.shape:
@@ -553,20 +813,6 @@ class BatchCurvesPlusMDAnalyzer:
             if self.include_grooves else None
         )
 
-        batch_rows = []
-        table_records: Dict[str, List[Dict]] = {
-            "local_inter_base": [],
-            "local_base_base": [],
-            "local_inter_base_pair": [],
-            "curvesplus_base_pair_axis": [],
-            "backbone": [],
-        }
-        if self.include_grooves:
-            table_records["groove"] = []
-        if self.include_curvesplus_axis_steps:
-            table_records["curvesplus_inter_base_pair"] = []
-        if self.include_fit_quality:
-            table_records["base_fit_quality"] = []
         local_inter_bp = self._local_inter_base_pair(pair_frames)
         if accumulator is not None:
             self._accumulate_precomputed_summary(
@@ -581,31 +827,19 @@ class BatchCurvesPlusMDAnalyzer:
                 groove_rows_by_frame,
             )
 
-        for batch_index, (frame_id, time_value) in enumerate(zip(frame_indices, times)):
-            dataframes = {
-                "local_inter_base": self._local_inter_base_rows(local_inter_base[batch_index]),
-                "local_base_base": self._local_base_base_rows(local_base_base[batch_index]),
-                "local_inter_base_pair": self._local_inter_base_pair_rows(local_inter_bp[batch_index]),
-                "curvesplus_base_pair_axis": self._curvesplus_base_pair_axis_rows(
-                    axis_tables["bp_axis"][batch_index],
-                    axis_tables["axis_support_weights"][batch_index],
-                ),
-                "backbone": self._backbone_rows(backbone_torsions[batch_index], backbone_pucker[batch_index]),
-            }
-            if self.include_grooves:
-                dataframes["groove"] = groove_rows_by_frame[batch_index] if groove_rows_by_frame is not None else []
-            if self.include_curvesplus_axis_steps:
-                dataframes["curvesplus_inter_base_pair"] = self._curvesplus_inter_base_pair_rows(axis_tables["inter_bp"][batch_index])
-            if self.include_fit_quality:
-                dataframes["base_fit_quality"] = self._base_fit_quality_rows(rmsd[batch_index])
-            for rows in dataframes.values():
-                for row in rows:
-                    row["frame"] = int(frame_id)
-                    row["time"] = None if time_value is None else float(time_value)
-            for name, rows in dataframes.items():
-                table_records[name].extend(rows)
-            batch_rows.append({"frame": int(frame_id), "time": None if time_value is None else float(time_value), "dataframes": dataframes})
-        return batch_rows, table_records
+        return self._materialize_batch_rows(
+            frame_indices,
+            times,
+            local_inter_base,
+            local_base_base,
+            local_inter_bp,
+            axis_tables,
+            backbone_torsions,
+            backbone_pucker,
+            rmsd,
+            groove_rows_by_frame,
+            collect_table_records,
+        )
 
     def accumulate_batch_summary(
         self,
