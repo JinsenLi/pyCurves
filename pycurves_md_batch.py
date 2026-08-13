@@ -263,7 +263,7 @@ def analyze_trajectory_batch(
     start: Optional[int] = None,
     stop: Optional[int] = None,
     step: int = 1,
-    batch_size: int = 128,
+    batch_size: int = 256,
     mode: str = "per-frame",
     continuous_strands: bool = False,
     altloc: Optional[str] = None,
@@ -333,7 +333,7 @@ def main() -> None:
     parser.add_argument("--start", type=int, help="First frame index to include.")
     parser.add_argument("--stop", type=int, help="Stop before this frame index.")
     parser.add_argument("--step", type=int, default=1, help="Frame stride.")
-    parser.add_argument("--batch-size", type=int, default=128, help="Number of selected frames processed per vectorized batch.")
+    parser.add_argument("--batch-size", type=int, default=256, help="Number of selected frames processed per vectorized batch.")
     parser.add_argument("--continuous-strands", action="store_true", help="Treat connected helical components as continuous during .inp inference.")
     parser.add_argument("--altloc", help="Alternate conformation such as A or B; default keeps Gemmi's first-listed conformer.")
     parser.add_argument("--fit", action=argparse.BooleanOptionalAction, default=None, help="Override least-squares base fitting; batch mode currently requires true.")

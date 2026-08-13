@@ -1123,21 +1123,60 @@ def _groove_rows_from_batch(
     total_levels: int,
     nlevel: int,
 ) -> List[List[Dict]]:
+    finite = np.isfinite(raw_values[..., :7])
+    sublevels = np.arange(raw_values.shape[2])[None, None, :]
+    active = sublevels < nma[:, num:numa + 1, None]
+
+    # Clear terminal interpolated values before creating Python dictionaries.
+    for value_index, flag_index in ((0, 7), (3, 8)):
+        finite_width = (finite[..., value_index] & active).reshape(raw_values.shape[0], -1)
+        interpolated = raw_values[..., flag_index].astype(bool).reshape(raw_values.shape[0], -1)
+        anchors = finite_width & ~interpolated
+        bounded = (
+            np.maximum.accumulate(anchors, axis=1)
+            & np.maximum.accumulate(anchors[:, ::-1], axis=1)[:, ::-1]
+        )
+        clear = (finite_width & interpolated & ~bounded).reshape(active.shape)
+        finite[..., value_index:value_index + 3] &= ~clear[..., None]
+
+    base_pairs = []
+    for level in range(num, numa + 1):
+        label = analyzer._residue_labels.get((0, level))
+        label1 = analyzer._residue_labels.get((1, level))
+        if label and label1:
+            base_pairs.append(f"{label[0]}-{label1[0]}")
+        elif label:
+            base_pairs.append(f"{label[0]}-")
+        elif label1:
+            base_pairs.append(f"-{label1[0]}")
+        else:
+            base_pairs.append("")
+
+    atom_name = atom_name.strip()
     rows_by_frame = []
     for frame in range(raw_values.shape[0]):
         rows = []
         for level in range(num, numa + 1):
+            level_index = level - num
             for sub in range(int(nma[frame, level])):
-                rows.append(_groove_row(
-                    analyzer,
-                    raw_values[frame, level - num, sub],
-                    level,
-                    sub,
-                    atom_name,
-                    total_levels,
-                    nlevel,
-                ))
-        rows_by_frame.append(_finish_groove_rows(rows))
+                values = raw_values[frame, level_index, sub]
+                is_finite = finite[frame, level_index, sub]
+                rows.append({
+                    "atom_defining_backbone": atom_name,
+                    "total_levels": total_levels,
+                    "total_sub_levels": nlevel,
+                    "level": level,
+                    "base_pair": base_pairs[level_index],
+                    "sub_level": sub,
+                    "minor_width": round(float(values[0]), 2) if is_finite[0] else None,
+                    "minor_depth": round(float(values[1]), 2) if is_finite[1] else None,
+                    "minor_angle": float(values[2]) if is_finite[2] else None,
+                    "major_width": round(float(values[3]), 2) if is_finite[3] else None,
+                    "major_depth": round(float(values[4]), 2) if is_finite[4] else None,
+                    "major_angle": float(values[5]) if is_finite[5] else None,
+                    "diameter": round(float(values[6]), 2) if is_finite[6] else None,
+                })
+        rows_by_frame.append(rows)
     return rows_by_frame
 
 
