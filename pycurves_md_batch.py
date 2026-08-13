@@ -211,12 +211,13 @@ def _write_streamed_json(args) -> Dict:
                     for frame in frames:
                         if not first_frame:
                             stream.write(",")
-                        json.dump(
-                            _to_jsonable(frame),
-                            stream,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            allow_nan=False,
+                        stream.write(
+                            json.dumps(
+                                frame,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                allow_nan=False,
+                            )
                         )
                         first_frame = False
 
