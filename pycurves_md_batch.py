@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -28,6 +29,7 @@ def _flush_batch(
     mode: str,
     frame_payloads: List[Dict],
     summary_accumulator: Optional[BatchSummaryAccumulator] = None,
+    frame_sink: Optional[Callable[[List[Dict]], None]] = None,
 ) -> int:
     if not coordinates:
         return 0
@@ -42,7 +44,10 @@ def _flush_batch(
         accumulator=summary_accumulator if mode == "both" else None,
     )
     if mode in {"per-frame", "both"}:
-        frame_payloads.extend(batch_frames)
+        if frame_sink is None:
+            frame_payloads.extend(batch_frames)
+        else:
+            frame_sink(batch_frames)
     return len(coordinates)
 
 
@@ -69,7 +74,7 @@ def _write_csv_payload(payload: Dict, prefix: str) -> None:
             MDTrajectoryAnalyzer._write_rows_csv(f"{prefix}_{name}_frames.csv", rows)
 
 
-def run_batch(args) -> Dict:
+def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -> Dict:
     if args.axis_convention.lower().replace("-", "_") not in {"curvesplus", "curves_plus", "curves+", "canal"}:
         raise SystemExit("pycurves-md-batch currently supports only --axis-convention curvesplus.")
     if args.frame_convention.lower().replace("-", "_") not in {"standard", "curvesplus", "curves_plus", "curves+", "x3dna", "3dna"}:
@@ -115,6 +120,7 @@ def run_batch(args) -> Dict:
                 args.mode,
                 frame_payloads,
                 summary_accumulator,
+                frame_sink,
             )
             coordinates.clear()
             frame_indices.clear()
@@ -128,6 +134,7 @@ def run_batch(args) -> Dict:
         args.mode,
         frame_payloads,
         summary_accumulator,
+        frame_sink,
     )
     if processed == 0:
         raise SystemExit("No trajectory frames matched the requested frame selection.")
@@ -167,11 +174,80 @@ def run_batch(args) -> Dict:
             "axis_convention": "curvesplus",
         },
     }
-    if args.mode in {"per-frame", "both"}:
+    if args.mode in {"per-frame", "both"} and frame_sink is None:
         payload["frames"] = frame_payloads
     if args.mode in {"summary", "both"}:
         payload["summary"] = summary_accumulator.to_summary() if summary_accumulator is not None else {}
     return payload
+
+
+def _write_streamed_json(args) -> Dict:
+    """Write frame batches as they finish, then atomically publish the JSON file."""
+    output_path = Path(args.output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Optional[Path] = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=output_path.parent,
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            stream.write("{")
+            first_member = True
+            frame_sink = None
+
+            if args.mode in {"per-frame", "both"}:
+                stream.write('"frames":[')
+                first_frame = True
+
+                def write_frames(frames: List[Dict]) -> None:
+                    nonlocal first_frame
+                    for frame in frames:
+                        if not first_frame:
+                            stream.write(",")
+                        json.dump(
+                            _to_jsonable(frame),
+                            stream,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            allow_nan=False,
+                        )
+                        first_frame = False
+
+                frame_sink = write_frames
+                first_member = False
+
+            payload = run_batch(args, frame_sink=frame_sink)
+
+            if frame_sink is not None:
+                stream.write("]")
+            for key, value in payload.items():
+                if not first_member:
+                    stream.write(",")
+                json.dump(key, stream, ensure_ascii=False)
+                stream.write(":")
+                json.dump(
+                    _to_jsonable(value),
+                    stream,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+                first_member = False
+            stream.write("}\n")
+
+        temporary_path.replace(output_path)
+        return payload
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def analyze_trajectory_batch(
@@ -273,16 +349,13 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        payload = run_batch(args)
+        if args.format == "json":
+            payload = _write_streamed_json(args)
+        else:
+            payload = run_batch(args)
+            _write_csv_payload(payload, args.output_file.removesuffix(".csv"))
     except (ValueError, ImportError, NotImplementedError) as exc:
         raise SystemExit(str(exc)) from exc
-
-    if args.format == "json":
-        output_path = Path(args.output_file)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(_to_jsonable(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    else:
-        _write_csv_payload(payload, args.output_file.removesuffix(".csv"))
 
     generated = payload["inputs"].get("generated_inpfiles") or []
     if generated:
@@ -294,5 +367,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
