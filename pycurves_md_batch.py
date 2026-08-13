@@ -11,6 +11,11 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 from tqdm import tqdm
 
+try:
+    import msgspec
+except ImportError:  # pragma: no cover - exercised by minimal installations
+    msgspec = None
+
 from pycurves_lib.io.curves_output import _to_jsonable
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 from pycurves_lib.md.trajectory_statistics import (
@@ -19,6 +24,17 @@ from pycurves_lib.md.trajectory_statistics import (
 from pycurves_lib.md.batch_curvesplus import BatchCurvesPlusMDAnalyzer
 
 from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
+
+
+def _encode_json(value) -> bytes:
+    if msgspec is not None:
+        return msgspec.json.encode(value)
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def _flush_batch(
@@ -190,37 +206,29 @@ def _write_streamed_json(args) -> Dict:
 
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="\n",
+            mode="wb",
             dir=output_path.parent,
             prefix=f".{output_path.name}.",
             suffix=".tmp",
             delete=False,
         ) as stream:
             temporary_path = Path(stream.name)
-            stream.write("{")
+            stream.write(b"{")
             first_member = True
             frame_sink = None
 
             if args.mode in {"per-frame", "both"}:
-                stream.write('"frames":[')
+                stream.write(b'"frames":[')
                 first_frame = True
 
                 def write_frames(frames: List[Dict]) -> None:
                     nonlocal first_frame
-                    for frame in frames:
-                        if not first_frame:
-                            stream.write(",")
-                        stream.write(
-                            json.dumps(
-                                frame,
-                                ensure_ascii=False,
-                                separators=(",", ":"),
-                                allow_nan=False,
-                            )
-                        )
-                        first_frame = False
+                    if not frames:
+                        return
+                    if not first_frame:
+                        stream.write(b",")
+                    stream.write(_encode_json(frames)[1:-1])
+                    first_frame = False
 
                 frame_sink = write_frames
                 first_member = False
@@ -228,21 +236,15 @@ def _write_streamed_json(args) -> Dict:
             payload = run_batch(args, frame_sink=frame_sink)
 
             if frame_sink is not None:
-                stream.write("]")
+                stream.write(b"]")
             for key, value in payload.items():
                 if not first_member:
-                    stream.write(",")
-                json.dump(key, stream, ensure_ascii=False)
-                stream.write(":")
-                json.dump(
-                    _to_jsonable(value),
-                    stream,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    allow_nan=False,
-                )
+                    stream.write(b",")
+                stream.write(_encode_json(key))
+                stream.write(b":")
+                stream.write(_encode_json(_to_jsonable(value)))
                 first_member = False
-            stream.write("}\n")
+            stream.write(b"}\n")
 
         temporary_path.replace(output_path)
         return payload

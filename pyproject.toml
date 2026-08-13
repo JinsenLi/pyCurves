@@ -28,6 +28,7 @@ all = [
   "mdtraj>=1.9",
   "numba>=0.59",
   "ijson>=3.2",
+  "msgspec>=0.18",
   "matplotlib>=3.7",
   "python-dateutil>=2.8",
 ]
