@@ -619,34 +619,44 @@ class BatchCurvesPlusMDAnalyzer:
             values[:, gaps] = np.nan
 
         finite_by_frame = np.isfinite(values)
+        complete_by_frame = np.all(finite_by_frame, axis=2)
+        pucker_by_frame = np.full(values.shape[:2], None, dtype=object)
+        phase = values[:, :, 2]
+        finite_phase = finite_by_frame[:, :, 2]
+        if np.any(finite_phase):
+            pucker_indices = np.clip(
+                (np.mod(phase[finite_phase], 360.0) / 36.0).astype(int),
+                0,
+                len(SUGAR_PUCKERS) - 1,
+            )
+            pucker_by_frame[finite_phase] = np.asarray(SUGAR_PUCKERS, dtype=object)[pucker_indices]
+
         rows_by_frame = []
-        for frame_values, frame_finite, frame_id, time_value in zip(
-            _json_array(values), finite_by_frame, frame_indices, times
+        for frame_values, frame_finite, frame_complete, frame_pucker, frame_id, time_value in zip(
+            _json_array(values), finite_by_frame, complete_by_frame,
+            pucker_by_frame, frame_indices, times,
         ):
             rows = []
-            for template, row_values, finite in zip(templates, frame_values, frame_finite):
+            for template, row_values, finite, complete, pucker_label in zip(
+                templates, frame_values, frame_finite, frame_complete, frame_pucker
+            ):
                 row = template.copy()
                 row.update(zip(BACKBONE_PARAMETERS, row_values))
-                phase = row["phase"]
-                if phase is None:
-                    pucker_label = None
-                else:
-                    pucker_index = max(
-                        0,
-                        min(len(SUGAR_PUCKERS) - 1, int((phase % 360.0) / 36.0)),
-                    )
-                    pucker_label = SUGAR_PUCKERS[pucker_index]
-
-                missing = [
-                    name for name, is_finite in zip(BACKBONE_PARAMETERS, finite)
-                    if not is_finite
-                ]
                 if template["gap"]:
+                    missing = list(BACKBONE_PARAMETERS)
                     warnings = ["topology_gap", "missing_parameter_values"]
                     status = "gap"
+                elif complete:
+                    missing = []
+                    warnings = []
+                    status = "complete"
                 else:
-                    warnings = ["missing_parameter_values"] if missing else []
-                    status = "partial" if warnings else "complete"
+                    missing = [
+                        name for name, is_finite in zip(BACKBONE_PARAMETERS, finite)
+                        if not is_finite
+                    ]
+                    warnings = ["missing_parameter_values"]
+                    status = "partial"
                 row.update({
                     "pucker": pucker_label,
                     "valid": not warnings,
