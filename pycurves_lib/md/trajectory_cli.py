@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from pycurves_lib.core.curves_dataclasses import MolecularStructure
 from pycurves_lib.io.curves_mol_loader import MolecularLoader
-from pycurves_lib.io.curves_output import CurvesOutputFormatter, _to_jsonable
+from pycurves_lib.io.curves_output import CurvesOutputFormatter, _json_dumps, _to_jsonable
 from pycurves_lib.curves_wrapper import CurvesWrapper
 from pycurves_lib.cli.pycurves_cli_options import (
     add_pycurves_analysis_options,
@@ -145,13 +145,14 @@ class MDTrajectoryAnalyzer:
             formatter = CurvesOutputFormatter(runner)
             dataframes = self._normalize_frame_dataframes(formatter._build_dataframes())
 
-            for table_name, rows in dataframes.items():
-                if isinstance(rows, list):
-                    for row in rows:
-                        row = dict(row)
-                        row["frame"] = frame.index
-                        row["time"] = frame.time
-                        table_records.setdefault(table_name, []).append(row)
+            if mode in {"summary", "both"}:
+                for table_name, rows in dataframes.items():
+                    if isinstance(rows, list):
+                        for row in rows:
+                            row = dict(row)
+                            row["frame"] = frame.index
+                            row["time"] = frame.time
+                            table_records.setdefault(table_name, []).append(row)
 
             if mode in {"per-frame", "both"}:
                 frame_payloads.append({
@@ -698,7 +699,7 @@ def main() -> None:
         raise SystemExit(str(exc)) from exc
 
     if args.format == "json":
-        Path(args.output_file).write_text(json.dumps(_to_jsonable(payload), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        Path(args.output_file).write_text(_json_dumps(payload), encoding="utf-8")
     else:
         analyzer.write_csv(payload, args.output_file.removesuffix(".csv"))
 

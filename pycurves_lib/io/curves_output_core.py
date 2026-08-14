@@ -10,6 +10,11 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+try:
+    import msgspec
+except ImportError:  # pragma: no cover - exercised by minimal installations
+    msgspec = None
+
 from pycurves_lib.data.modified_bases import parent_base_name
 from pycurves_lib.topology.base_annotations import (
     annotate_context,
@@ -31,6 +36,25 @@ def _to_jsonable(value: Any):
     if isinstance(value, (list, tuple)):
         return [_to_jsonable(v) for v in value]
     return value
+
+
+def _json_encode_hook(value: Any):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Unsupported JSON value: {type(value).__name__}")
+
+
+def _json_dumps(value: Any) -> str:
+    """Return compact JSON, using msgspec directly when it is installed."""
+    if msgspec is not None:
+        return msgspec.json.encode(value, enc_hook=_json_encode_hook).decode("utf-8") + "\n"
+    return json.dumps(
+        _to_jsonable(value),
+        separators=(",", ":"),
+        allow_nan=False,
+    ) + "\n"
 
 
 def _all_finite(values) -> bool:
@@ -167,6 +191,9 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         return "\n\n".join(piece for piece in pieces if piece) + "\n"
 
     def render_json(self) -> str:
+        return _json_dumps(self._build_json_payload())
+
+    def _build_json_payload(self) -> Dict[str, Any]:
         self._require_results()
         dataframes = self._build_dataframes()
         payload = {
@@ -184,7 +211,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         }
         if self.include_visualization:
             payload["visualization"] = self._visualization_payload(dataframes)
-        return json.dumps(_to_jsonable(payload), indent=2, allow_nan=False) + "\n"
+        return payload
 
     def _frame_convention_payload(self) -> Dict[str, Any]:
         cfg = self.runner.ctx.cfg
