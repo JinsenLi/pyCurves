@@ -24,7 +24,7 @@ pip install .
 
 That is enough for static PDB/mmCIF analysis and `.inp` generation.
 
-For trajectory readers, plotting, the experimental batch MD path, and legacy
+For trajectory readers, plotting, the batch MD path, and legacy
 compatibility helpers, install the single full optional set:
 
 ```bash
@@ -105,7 +105,7 @@ available when those workflows are needed.
   `[tWH]`, and `[tSS]`.
 - Text, JSON, and CSV outputs for local/global helical parameters, grooves,
   backbone torsions, curvature, and annotations.
-- MD trajectory analysis and an experimental vectorized Curves+ batch path.
+- MD trajectory analysis and a vectorized Curves+ batch path.
 - Optional HTML viewer payload generation.
 
 ## Important CLI Options
@@ -250,7 +250,7 @@ Store both per-frame rows and summary statistics:
 pycurves-md topology.pdb trajectory.dcd --mode both --format json --output-file dynamics_full.json
 ```
 
-For canonical two-strand Curves+/standard-frame trajectories, the experimental
+For canonical two-strand Curves+/standard-frame trajectories, the vectorized
 batch path can be much faster:
 
 ```bash

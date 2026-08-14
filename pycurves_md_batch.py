@@ -164,7 +164,7 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
         "selection": {
             **selection,
             "processed_frames": processed,
-            "engine": "experimental_batch_curvesplus",
+            "engine": "batch_curvesplus",
         },
         "frame_convention": {
             "name": "standard",
@@ -261,8 +261,8 @@ def analyze_trajectory_batch(
     """Run the vectorized Curves+/standard-frame MD path from Python.
 
     This is the notebook-friendly equivalent of ``pycurves-md-batch``. It is
-    intended for canonical, standard-frame analyses where the experimental
-    batch engine is applicable.
+    intended for canonical, standard-frame analyses supported by the batch
+    engine.
     """
     if mode not in {"per-frame", "summary", "both"}:
         raise ValueError("mode must be one of: per-frame, summary, both")
@@ -299,7 +299,7 @@ def analyze_trajectory_batch(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Experimental vectorized pyCurves MD runner for standard-frame "
+            "Vectorized pyCurves MD runner for standard-frame "
             "Curves+ axis analyses."
         )
     )

@@ -265,12 +265,11 @@ def _json_array(values: np.ndarray) -> list:
 
 
 class BatchCurvesPlusMDAnalyzer:
-    """Experimental vectorized MD path for standard-frame Curves+ analyses.
+    """Vectorized MD path for standard-frame Curves+ analyses.
 
-    This intentionally supports a narrow subset first: combined two-strand
-    duplexes with standard base fitting and Curves+ smooth-axis output.  It is
-    designed as a validation target before these kernels are moved into the
-    regular static-structure path.
+    Supports combined two-strand duplexes with standard base fitting and
+    Curves+ smooth-axis output. Unsupported combinations remain available
+    through the general frame-by-frame analyzer.
     """
 
     def __init__(

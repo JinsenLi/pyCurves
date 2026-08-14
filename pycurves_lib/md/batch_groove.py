@@ -1,4 +1,4 @@
-"""Batched groove helpers for the experimental Curves+ MD path.
+"""Batched groove helpers for the vectorized Curves+ MD path.
 
 The legacy Curves groove routine is a stateful scanner over two interpolated
 backbone splines.  This module keeps the scanner faithful to the translated
