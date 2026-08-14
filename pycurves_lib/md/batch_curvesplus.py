@@ -1361,16 +1361,36 @@ class BatchCurvesPlusMDAnalyzer:
             support = np.ones((batch, self.ctx.nux + 1, self.ctx.nst), dtype=float)
         support = np.asarray(support, dtype=float)[:, :self.ctx.nux + 1, :self.ctx.nst]
         level_support = np.max(support, axis=2)
+        edge_lowers = []
+        edge_uppers = []
+        edge_strands = []
+        edge_weights = []
         for upper in range(2, self.ctx.nux + 1):
             lower = upper - 1
             for strand in range(self.ctx.nst):
                 if not (self._has_level(strand, lower) and self._has_level(strand, upper)):
                     continue
                 edge_weight = np.minimum(support[:, lower, strand], support[:, upper, strand])
+                if np.any(edge_weight > 0.0):
+                    edge_lowers.append(lower)
+                    edge_uppers.append(upper)
+                    edge_strands.append(strand)
+                    edge_weights.append(edge_weight)
+
+        if edge_lowers:
+            lower_indices = np.asarray(edge_lowers, dtype=int)
+            upper_indices = np.asarray(edge_uppers, dtype=int)
+            strand_indices = np.asarray(edge_strands, dtype=int)
+            edge_axes, edge_points = self._curvesplus_screw_axis(
+                ref[:, lower_indices, strand_indices],
+                ref[:, upper_indices, strand_indices],
+            )
+            for edge_index, (lower, upper, edge_weight) in enumerate(zip(
+                edge_lowers, edge_uppers, edge_weights
+            )):
                 active = edge_weight > 0.0
-                if not np.any(active):
-                    continue
-                axis, point = self._curvesplus_screw_axis(ref[:, lower, strand], ref[:, upper, strand])
+                axis = edge_axes[:, edge_index]
+                point = edge_points[:, edge_index]
                 for level in (lower, upper):
                     origin = upm[:, level, 3, :]
                     projected = point + np.sum((origin - point) * axis, axis=1, keepdims=True) * axis
@@ -1399,52 +1419,70 @@ class BatchCurvesPlusMDAnalyzer:
             weights[offset] = weight
             weights[-offset] = weight
 
-        for level in range(1, self.ctx.nux + 1):
-            origin = upm[:, level, 3, :]
-            level_axis_sum = np.zeros((batch, 3), dtype=float)
-            level_point_sum = np.zeros((batch, 3), dtype=float)
-            weight_sum = np.zeros(batch, dtype=float)
-            for offset in range(-width, width + 1):
-                source = level + offset
-                if source < 1 or source > self.ctx.nux:
-                    continue
-                axis = averaged[:, source, :3]
-                point = averaged[:, source, 3:]
-                lower, upper = sorted((level, source))
-                connected = np.all(level_support[:, lower:upper + 1] > 0.0, axis=1)
-                source_valid = (np.linalg.norm(axis, axis=1) > 1e-12) & connected
-                if not np.any(source_valid):
-                    continue
-                weight = weights[offset] * level_support[:, source]
-                projected = point + np.sum((origin - point) * axis, axis=1, keepdims=True) * axis
-                level_axis_sum[source_valid] += axis[source_valid] * weight[source_valid, None]
-                level_point_sum[source_valid] += projected[source_valid] * weight[source_valid, None]
-                weight_sum[source_valid] += weight[source_valid]
-            axis = _unit(level_axis_sum, upm[:, level, 2, :])
-            point = np.divide(level_point_sum, weight_sum[:, None], out=np.full_like(level_point_sum, np.nan), where=weight_sum[:, None] > 0)
-            point = point + np.sum((origin - point) * axis, axis=1, keepdims=True) * axis
-            uvw[:, level, 2, :] = axis
-            uvw[:, level, 3, :] = point
-            unsupported = level_support[:, level] <= 0.0
-            uvw[unsupported, level, 2:, :] = np.nan
+        levels = np.arange(1, self.ctx.nux + 1)
+        origins = upm[:, levels, 3, :]
+        level_axis_sum = np.zeros((batch, self.ctx.nux, 3), dtype=float)
+        level_point_sum = np.zeros_like(level_axis_sum)
+        weight_sum = np.zeros((batch, self.ctx.nux), dtype=float)
+        unsupported_prefix = np.concatenate((
+            np.zeros((batch, 1), dtype=int),
+            np.cumsum(level_support <= 0.0, axis=1),
+        ), axis=1)
+        for offset in range(-width, width + 1):
+            sources = levels + offset
+            in_bounds = (sources >= 1) & (sources <= self.ctx.nux)
+            safe_sources = np.clip(sources, 1, self.ctx.nux)
+            lower = np.minimum(levels, safe_sources)
+            upper = np.maximum(levels, safe_sources)
+            connected = (
+                unsupported_prefix[:, upper + 1] - unsupported_prefix[:, lower] == 0
+            ) & in_bounds[None, :]
+            axis = averaged[:, safe_sources, :3]
+            point = averaged[:, safe_sources, 3:]
+            source_valid = (np.linalg.norm(axis, axis=2) > 1e-12) & connected
+            if not np.any(source_valid):
+                continue
+            weight = weights[offset] * level_support[:, safe_sources]
+            projected = point + np.sum((origins - point) * axis, axis=2, keepdims=True) * axis
+            level_axis_sum[source_valid] += axis[source_valid] * weight[source_valid, None]
+            level_point_sum[source_valid] += projected[source_valid] * weight[source_valid, None]
+            weight_sum[source_valid] += weight[source_valid]
+
+        axis = _unit(level_axis_sum, upm[:, levels, 2, :])
+        point = np.divide(
+            level_point_sum,
+            weight_sum[:, :, None],
+            out=np.full_like(level_point_sum, np.nan),
+            where=weight_sum[:, :, None] > 0,
+        )
+        point = point + np.sum((origins - point) * axis, axis=2, keepdims=True) * axis
+        unsupported = level_support[:, levels] <= 0.0
+        axis[unsupported] = np.nan
+        point[unsupported] = np.nan
+        uvw[:, levels, 2, :] = axis
+        uvw[:, levels, 3, :] = point
         return uvw
 
     def _curvesplus_screw_axis(self, first: np.ndarray, second: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        matrix = _rotation_matrix_first_to_second(first[:, :3, :], second[:, :3, :])
-        rotvec = Rotation.from_matrix(matrix).as_rotvec()
-        theta = np.linalg.norm(rotvec, axis=1)
-        vector = second[:, 3, :] - first[:, 3, :]
+        matrix = _rotation_matrix_first_to_second(first[..., :3, :], second[..., :3, :])
+        rotvec = Rotation.from_matrix(matrix.reshape(-1, 3, 3)).as_rotvec().reshape(
+            matrix.shape[:-2] + (3,)
+        )
+        theta = np.linalg.norm(rotvec, axis=-1)
+        vector = second[..., 3, :] - first[..., 3, :]
         axis = np.zeros_like(vector)
         small = theta < 1e-10
         if np.any(~small):
-            axis[~small] = rotvec[~small] / theta[~small, None]
+            axis[~small] = rotvec[~small] / theta[~small][:, None]
         if np.any(small):
-            axis[small] = _unit(vector[small], first[small, 2, :])
-        axial_distance = np.sum(axis * vector, axis=1, keepdims=True)
+            axis[small] = _unit(vector[small], first[..., 2, :][small])
+        axial_distance = np.sum(axis * vector, axis=-1, keepdims=True)
         half_perp = (vector - axial_distance * axis) / 2.0
-        point = (first[:, 3, :] + second[:, 3, :]) / 2.0
+        point = (first[..., 3, :] + second[..., 3, :]) / 2.0
         if np.any(~small):
-            point[~small] += np.cross(axis[~small], half_perp[~small]) / np.tan(theta[~small, None] / 2.0)
+            point[~small] += np.cross(axis[~small], half_perp[~small]) / np.tan(
+                theta[~small][:, None] / 2.0
+            )
         return axis, point
 
     def _curvesplus_inversion_flags(self, upm: np.ndarray) -> np.ndarray:

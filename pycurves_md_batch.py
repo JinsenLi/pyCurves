@@ -6,7 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 from tqdm import tqdm
@@ -39,15 +39,15 @@ def _encode_json(value) -> bytes:
 
 def _flush_batch(
     analyzer: BatchCurvesPlusMDAnalyzer,
-    coordinates: List[np.ndarray],
-    frame_indices: List[int],
-    times: List[Optional[float]],
+    coordinates: Sequence[np.ndarray] | np.ndarray,
+    frame_indices: Sequence[int],
+    times: Sequence[Optional[float]],
     mode: str,
     frame_payloads: List[Dict],
     summary_accumulator: Optional[BatchSummaryAccumulator] = None,
     frame_sink: Optional[Callable[[List[Dict]], None]] = None,
 ) -> int:
-    if not coordinates:
+    if len(coordinates) == 0:
         return 0
     batch_coordinates = np.asarray(coordinates, dtype=float)
     if mode == "summary" and summary_accumulator is not None:
@@ -118,41 +118,22 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
 
     frame_payloads: List[Dict] = []
     summary_accumulator = BatchSummaryAccumulator() if args.mode in {"summary", "both"} else None
-    coordinates: List[np.ndarray] = []
-    frame_indices: List[int] = []
-    times: List[Optional[float]] = []
     processed = 0
 
-    iterator = TrajectoryLoader.iter_frames(args.topology, args.trajectory, frame_selector)
-    for frame in tqdm(iterator, desc="Processing frames in batches"):
-        coordinates.append(np.asarray(frame.coordinates, dtype=float))
-        frame_indices.append(int(frame.index))
-        times.append(None if frame.time is None else float(frame.time))
-        if len(coordinates) >= args.batch_size:
-            processed += _flush_batch(
-                analyzer,
-                coordinates,
-                frame_indices,
-                times,
-                args.mode,
-                frame_payloads,
-                summary_accumulator,
-                frame_sink,
-            )
-            coordinates.clear()
-            frame_indices.clear()
-            times.clear()
-
-    processed += _flush_batch(
-        analyzer,
-        coordinates,
-        frame_indices,
-        times,
-        args.mode,
-        frame_payloads,
-        summary_accumulator,
-        frame_sink,
+    iterator = TrajectoryLoader.iter_batches(
+        args.topology, args.trajectory, frame_selector, args.batch_size
     )
+    for batch in tqdm(iterator, desc="Processing frame batches", unit="batch"):
+        processed += _flush_batch(
+            analyzer,
+            batch.coordinates,
+            batch.indices,
+            batch.times,
+            args.mode,
+            frame_payloads,
+            summary_accumulator,
+            frame_sink,
+        )
     if processed == 0:
         raise SystemExit("No trajectory frames matched the requested frame selection.")
 
