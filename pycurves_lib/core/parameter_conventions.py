@@ -371,15 +371,35 @@ def _left_handed_cww_pairs(ctx, raw_frames: np.ndarray, contact_pairs):
         bridge_levels = contact_levels | {
             key for key in cww_rows if key[0] == partner
         }
+        seen_segments = set()
         for evidence_run in _left_handed_evidence_runs(
             ctx,
             partner,
             sorted(set(evidence_levels)),
             bridge_levels,
         ):
-            if len(evidence_run) < LEFT_HANDED_CWW_MIN_SYN_PAIRS:
-                continue
             start, end = evidence_run[0], evidence_run[-1]
+            # Extend by direct coordinate handedness before counting all syn
+            # evidence in the segment. Non-CG-repeat Z-DNA can interrupt the
+            # syn pattern without interrupting a continuous left-handed run.
+            start, end = _extend_left_handed_cww_boundaries(
+                ctx,
+                partner,
+                start,
+                end,
+                cww_rows,
+                member_centers,
+            )
+            segment_key = (start, end)
+            if segment_key in seen_segments:
+                continue
+            seen_segments.add(segment_key)
+            syn_levels = [
+                level for level in sorted(set(evidence_levels))
+                if start <= level <= end
+            ]
+            if len(syn_levels) < LEFT_HANDED_CWW_MIN_SYN_PAIRS:
+                continue
             step_angles = [
                 angle
                 for level in range(start, end)
@@ -392,28 +412,6 @@ def _left_handed_cww_pairs(ctx, raw_frames: np.ndarray, contact_pairs):
             median_step = float(np.median(step_angles))
             if median_step >= LEFT_HANDED_CWW_MAX_MEDIAN_STEP_DEGREES:
                 continue
-            # Syn purines identify the Z-DNA core, but a cWW pair at a B/Z
-            # junction can lie just outside that evidence while its step from
-            # the core is still unambiguously left-handed.  Include such
-            # connected boundary pairs in the same signed-normal run.  This
-            # avoids using an oriented boundary normal merely as a DP anchor
-            # while leaving the actual boundary frame on the opposite branch.
-            start, end = _extend_left_handed_cww_boundaries(
-                ctx,
-                partner,
-                start,
-                end,
-                cww_rows,
-                member_centers,
-            )
-            step_angles = [
-                angle
-                for level in range(start, end)
-                if (angle := _signed_pair_vector_step_degrees(
-                    ctx, partner, member_centers, level, level + 1
-                )) is not None
-            ]
-            median_step = float(np.median(step_angles))
             cww_levels = [
                 level for level in range(start, end + 1)
                 if (partner, level) in cww_rows
@@ -428,7 +426,7 @@ def _left_handed_cww_pairs(ctx, raw_frames: np.ndarray, contact_pairs):
                 "start_level": start,
                 "end_level": end,
                 "cww_levels": cww_levels,
-                "syn_evidence_levels": list(evidence_run),
+                "syn_evidence_levels": syn_levels,
                 "median_pair_vector_step": median_step,
             })
     return pairs, segments, glycosidic_details
