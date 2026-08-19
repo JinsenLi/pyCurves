@@ -705,6 +705,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                 "classification_status": row.get(
                     "classification_status", "unassigned"
                 ),
+                "helical_context": row.get("helical_context", ""),
                 "diagnostic_flags": list(row.get("diagnostic_flags") or []),
             })
         return rows

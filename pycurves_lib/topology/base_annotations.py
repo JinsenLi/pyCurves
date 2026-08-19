@@ -161,6 +161,7 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
                 "contact_geometry",
                 "provisional_contact_geometry",
             }
+            or row.get("helical_context") == "left_handed_cww"
             or row.get("normal_branch_mode") == "left_handed_cww"
         )
     ]
@@ -210,9 +211,11 @@ def render_section_m(annotations: Dict[str, List[Dict[str, Any]]]) -> str:
             candidate_lw = str(row.get("candidate_lw_family") or "").strip()
             if candidate_lw:
                 notes.append(f"possible [{candidate_lw}]")
-            if row.get("normal_branch_mode") == "left_handed_cww":
-                notes.append("normal_branch=left_handed_cww")
-                notes.append(f"normal_sign={int(row.get('pair_normal_sign', -1)):+d}")
+            helical_context = str(row.get("helical_context") or "").strip()
+            if not helical_context and row.get("normal_branch_mode") == "left_handed_cww":
+                helical_context = "left_handed_cww"
+            if helical_context == "left_handed_cww":
+                notes.append("left-handed cWW context")
                 states = [
                     str(row.get(key) or "")
                     for key in ("glycosidic_state_1", "glycosidic_state_2")

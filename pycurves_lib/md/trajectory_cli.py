@@ -434,6 +434,7 @@ class MDTrajectoryAnalyzer:
                     str(row.get("candidate_mode") or ""),
                     str(row.get("classification_status") or "unassigned"),
                     str(row.get("observed_lw_family") or ""),
+                    str(row.get("helical_context") or ""),
                 )
                 state_counts[state] = state_counts.get(state, 0) + 1
 
@@ -448,6 +449,7 @@ class MDTrajectoryAnalyzer:
                     "",
                     "unassigned",
                     "",
+                    "",
                 )
                 state_counts[missing_state] = (
                     state_counts.get(missing_state, 0) + missing_count
@@ -460,6 +462,7 @@ class MDTrajectoryAnalyzer:
                     item[0][1],
                     item[0][2],
                     item[0][4],
+                    item[0][5],
                 ),
             ):
                 (
@@ -468,6 +471,7 @@ class MDTrajectoryAnalyzer:
                     candidate_mode,
                     classification_status,
                     observed_lw_family,
+                    helical_context,
                 ) = state
                 profile.append({
                     "pair_id": pair_id,
@@ -480,6 +484,7 @@ class MDTrajectoryAnalyzer:
                     "candidate_mode": candidate_mode,
                     "classification_status": classification_status,
                     "observed_lw_family": observed_lw_family,
+                    "helical_context": helical_context,
                     "frame_count": frame_count,
                     "frame_fraction": (
                         frame_count / total_frames if total_frames else None

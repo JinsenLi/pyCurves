@@ -536,6 +536,9 @@ def _annotate_pair_normal_branches(
         if key not in modes:
             continue
         row["normal_branch_mode"] = modes[key]
+        row["helical_context"] = (
+            "left_handed_cww" if modes[key] == "left_handed_cww" else ""
+        )
         row["pair_normal_sign"] = int(signs.get(key, 1))
         details = glycosidic_details.get(key, {})
         row_strands = (

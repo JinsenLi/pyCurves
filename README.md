@@ -166,6 +166,11 @@ do not enter that field: for example, Section M renders
 Hoogsteen.” Records keep `observed_lw_family` separate from
 `reference_lw_family`, and retain diagnostic flags.
 
+Coordinate-confirmed left-handed cWW pairs use
+`helical_context="left_handed_cww"`. Other pairs use an empty string. This is
+structural context for the pair; the internal normal-frame branch and sign are
+not exposed in the slim report.
+
 ## MD Trajectories
 
 Install the full optional set first:
@@ -191,7 +196,7 @@ pycurves-md topology.pdb trajectory.xtc --topology-mode annotate --mode both --o
 reports missing reference pairs as absent, and adds newly detected pairs with
 `reference_pair=false`. The authoritative `base_pair_observations` table
 contains pair presence, observed/reference LW family, named pairing mode,
-classification status, and diagnostic flags in the
+classification status, helical context, and diagnostic flags in the
 `pycurves-trajectory-slim-v2` schema. Calculation-frame, contact, and
 glycosidic details remain internal rather than being repeated per pair. In
 JSON, `frame` and `time` belong to the containing frame object; flattened CSV
@@ -218,6 +223,7 @@ Each per-frame `base_pair_observations` row contains exactly these keys:
 | `reference_lw_family` | LW family supplied by the reference/input topology; may be populated when `observed_lw_family` is empty. |
 | `candidate_mode` | Tentative named mode when the evidence supports a possibility but not a definitive assignment; otherwise an empty string. |
 | `classification_status` | `assigned`, `possible`, `unassigned`, or `conflict`. |
+| `helical_context` | `left_handed_cww` when the pair belongs to a coordinate-confirmed left-handed cWW run; otherwise an empty string. |
 | `diagnostic_flags` | Machine-readable reasons requiring review; normally an empty list. |
 
 Empty `pairing_mode` and `observed_lw_family` values mean **unclassified**, not
@@ -234,9 +240,9 @@ row contains `annotation_type`, `severity`, `level`, `location`, `code`,
 The table is empty when neither event type occurs.
 
 In `summary` mode `base_pair_observations` becomes a categorical state profile:
-each row reports one pair/status/mode/LW combination with `frame_count` and
-`frame_fraction`. Identifiers and diagnostic fields are not numerically
-averaged. The separate `annotations` table is reserved for modified-base and
+each row reports one pair/status/mode/LW/helical-context combination with
+`frame_count` and `frame_fraction`. Identifiers and diagnostic fields are not
+numerically averaged. The separate `annotations` table is reserved for modified-base and
 backbone-connectivity events. This mode is currently implemented only in
 `pycurves-md`, not `pycurves-md-batch`.
 
