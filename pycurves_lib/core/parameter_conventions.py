@@ -1404,39 +1404,59 @@ class StandardParameterConvention(LegacyParameterConvention):
         return np.array(values, dtype=float)
 
     def fill_local_base_pair_steps(self, calc) -> None:
+        calc.ctx.step_pair_frame_variants = {}
+        calc.ctx.local_step_reverse_z = {}
         for partner_strand in range(1, calc.ctx.nst):
-            for level in range(calc.optimizer.iste + 1, calc.optimizer.iene + 1):
+            previous_pair = None
+            previous_level = None
+            for level in range(calc.optimizer.iste, calc.optimizer.iene + 1):
                 if not (
-                    calc._has_level(0, level - 1)
-                    and calc._has_level(0, level)
-                    and calc._has_level(partner_strand, level - 1)
+                    calc._has_level(0, level)
                     and calc._has_level(partner_strand, level)
                 ):
+                    previous_pair = None
+                    previous_level = None
                     continue
 
-                previous_pair = self._base_pair_frame(calc, partner_strand, level - 1)
-                current_pair = self._base_pair_frame(calc, partner_strand, level)
-                if previous_pair is None or current_pair is None:
+                native_pair = self._base_pair_frame(calc, partner_strand, level)
+                if native_pair is None:
+                    previous_pair = None
+                    previous_level = None
                     continue
-                # Contact-geometry frames can require a determinant-preserving
-                # branch selection. Fitted canonical frames are fixed: Curves+
-                # handles a reverse Z step by changing Rise and Twist below,
-                # not by rotating both base-pair frames by 180 degrees.
-                if (
-                    self._uses_contact_geometry_pair(calc, partner_strand, level - 1)
-                    or self._uses_contact_geometry_pair(calc, partner_strand, level)
-                ):
-                    previous_pair, current_pair = self._step_aligned_frames(
+
+                sign_flip = self._EQUIVALENT_AXIS_SIGN_FLIPS[0]
+                current_pair = native_pair
+                if previous_pair is not None and previous_level == level - 1:
+                    previous_signs = calc.ctx.step_pair_frame_variants[
+                        (0, partner_strand, previous_level)
+                    ]
+                    contact_step = (
+                        self._uses_contact_geometry_pair(calc, partner_strand, previous_level)
+                        or self._uses_contact_geometry_pair(calc, partner_strand, level)
+                    )
+                    if contact_step or previous_signs != (1, 1, 1):
+                        current_pair, sign_flip = self._step_aligned_current_frame(
+                            previous_pair,
+                            native_pair,
+                            calc.cdr,
+                        )
+
+                signs = tuple(int(round(value)) for value in np.diag(sign_flip))
+                calc.ctx.step_pair_frame_variants[(0, partner_strand, level)] = signs
+
+                if previous_pair is not None and previous_level == level - 1:
+                    values, reverse_z = self._curvesplus_step_values_with_branch(
                         previous_pair,
                         current_pair,
                         calc.cdr,
                     )
+                    calc.pab[level, :, partner_strand] = values
+                    calc.ctx.local_step_reverse_z[
+                        (0, partner_strand, previous_level, level)
+                    ] = reverse_z
 
-                calc.pab[level, :, partner_strand] = self._curvesplus_step_values(
-                    previous_pair,
-                    current_pair,
-                    calc.cdr,
-                )
+                previous_pair = current_pair
+                previous_level = level
 
     def fill_local_strand_steps(self, calc) -> None:
         for strand in range(calc.ctx.nst):
@@ -1570,6 +1590,40 @@ class StandardParameterConvention(LegacyParameterConvention):
         best = max(top, key=lambda item: (item[1], item[2], item[3], item[4]))
         return best[5], best[6]
 
+    def _step_aligned_current_frame(
+        self,
+        previous: ParameterFrame,
+        current: ParameterFrame,
+        degrees_per_radian: float,
+    ):
+        """Select one current-frame branch while keeping the previous fixed."""
+        candidates = []
+        for sign_flip, current_frame in zip(
+            self._EQUIVALENT_AXIS_SIGN_FLIPS,
+            self._equivalent_frame_variants(current),
+        ):
+            rotation_score = float(np.trace(previous.axes @ current_frame.axes.T))
+            values = self._rigid_body_values(
+                previous,
+                current_frame,
+                degrees_per_radian,
+                translation_sign=1.0,
+                rotation_sign=1.0,
+            )
+            candidates.append((
+                rotation_score,
+                values[2] >= -1e-8,
+                float(np.dot(current_frame.axes[0], current.axes[0])),
+                values[2],
+                current_frame,
+                sign_flip,
+            ))
+
+        best_score = max(item[0] for item in candidates)
+        top = [item for item in candidates if item[0] >= best_score - 1e-8]
+        best = max(top, key=lambda item: (item[1], item[2], item[3]))
+        return best[4], best[5]
+
     def _curvesplus_step_values(
         self,
         previous: ParameterFrame,
@@ -1582,6 +1636,19 @@ class StandardParameterConvention(LegacyParameterConvention):
         displacement points against the upper base-pair normal, only Rise and
         Twist are put on the forward-Z branch; Slide and Roll are unchanged.
         """
+        values, _ = self._curvesplus_step_values_with_branch(
+            previous,
+            current,
+            degrees_per_radian,
+        )
+        return values
+
+    def _curvesplus_step_values_with_branch(
+        self,
+        previous: ParameterFrame,
+        current: ParameterFrame,
+        degrees_per_radian: float,
+    ):
         values = np.asarray(
             self._rigid_body_values(
                 previous,
@@ -1593,11 +1660,12 @@ class StandardParameterConvention(LegacyParameterConvention):
             dtype=float,
         )
         delta = current.origin - previous.origin
-        if float(np.dot(delta, current.axes[2])) < 0.0:
+        reverse_z = float(np.dot(delta, current.axes[2])) < 0.0
+        if reverse_z:
             values[2] = -values[2]
             values[5] = -values[5]
         values[3:] = [self._wrap_180(value) for value in values[3:]]
-        return values
+        return values, reverse_z
 
     def _equivalent_frame_variants(self, frame: ParameterFrame):
         for sign_flip in self._EQUIVALENT_AXIS_SIGN_FLIPS:

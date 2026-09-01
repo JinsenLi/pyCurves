@@ -210,8 +210,121 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             "dataframes": dataframes,
         }
         if self.include_visualization:
+            payload["rebuild_frame_mappings"] = self._rebuild_frame_mappings_payload()
             payload["visualization"] = self._visualization_payload(dataframes)
         return payload
+
+    def _rebuild_frame_mappings_payload(self) -> Dict[str, Any]:
+        """Return relative interaction/standard frame maps for exact rebuilding."""
+        ctx = self.runner.ctx
+        calc = self.runner.calc
+        standard_frames = np.asarray(ctx.params.frames, dtype=float)
+        interaction_frames = np.asarray(
+            getattr(ctx.params, "shape_frames", standard_frames),
+            dtype=float,
+        )
+        annotations = {}
+        for annotation in self._base_pair_rows(self._annotations()):
+            level = annotation.get("level")
+            strand_1 = int(annotation.get("strand_1", 1))
+            strand_2 = int(annotation.get("strand_2", 2))
+            if level is None or 1 not in (strand_1, strand_2):
+                continue
+            partner = (strand_2 if strand_1 == 1 else strand_1) - 1
+            key = (partner, int(level))
+            if key not in annotations or annotation.get("reference_pair", True):
+                annotations[key] = annotation
+        variants = getattr(ctx, "step_pair_frame_variants", {}) or {}
+        reverse_z = getattr(ctx, "local_step_reverse_z", {}) or {}
+        normal_signs = getattr(ctx, "pair_normal_signs", {}) or {}
+        normal_modes = getattr(ctx, "pair_normal_branch_modes", {}) or {}
+        levels = []
+
+        for partner in range(1, ctx.nst):
+            for level in range(1, ctx.nux + 1):
+                if not (calc._has_level(0, level) and calc._has_level(partner, level)):
+                    continue
+                annotation = annotations.get((partner, level), {})
+                geometry = annotation.get("contact_geometry") or {}
+                lw_family = base_pair_observed_geometry_tag(annotation) or "cWW"
+                members = []
+                for strand, role in ((0, "primary"), (partner, "partner")):
+                    standard = standard_frames[strand, level]
+                    interaction = interaction_frames[strand, level]
+                    if not (_all_finite(standard) and _all_finite(interaction)):
+                        continue
+                    rotation = interaction[:3] @ standard[:3].T
+                    translation = interaction[:3] @ (standard[3] - interaction[3])
+                    annotation_side = next(
+                        (
+                            side for side in (1, 2)
+                            if int(annotation.get(f"strand_{side}", side)) == strand + 1
+                        ),
+                        1 if strand == 0 else 2,
+                    )
+                    edge = str(
+                        geometry.get(f"edge_{annotation_side}")
+                        or annotation.get(f"edge_{annotation_side}")
+                        or (lw_family[annotation_side] if len(lw_family) > annotation_side else "W")
+                    ).upper()
+                    members.append({
+                        "strand": strand + 1,
+                        "role": role,
+                        "edge": edge,
+                        "interaction_from_standard": {
+                            "rotation": rotation,
+                            "translation": translation,
+                        },
+                    })
+
+                key = (0, partner, level)
+                row = {
+                    "level": level,
+                    "partner_strand": partner + 1,
+                    "lw_family": lw_family,
+                    "frame_mode": str(
+                        geometry.get("frame_mode")
+                        or annotation.get("frame_mode")
+                        or "fitted_base"
+                    ),
+                    "pair_frame_branch": {
+                        "step_from_interaction_axis_signs": list(
+                            variants.get(key, (1, 1, 1))
+                        ),
+                        "normal_sign": int(normal_signs.get(key, 1)),
+                        "normal_branch_mode": str(normal_modes.get(key, "fitted_base")),
+                    },
+                    "members": members,
+                }
+                next_level = level + 1
+                step_key = (0, partner, level, next_level)
+                if step_key in reverse_z:
+                    row["outgoing_step_branch"] = {
+                        "next_level": next_level,
+                        "reverse_z": bool(reverse_z[step_key]),
+                    }
+                levels.append(row)
+
+        return {
+            "schema": "pycurves-rebuild-frame-mappings-v1",
+            "scope": "standard-base-and-c1-prime frames",
+            "reference_frame_convention": getattr(ctx.cfg, "frame_convention", "standard"),
+            "transform_definition": {
+                "name": "interaction_from_standard",
+                "equation": "x_interaction = rotation @ x_standard + translation",
+                "frame_storage": "global = axes.T @ local + origin",
+                "rotation_layout": "row-major",
+                "translation_unit": "angstrom",
+            },
+            "pair_branch_definition": {
+                "equation": "step_axes = diag(axis_signs) @ interaction_pair_axes",
+                "reverse_z_correction": (
+                    "Before rebuilding, negate Rise and Twist when "
+                    "outgoing_step_branch.reverse_z is true"
+                ),
+            },
+            "levels": levels,
+        }
 
     def _frame_convention_payload(self) -> Dict[str, Any]:
         cfg = self.runner.ctx.cfg
