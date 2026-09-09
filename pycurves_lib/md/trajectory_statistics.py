@@ -261,6 +261,40 @@ class BatchSummaryAccumulator:
                 if value is not None:
                     group["stats"][name].add(value)
 
+    def merge(self, other: "BatchSummaryAccumulator") -> None:
+        """Merge a partial batch summary produced by another process."""
+        for table_name, groups in other._tables.items():
+            table = self._tables.setdefault(table_name, {})
+            for key, source in groups.items():
+                target = table.get(key)
+                if target is None:
+                    target = {
+                        "metadata": dict(source["metadata"]),
+                        "count": 0,
+                        "stats": {
+                            name: self._new_stats(name)
+                            for name in source["stats"]
+                        },
+                    }
+                    table[key] = target
+                target["count"] += source["count"]
+                for name, stats in source["stats"].items():
+                    target["stats"][name].merge(stats)
+
+        for table_name, groups in other._population_tables.items():
+            table = self._population_tables.setdefault(table_name, {})
+            for key, source in groups.items():
+                target = table.get(key)
+                if target is None:
+                    target = {
+                        "metadata": dict(source["metadata"]),
+                        "count": 0,
+                        "total_count": 0,
+                    }
+                    table[key] = target
+                target["count"] += source["count"]
+                target["total_count"] += source["total_count"]
+
     def to_summary(self) -> Dict[str, List[Dict]]:
         output: Dict[str, List[Dict]] = {}
         for table_name, groups in self._tables.items():

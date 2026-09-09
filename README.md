@@ -260,8 +260,13 @@ For canonical two-strand Curves+/standard-frame trajectories, the vectorized
 batch path can be much faster:
 
 ```bash
-pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --frame-convention standard --batch-size 256 --mode summary --output-file dynamics_batch.json
+pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --frame-convention standard --batch-size 256 --workers 4 --mode summary --output-file dynamics_batch.json
 ```
+
+`--workers` processes independent coordinate batches concurrently while keeping
+trajectory reading and output ordering in the parent process. The default is 1;
+benchmark 2--4 workers for long trajectories because short runs, slow storage,
+and already-parallel groove calculations may not benefit.
 
 Use `pycurves-md` for legacy-axis minimization, non-canonical contact-geometry
 frames, `--no-comb`, or `--ends`.

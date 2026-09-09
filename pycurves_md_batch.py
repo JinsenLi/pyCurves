@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -24,6 +28,9 @@ from pycurves_lib.md.trajectory_statistics import (
 from pycurves_lib.md.batch_curvesplus import BatchCurvesPlusMDAnalyzer
 
 from pycurves_md import MDTrajectoryAnalyzer, make_frame_selector
+
+
+_WORKER_ANALYZER: Optional[BatchCurvesPlusMDAnalyzer] = None
 
 
 def _encode_json(value) -> bytes:
@@ -68,6 +75,40 @@ def _flush_batch(
     return len(coordinates)
 
 
+def _initialize_worker(analyzer: BatchCurvesPlusMDAnalyzer, numba_threads: int) -> None:
+    global _WORKER_ANALYZER
+    _WORKER_ANALYZER = analyzer
+    if analyzer.include_grooves:
+        try:
+            import numba
+
+            numba.set_num_threads(numba_threads)
+        except ImportError:
+            pass
+
+
+def _process_batch_worker(
+    coordinates: np.ndarray,
+    frame_indices: Sequence[int],
+    times: Sequence[Optional[float]],
+    mode: str,
+) -> Tuple[int, List[Dict], Optional[BatchSummaryAccumulator]]:
+    if _WORKER_ANALYZER is None:  # pragma: no cover - process-pool guard
+        raise RuntimeError("Batch worker was not initialized.")
+    frame_payloads: List[Dict] = []
+    accumulator = BatchSummaryAccumulator() if mode in {"summary", "both"} else None
+    processed = _flush_batch(
+        _WORKER_ANALYZER,
+        coordinates,
+        frame_indices,
+        times,
+        mode,
+        frame_payloads,
+        accumulator,
+    )
+    return processed, frame_payloads, accumulator
+
+
 def _write_csv_payload(payload: Dict, prefix: str) -> None:
     prefix_path = Path(prefix)
     prefix_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +139,9 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
         raise SystemExit("pycurves-md-batch currently supports only --frame-convention standard.")
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be positive.")
+    workers = getattr(args, "workers", 1)
+    if workers <= 0:
+        raise SystemExit("--workers must be positive.")
 
     frame_selector, selection = make_frame_selector(args.frames, args.start, args.stop, args.step)
     reference_topology = MDTrajectoryAnalyzer._reference_topology(args.topology, args.trajectory, args.output_dir)
@@ -123,17 +167,54 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
     iterator = TrajectoryLoader.iter_batches(
         args.topology, args.trajectory, frame_selector, args.batch_size
     )
-    for batch in tqdm(iterator, desc="Processing frame batches", unit="batch"):
-        processed += _flush_batch(
-            analyzer,
-            batch.coordinates,
-            batch.indices,
-            batch.times,
-            args.mode,
-            frame_payloads,
-            summary_accumulator,
-            frame_sink,
-        )
+    if workers == 1:
+        for batch in tqdm(iterator, desc="Processing frame batches", unit="batch"):
+            processed += _flush_batch(
+                analyzer,
+                batch.coordinates,
+                batch.indices,
+                batch.times,
+                args.mode,
+                frame_payloads,
+                summary_accumulator,
+                frame_sink,
+            )
+    else:
+        threads_per_worker = max(1, (os.cpu_count() or workers) // workers)
+        pending = deque()
+
+        def collect_result(result) -> None:
+            nonlocal processed
+            count, frames, partial_summary = result
+            processed += count
+            if frames:
+                if frame_sink is None:
+                    frame_payloads.extend(frames)
+                else:
+                    frame_sink(frames)
+            if partial_summary is not None and summary_accumulator is not None:
+                summary_accumulator.merge(partial_summary)
+
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=get_context("spawn"),
+            initializer=_initialize_worker,
+            initargs=(analyzer, threads_per_worker),
+        ) as executor, tqdm(desc="Processing frame batches", unit="batch") as progress:
+            for batch in iterator:
+                pending.append(executor.submit(
+                    _process_batch_worker,
+                    batch.coordinates,
+                    batch.indices,
+                    batch.times,
+                    args.mode,
+                ))
+                if len(pending) >= workers:
+                    collect_result(pending.popleft().result())
+                    progress.update()
+            while pending:
+                collect_result(pending.popleft().result())
+                progress.update()
     if processed == 0:
         raise SystemExit("No trajectory frames matched the requested frame selection.")
 
@@ -149,6 +230,7 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
         },
         "analysis_options": {
             "batch_size": args.batch_size,
+            "workers": workers,
             "continuous_strands": args.continuous_strands,
             "altloc": args.altloc or "first",
             "fit": True if args.fit is None else args.fit,
@@ -257,6 +339,7 @@ def analyze_trajectory_batch(
     curvesplus_axis_steps: bool = False,
     fit_quality: bool = False,
     axis_weighting: Optional[bool] = None,
+    workers: int = 1,
 ) -> Dict:
     """Run the vectorized Curves+/standard-frame MD path from Python.
 
@@ -279,6 +362,7 @@ def analyze_trajectory_batch(
         stop=stop,
         step=step,
         batch_size=batch_size,
+        workers=workers,
         continuous_strands=continuous_strands,
         fit=fit,
         grooves=grooves,
@@ -315,6 +399,12 @@ def main() -> None:
     parser.add_argument("--stop", type=int, help="Stop before this frame index.")
     parser.add_argument("--step", type=int, default=1, help="Frame stride.")
     parser.add_argument("--batch-size", type=int, default=256, help="Number of selected frames processed per vectorized batch.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Batch worker processes (default: 1). Use 2-4 for long trajectories and benchmark on your system.",
+    )
     parser.add_argument("--continuous-strands", action="store_true", help="Treat connected helical components as continuous during .inp inference.")
     parser.add_argument("--altloc", help="Alternate conformation such as A or B; default keeps Gemmi's first-listed conformer.")
     parser.add_argument("--fit", action=argparse.BooleanOptionalAction, default=None, help="Override least-squares base fitting; batch mode currently requires true.")
