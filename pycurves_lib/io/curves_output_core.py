@@ -440,10 +440,13 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         bp_axis = []
         base_base = []
         if ctx.cfg.comb and ctx.nst > 1:
-            for partner_strand in range(1, ctx.nst):
+            # Curves+ builds its BP-axis from the strand-1/2 mean frame only.
+            # Legacy Curves reports a separate strand-1/partner series.
+            axis_partners = range(1, 2) if curvesplus_axis else range(1, ctx.nst)
+            for partner_strand in axis_partners:
                 base_base_by_level = (
                     dict(calc._global_base_base_values_by_level(partner_strand))
-                    if not curvesplus_axis and partner_strand == 1
+                    if not curvesplus_axis
                     else {}
                 )
                 for sequence_index, level in enumerate(primary_levels, start=1):
@@ -460,7 +463,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                     axis_row["axis_weight"] = calc._axis_pair_weight(partner_strand, level)
                     bp_axis.append(axis_row)
 
-                    if curvesplus_axis or partner_strand != 1:
+                    if curvesplus_axis:
                         continue
                 
                     base_base.append(_nullable_parameter_record(
@@ -532,7 +535,8 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         if ctx.cfg.comb and ctx.nst > 1:
             global_inter_bp = []
             local_inter_bp = []
-            for partner_strand in range(1, ctx.nst):
+            pair_step_partners = range(1, 2) if curvesplus_axis else range(1, ctx.nst)
+            for partner_strand in pair_step_partners:
                 for sequence_index, (level, next_level) in enumerate(zip(primary_levels, primary_levels[1:]), start=1):
                     adjacent = next_level == level + 1
                     has_step = (
@@ -557,8 +561,15 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
                         )
                         global_inter_bp.append(global_row)
 
+                    local_values = None
+                    if has_step:
+                        local_values = (
+                            calc._global_inter_base_pair_values(partner_strand, next_level)
+                            if curvesplus_axis
+                            else calc.local_inter_base_pair[next_level, :, partner_strand]
+                        )
                     local_row = _nullable_parameter_record(
-                        calc.local_inter_base_pair[next_level, :, partner_strand] if has_step else None,
+                        local_values,
                         STEP_PARAMETERS,
                         partner_strand=partner_strand + 1,
                         sequence_index=sequence_index,

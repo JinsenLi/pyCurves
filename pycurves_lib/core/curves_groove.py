@@ -331,11 +331,11 @@ class GrooveAnalysisMixin:
         return float(xdi), float(tip)
 
     def groove(self):
-        if not self.ctx.cfg.comb or self.ctx.nst < 2:
+        if not self.ctx.cfg.comb or self.ctx.nst != 2:
             print("\n  -----------------------")
             print("  |K| Groove parameters |")
             print("  -----------------------")
-            print("\n  Groove analysis requires combined two-strand input.")
+            print("\n  Groove analysis currently requires exactly two combined strands.")
             self.groove_params = {}
             return
 

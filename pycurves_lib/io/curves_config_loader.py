@@ -28,8 +28,11 @@ class ConfigLoader:
         strand_info = list(map(int, data_lines[0].split()))
         strand_count = strand_info[0]  # Fortran nst
         signed_strand_lengths = strand_info[1:1 + strand_count]  # Fortran nu input, sign encodes direction
-        if strand_count <= 0:
-            raise ValueError(f"Invalid strand count {strand_count} in {file_path!r}")
+        if not 1 <= strand_count <= 4:
+            raise ValueError(
+                f"Invalid strand count {strand_count} in {file_path!r}; "
+                "Curves inputs support 1 to 4 strands"
+            )
         if len(signed_strand_lengths) != strand_count:
             raise ValueError(f"Expected {strand_count} strand descriptors in {file_path!r}")
 

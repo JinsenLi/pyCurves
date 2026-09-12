@@ -287,7 +287,8 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                 if np.dot(np.cross(rx_k, ulx_m[i, ka]), tx_k) < 0: tip_k = -tip_k
                 self.vkin[i, 3, k] = 2.0 * tip_k * self.ctx.idr[k]
                 self.vkin[i, 4, k] = math.hypot(self.vkin[i, 0, k], self.vkin[i, 1, k])
-                self.vkin[i, 5, k] = math.hypot(self.vkin[i, 2, k], self.vkin[i, 3, k])
+                axis_dot = np.clip(np.dot(ulx_m[i - 1, ka], ulx_m[i, ka]), -1.0, 1.0)
+                self.vkin[i, 5, k] = math.acos(axis_dot) * cdr
 
                 # -----------------------------------------------------------
                 # -----------------------------------------------------------
@@ -355,7 +356,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         )
         rise = p.helical[strand, level, 2]
         tilt = p.helical[strand, level, 3] + self.vkin[level, 2, source_strand] - p.helical[strand, level - 1, 3]
-        roll = (
+        roll = self._wrap_180(
             p.helical[strand, level, 4]
             + self.vkin[level, 3, source_strand] * strand_direction
             - p.helical[strand, level - 1, 4]
@@ -420,8 +421,12 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         p = self.ctx.params
         xdisp = (p.helical[0, level, 0] + p.helical[partner_strand, level, 0]) / 2.0
         ydisp = (p.helical[0, level, 1] - p.helical[partner_strand, level, 1]) / 2.0
-        inclin = (p.helical[0, level, 3] + p.helical[partner_strand, level, 3]) / 2.0
-        tip = (p.helical[0, level, 4] - p.helical[partner_strand, level, 4]) / 2.0
+        inclin = self._wrap_180(
+            self._angle_aver(p.helical[0, level, 3], p.helical[partner_strand, level, 3])
+        )
+        tip = self._wrap_180(
+            self._angle_aver(p.helical[0, level, 4], -p.helical[partner_strand, level, 4])
+        )
 
         if self.ctx.idr[0] < self.ctx.idr[partner_strand]:
             ydisp = -ydisp
@@ -782,7 +787,9 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
             print("\n  --------------------------------------")
             print("  |H| Local Inter-Base pair Parameters |")
             print("  --------------------------------------")
-            for k in range(1, nst):
+            # Curves+ inter-BP parameters are defined by the strand-1/2
+            # mean frames; additional strands contribute to the common axis.
+            for k in range(1, 2):
                 print(f"\n  Strand 1 with strand {k+1}:")
                 print("\n    Duplex          Shift    Slide     Rise     Tilt     Roll    Twist   Dc")
                 print("                    (Dx)     (Dy)      (Dz)     (tau)    (rho)  (Omega)")
@@ -794,7 +801,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                             self._has_level(k, i - 1) and self._has_level(k, i)):
                         print(f"  {i:3d})      -")
                         continue
-                    lb = self.pab[i, :, k]
+                    lb = self.curvesplus_inter_base_pair[i - 1]
                     if not self._all_finite(lb[:6]):
                         print(f"  {i:3d})      -")
                         continue
@@ -976,16 +983,11 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
 
                         duplex_id = f"{res_name_1}{res_num_1:3d}-{res_name_k}{res_num_k:3d}"
 
-                        xdi = (p.helical[0, i, 0] + p.helical[k, i, 0]) / 2.0
-                        ydi = (p.helical[0, i, 1] - p.helical[k, i, 1]) / 2.0
-                        cln = (p.helical[0, i, 3] + p.helical[k, i, 3]) / 2.0
-                        tip = (p.helical[0, i, 4] + -p.helical[k, i, 4]) / 2.0
-
-                        if self.ctx.idr[0] < self.ctx.idr[k]:
-                            ydi, tip = -ydi, -tip
-                        if not self._all_finite([xdi, ydi, cln, tip]):
+                        values = self._global_base_pair_axis_values(k, i)
+                        if values is None or not self._all_finite(values):
                             print(f"  {i:3d})      -")
                             continue
+                        xdi, ydi, cln, tip = values
                         nav += 1
 
                         print(f"  {i:3d}) {duplex_id}  {xdi:8.2f} {ydi:8.2f} {cln:8.2f} {tip:8.2f} "

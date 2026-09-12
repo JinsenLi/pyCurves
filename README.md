@@ -73,6 +73,27 @@ Analyze an existing Curves `.inp` file:
 pycurves your_input.inp --pdb your_structure.pdb
 ```
 
+For triplexes and G-quadruplexes, provide the logical strands explicitly until
+multi-strand topology inference is available. Example inputs for PDB 149D and
+1KF1 are in `examples/manual_multistrand`:
+
+```bash
+pycurves examples/manual_multistrand/149D_triplex.inp --pdb 149D.cif \
+  --frame-convention standard --axis-convention legacy --no-grooves
+pycurves examples/manual_multistrand/1KF1_g4.inp --pdb 1KF1.cif \
+  --frame-convention standard --axis-convention legacy --no-grooves
+```
+
+Legacy mode follows Curves 5.3 multi-strand conventions: all strands contribute
+to the common helical axis, and strand 1 is compared separately with every other
+strand for base-pair-axis, base-base, and inter-base-pair parameters. Groove
+analysis is duplex-only in Curves 5.3, so use `grv=.f.` or `--no-grooves` for
+three- and four-strand inputs.
+
+The commands above retain pyCurves' standard base frames. For a direct numerical
+comparison with Curves 5.3, use both `--frame-convention legacy` and
+`--axis-convention legacy`.
+
 Use legacy Curves 5.3-style local frames when you need old-frame compatibility:
 
 ```bash

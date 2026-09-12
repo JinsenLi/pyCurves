@@ -6,3 +6,4 @@ __pycache__/
 /figures
 /test_tmp_4ocb_sign_20260807
 *.inp
+!/examples/manual_multistrand/*.inp
