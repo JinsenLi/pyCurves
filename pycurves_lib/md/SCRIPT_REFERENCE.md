@@ -43,11 +43,11 @@ length.
 Implements `BatchCurvesPlusMDAnalyzer`, the vectorized standard-frame/Curves+
 engine. It precomputes base-fit and backbone index templates, fits many frames
 at once, calculates local frames and rigid-body values with NumPy/SciPy arrays,
-constructs the smooth Curves+ axis, and either returns per-frame records or
+constructs the smooth local (Curves+) axis, and either returns per-frame records or
 feeds a streaming summary accumulator.
 
 This path intentionally rejects unsupported analysis combinations. Use the
-scalar analyzer for legacy minimization, contact-geometry/noncanonical frames,
+scalar analyzer for global-axis minimization, contact-geometry/noncanonical frames,
 non-combined analysis, or terminal virtual levels.
 
 ## `batch_groove.py`

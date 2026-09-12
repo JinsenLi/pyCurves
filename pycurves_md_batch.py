@@ -133,8 +133,8 @@ def _write_csv_payload(payload: Dict, prefix: str) -> None:
 
 
 def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -> Dict:
-    if args.axis_convention.lower().replace("-", "_") not in {"curvesplus", "curves_plus", "curves+", "canal"}:
-        raise SystemExit("pycurves-md-batch currently supports only --axis-convention curvesplus.")
+    if args.axis_convention.lower().replace("-", "_") not in {"local", "curvesplus", "curves_plus", "curves+", "canal"}:
+        raise SystemExit("pycurves-md-batch currently supports only --axis-convention local.")
     if args.frame_convention.lower().replace("-", "_") not in {"standard", "curvesplus", "curves_plus", "curves+", "x3dna", "3dna"}:
         raise SystemExit("pycurves-md-batch currently supports only --frame-convention standard.")
     if args.batch_size <= 0:
@@ -237,7 +237,7 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
             "comb": True if args.comb is None else args.comb,
             "ends": False if args.ends is None else args.ends,
             "mini": False,
-            "axis_convention": "curvesplus",
+            "axis_convention": "local",
             "axis_weighting": bool(analyzer.ctx.cfg.axis_weighting),
             "grooves": analyzer.include_grooves,
             "curvesplus_axis_steps": args.curvesplus_axis_steps,
@@ -251,7 +251,7 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
         "frame_convention": {
             "name": "standard",
             "compatible_with": ["Curves+", "3DNA", "x3dna"],
-            "axis_convention": "curvesplus",
+            "axis_convention": "local",
         },
     }
     if args.mode in {"per-frame", "both"} and frame_sink is None:
@@ -335,13 +335,13 @@ def analyze_trajectory_batch(
     comb: Optional[bool] = None,
     ends: Optional[bool] = None,
     frame_convention: str = "standard",
-    axis_convention: str = "curvesplus",
+    axis_convention: str = "local",
     curvesplus_axis_steps: bool = False,
     fit_quality: bool = False,
     axis_weighting: Optional[bool] = None,
     workers: int = 1,
 ) -> Dict:
-    """Run the vectorized Curves+/standard-frame MD path from Python.
+    """Run the vectorized local-axis/standard-frame MD path from Python.
 
     This is the notebook-friendly equivalent of ``pycurves-md-batch``. It is
     intended for canonical, standard-frame analyses supported by the batch
@@ -384,7 +384,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Vectorized pyCurves MD runner for standard-frame "
-            "Curves+ axis analyses."
+            "local-axis (Curves+) analyses."
         )
     )
     parser.add_argument("topology", help="Topology/reference structure file, usually PDB or CIF.")
@@ -412,7 +412,11 @@ def main() -> None:
     parser.add_argument("--ends", action=argparse.BooleanOptionalAction, default=None, help="Override terminal virtual end levels; batch mode currently requires false.")
     parser.add_argument("--grooves", action=argparse.BooleanOptionalAction, default=None, help="Override groove analysis; defaults to the .inp grv setting.")
     parser.add_argument("--frame-convention", default="standard", help="Currently only standard is supported.")
-    parser.add_argument("--axis-convention", default="curvesplus", help="Currently only curvesplus is supported.")
+    parser.add_argument(
+        "--axis-convention",
+        default="local",
+        help="Currently only local is supported.",
+    )
     parser.add_argument(
         "--axis-weighting",
         action=argparse.BooleanOptionalAction,

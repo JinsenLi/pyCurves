@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 
 
 class CurvesPlusAxisMixin:
-    """Mixin implementing the Curves+ axis/smooth path."""
+    """Mixin implementing the local-axis Curves+ smooth path."""
 
     def _calculate_curvesplus_global_parameters(self):
         """Curves+ standard global axis/BP-axis path.
@@ -67,7 +67,7 @@ class CurvesPlusAxisMixin:
         Curves+ ``manta.f`` computes grooves after ``axis.f``/``smooth.f``,
         using the smoothed ``uvw`` helical-axis frames instead of Curves 5.3
         minimized ``uho/hho``.  The pyCurves groove scanner still reads the
-        common ``optimizer.uho/hho`` axis arrays, so in Curves+ axis mode we
+        common ``optimizer.uho/hho`` axis arrays, so in local-axis mode we
         populate those arrays from ``curvesplus_axis_frames``.
         """
         if not hasattr(self, "curvesplus_axis_frames"):

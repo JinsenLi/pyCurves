@@ -52,7 +52,7 @@ class CurvesWrapper(_CoreCurvesWrapper):
         continuous_strands: bool = False,
         altloc: Optional[str] = None,
         frame_convention: str = "standard",
-        axis_convention: str = "legacy",
+        axis_convention: str = "global",
         dssr_json: Optional[str] = None,
         dssr_unit: Optional[str] = None,
         **kwargs,

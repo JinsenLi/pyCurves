@@ -827,7 +827,7 @@ class HelicalOptimizer:
         """Construct the configured axis once without running minimization.
 
         The base class has no legacy forward engine; Curves+ builds its axis in
-        ``HelicalCalculator``. The JAX legacy optimizer overrides this hook.
+        ``HelicalCalculator``. The JAX global-axis optimizer overrides this hook.
         """
         return None
 

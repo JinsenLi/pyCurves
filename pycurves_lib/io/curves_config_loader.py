@@ -146,13 +146,7 @@ class ConfigLoader:
         for key in ("axis_convention", "global_axis_convention", "axis_frames"):
             match = re.search(fr"\b{key}\s*=\s*['\"]?([A-Za-z0-9_+\-]+)['\"]?", content, re.I)
             if match:
-                value = match.group(1).lower().replace("-", "_")
-                if value in {"legacy", "pycurves"}:
-                    cfg.axis_convention = "legacy"
-                elif value in {"curves_plus", "curves+", "curvesplus", "canal"}:
-                    cfg.axis_convention = "curvesplus"
-                else:
-                    raise ValueError(f"Unknown axis convention {match.group(1)!r}; use legacy or curvesplus.")
+                cfg.axis_convention = match.group(1)
                 break
 
     @staticmethod
@@ -170,8 +164,16 @@ class ConfigLoader:
     @staticmethod
     def _resolve_convention_pair(cfg: HelicalConfig):
         """Keep frame and axis conventions in a physically valid combination."""
-        if str(getattr(cfg, "axis_convention", "legacy")).lower() == "curvesplus":
+        value = str(getattr(cfg, "axis_convention", "global")).strip().lower().replace("-", "_")
+        if value in {"global", "legacy", "pycurves"}:
+            cfg.axis_convention = "global"
+        elif value in {"local", "curves_plus", "curves+", "curvesplus", "canal"}:
+            cfg.axis_convention = "local"
             cfg.frame_convention = "standard"
+        else:
+            raise ValueError(
+                f"Unknown axis convention {cfg.axis_convention!r}; use global or local."
+            )
 
     @staticmethod
     def _topology_lines(lines):

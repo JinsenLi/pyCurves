@@ -87,7 +87,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
     def calculate_all(self):
         """Run the regular Curves calculation stages in Fortran call order."""
         self._set_axis_directions()
-        if self._use_curvesplus_axis_convention():
+        if self._use_local_axis_convention():
             self._calculate_local_parameters()
             self._calculate_curvesplus_global_parameters()
             self._install_curvesplus_axis_for_groove()
@@ -369,7 +369,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
 
         This mirrors the Curves 5.3 text output formulas in outaxe Section F.
         """
-        if self._use_curvesplus_axis_convention() and hasattr(self, "curvesplus_inter_base_pair") and partner_strand == 1:
+        if self._use_local_axis_convention() and hasattr(self, "curvesplus_inter_base_pair") and partner_strand == 1:
             values = self.curvesplus_inter_base_pair[level - 1]
             if np.all(np.isfinite(values)):
                 return values.copy()
@@ -409,7 +409,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
 
     def _global_base_pair_axis_values(self, partner_strand: int, level: int):
         """Return Section C global base-pair axis values for strand 1 with partner_strand."""
-        if self._use_curvesplus_axis_convention() and hasattr(self, "curvesplus_bp_axis") and partner_strand == 1:
+        if self._use_local_axis_convention() and hasattr(self, "curvesplus_bp_axis") and partner_strand == 1:
             values = self.curvesplus_bp_axis[level]
             return values.copy() if np.all(np.isfinite(values)) else None
 
@@ -437,10 +437,11 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         from pycurves_lib.core.parameter_conventions import ParameterFrame
         return ParameterFrame(origin=np.asarray(frame[3], dtype=float), axes=np.asarray(frame[:3], dtype=float))
 
-    def _use_curvesplus_axis_convention(self) -> bool:
+    def _use_local_axis_convention(self) -> bool:
+        axis = str(getattr(self.ctx.cfg, "axis_convention", "global")).lower().replace("-", "_")
         return (
             self.parameter_convention.name == "standard"
-            and str(getattr(self.ctx.cfg, "axis_convention", "legacy")).lower() == "curvesplus"
+            and axis in {"local", "curvesplus", "curves_plus", "curves+", "canal"}
         )
 
     def _instantaneous_global_base_base_values(self, partner_strand: int, level: int):
@@ -504,7 +505,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
 
     def _global_base_base_values_by_level(self, partner_strand: int):
         """Yield the Section D values selected by the active convention."""
-        if self._use_curvesplus_axis_convention() or getattr(
+        if self._use_local_axis_convention() or getattr(
             self.ctx, "axis_reference_uses_continuity", False
         ):
             _, _, iste, iene = self._axis_bounds(0)
@@ -762,7 +763,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
         return bool(np.all(np.isfinite(np.asarray(values, dtype=float))))
 
     def _outaxe_local_only(self):
-        """Print local/non-axis sections for Curves+ axis mode."""
+        """Print local/non-axis sections for local-axis mode."""
         ctx = self.ctx
         cfg = ctx.cfg
         nst = ctx.nst
@@ -936,7 +937,7 @@ class HelicalCalculator(CurvesPlusAxisMixin, GrooveAnalysisMixin):
                 self.tcod[ist-1, k] = 0
                 self.tcod[ien+1, k] = 0
 
-        if self._use_curvesplus_axis_convention():
+        if self._use_local_axis_convention():
             self._outaxe_local_only()
             return
 

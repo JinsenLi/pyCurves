@@ -321,7 +321,7 @@ class GrooveAnalysisMixin:
         return box, nsu, spline_start
 
     def _groove_depth_reference(self, level: int):
-        if self._use_curvesplus_axis_convention() and hasattr(self, "curvesplus_bp_axis"):
+        if self._use_local_axis_convention() and hasattr(self, "curvesplus_bp_axis"):
             lookup_level = min(max(int(level), 1), self.curvesplus_bp_axis.shape[0] - 1)
             values = self.curvesplus_bp_axis[lookup_level]
             if np.all(np.isfinite(values[[0, 3]])):

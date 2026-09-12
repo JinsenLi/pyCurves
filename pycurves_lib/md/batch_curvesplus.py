@@ -307,7 +307,7 @@ class BatchCurvesPlusMDAnalyzer:
             self.inpfile,
             config_overrides={
                 "frame_convention": "standard",
-                "axis_convention": "curvesplus",
+                "axis_convention": "local",
                 "fit": True if fit_override is None else fit_override,
                 "comb": True if comb_override is None else comb_override,
                 "ends": False if ends_override is None else ends_override,
@@ -356,7 +356,7 @@ class BatchCurvesPlusMDAnalyzer:
             output_dir=output_dir,
             continuous_strands=continuous_strands,
             frame_convention="standard",
-            axis_convention="curvesplus",
+            axis_convention="local",
             fit_override=overrides.get("fit_override"),
             comb_override=overrides.get("comb_override"),
             ends_override=overrides.get("ends_override"),

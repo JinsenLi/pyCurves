@@ -334,7 +334,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             "name": name,
             "compatible_with": ["Curves+", "3DNA", "x3dna"] if name == "standard" else ["Curves 5.3"],
             "reference_source": getattr(library, "source", "setup.f hardcoded bref"),
-            "axis_convention": getattr(cfg, "axis_convention", "legacy"),
+            "axis_convention": getattr(cfg, "axis_convention", "global"),
         }
 
     def _analysis_options_payload(self) -> Dict[str, Any]:
@@ -344,7 +344,7 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
             "groove": bool(getattr(cfg, "grv", False)),
             "ends": bool(getattr(cfg, "ends", False)),
             "mini": bool(getattr(cfg, "mini", False)),
-            "axis_convention": getattr(cfg, "axis_convention", "legacy"),
+            "axis_convention": getattr(cfg, "axis_convention", "global"),
             "axis_weighting": bool(getattr(cfg, "axis_weighting", False)),
             "altloc": getattr(self.runner.ctx.molecule, "altloc_selection", "first"),
             "available_altlocs": list(getattr(self.runner.ctx.molecule, "available_altlocs", ())),
@@ -687,9 +687,10 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
 
     def _uses_curvesplus_axis(self) -> bool:
         cfg = self.runner.ctx.cfg
+        axis = str(getattr(cfg, "axis_convention", "global")).lower().replace("-", "_")
         return (
             str(getattr(cfg, "frame_convention", "standard")).lower() == "standard"
-            and str(getattr(cfg, "axis_convention", "legacy")).lower() == "curvesplus"
+            and axis in {"local", "curvesplus", "curves_plus", "curves+", "canal"}
         )
 
     def _render_section_l_local_base_base(self, records: Dict[str, Any]) -> str:

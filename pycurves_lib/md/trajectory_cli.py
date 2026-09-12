@@ -39,7 +39,7 @@ class MDTrajectoryAnalyzer:
         inpfile: Optional[str] = None,
         output_dir: str = ".",
         frame_convention: str = "standard",
-        axis_convention: str = "legacy",
+        axis_convention: str = "global",
         axis_weighting: Optional[bool] = None,
         continuous_strands: bool = False,
         altloc: Optional[str] = None,
@@ -104,7 +104,7 @@ class MDTrajectoryAnalyzer:
         warm_start: bool = True,
         axis_continuity: bool = True,
     ) -> Dict:
-        if self.axis_convention == "curvesplus":
+        if self.axis_convention == "local":
             mini = False
             warm_start = False
         frame_payloads = []
@@ -592,7 +592,7 @@ def analyze_trajectory(
     step: int = 1,
     mode: str = "per-frame",
     frame_convention: str = "standard",
-    axis_convention: str = "legacy",
+    axis_convention: str = "global",
     axis_weighting: Optional[bool] = None,
     continuous_strands: bool = False,
     altloc: Optional[str] = None,

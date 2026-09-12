@@ -10,7 +10,7 @@ scientific implementation lives under [`pycurves_lib`](pycurves_lib/README.md).
 | ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pycurves.py`          | `pycurves`          | Thin static-analysis entry point. It delegates argument parsing and execution to `pycurves_lib.cli.pycurves_main` and turns expected user-facing exceptions into clean process exits.      |
 | `pycurves_md.py`       | `pycurves-md`       | Public trajectory API and CLI facade. It extends the core trajectory analyzer with optional DSSR-selected reference topology, then reuses that topology for every frame.                   |
-| `pycurves_md_batch.py` | `pycurves-md-batch` | Vectorized trajectory runner for standard base frames and the Curves+ axis. It buffers coordinates, processes NumPy batches, and emits per-frame or streaming summary output. |
+| `pycurves_md_batch.py` | `pycurves-md-batch` | Vectorized trajectory runner for standard base frames and the local (Curves+) axis. It buffers coordinates, processes NumPy batches, and emits per-frame or streaming summary output. |
 | `pycurves_md_plot.py`  | `pycurves-md-plot`  | Reads trajectory JSON, extracts named result tables into Pandas, filters or reshapes them, finds outliers, and writes overview plots or CSV files.                                         |
 | `pycurves_viewer.py`   | `pycurves-viewer`   | Combines visualization JSON and its source PDB/mmCIF into a self-contained HTML viewer built around 3Dmol.js.                                                                              |
 | `pycurves_pymol.py`    | `pycurves-pymol`    | Converts the same visualization payload into a structure-free PyMOL `.pml` overlay with grouped axis, backbone, base-pair, and groove objects.                                             |
@@ -30,9 +30,9 @@ The command names are declared in `pyproject.toml`. All modules also expose a
 ### Trajectories
 
 `pycurves_md.py` is the general path. It analyzes selected frames one at a time,
-supports both legacy and Curves+ axes, and can re-annotate base pairing per
+supports both global and local axes, and can re-annotate base pairing per
 frame. `pycurves_md_batch.py` is the constrained high-throughput path: it
-requires standard frames, a Curves+ axis, combined strands, base fitting, and no
+requires standard frames, a local (Curves+) axis, combined strands, base fitting, and no
 terminal virtual levels.
 
 ### Visualization and plotting

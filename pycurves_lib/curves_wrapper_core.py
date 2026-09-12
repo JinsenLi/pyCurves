@@ -37,7 +37,7 @@ class CurvesWrapper:
         continuous_strands: bool = False,
         altloc: Optional[str] = None,
         frame_convention: str = "standard",
-        axis_convention: str = "legacy",
+        axis_convention: str = "global",
         axis_weighting: Optional[bool] = None,
         fit_override: Optional[bool] = None,
         grv_override: Optional[bool] = None,
@@ -87,7 +87,7 @@ class CurvesWrapper:
         continuous_strands: bool = False,
         altloc: Optional[str] = None,
         frame_convention: str = "standard",
-        axis_convention: str = "legacy",
+        axis_convention: str = "global",
     ):
         suffix = Path(path).suffix.lower()
         if suffix == ".inp":
@@ -188,10 +188,10 @@ class CurvesWrapper:
         axis_sign_reference: Optional[np.ndarray] = None,
     ):
         log_parts = []
-        curvesplus_axis = str(getattr(self.ctx.cfg, "axis_convention", self.axis_convention)).lower() == "curvesplus"
-        if curvesplus_axis:
-            # Curves+ axis mode is derived from standard base-pair frames and
-            # smooth.f-style axis construction, not the legacy minimizer.
+        local_axis = str(getattr(self.ctx.cfg, "axis_convention", self.axis_convention)).lower() == "local"
+        if local_axis:
+            # The local axis is derived from standard base-pair frames and
+            # Curves+ smooth.f-style construction, not the global minimizer.
             self.ctx.cfg.mini = False
         mini = bool(self.ctx.cfg.mini)
         self._validate_supported_legacy_options(mini=mini)
@@ -218,7 +218,7 @@ class CurvesWrapper:
         if axis_sign_reference is not None:
             self.ctx.axis_direction_sign_reference = np.asarray(axis_sign_reference, dtype=int).copy()
 
-        if curvesplus_axis or self.ctx.cfg.zaxe:
+        if local_axis or self.ctx.cfg.zaxe:
             self.opt = HelicalOptimizer(self.ctx)
         else:
             from pycurves_lib.core.curves_optimizer_jax import HelicalOptimizerJAX
@@ -370,22 +370,20 @@ class CurvesWrapper:
 
     @staticmethod
     def _normalize_axis_convention(value: str) -> str:
-        normalized = str(value or "legacy").strip().lower().replace("-", "_")
-        if normalized in {"legacy", "pycurves"}:
-            return "legacy"
-        if normalized in {"curves_plus", "curves+", "curvesplus", "canal"}:
-            return "curvesplus"
-        raise ValueError(f"Unknown axis convention {value!r}; use 'legacy' or 'curvesplus'.")
+        normalized = str(value or "global").strip().lower().replace("-", "_")
+        if normalized in {"global", "legacy", "pycurves"}:
+            return "global"
+        if normalized in {"local", "curves_plus", "curves+", "curvesplus", "canal"}:
+            return "local"
+        raise ValueError(f"Unknown axis convention {value!r}; use 'global' or 'local'.")
 
     @classmethod
     def normalize_conventions(cls, frame_convention: str, axis_convention: str):
         frame = cls._normalize_frame_convention(frame_convention)
         axis = cls._normalize_axis_convention(axis_convention)
-        if axis == "curvesplus":
-            # Curves+ axis/smooth construction is defined on standard base-pair
-            # reference frames.  Treat axis_convention=curvesplus as a complete
-            # Curves+ mode request so callers cannot accidentally disable the
-            # legacy minimizer while still using legacy base frames.
+        if axis == "local":
+            # Local/Curves+ axis construction is defined on standard base-pair
+            # reference frames. Treat it as a complete mode request.
             frame = "standard"
         return frame, axis
 

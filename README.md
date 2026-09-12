@@ -79,20 +79,20 @@ multi-strand topology inference is available. Example inputs for PDB 149D and
 
 ```bash
 pycurves examples/manual_multistrand/149D_triplex.inp --pdb 149D.cif \
-  --frame-convention standard --axis-convention legacy --no-grooves
+  --frame-convention standard --axis-convention global --no-grooves
 pycurves examples/manual_multistrand/1KF1_g4.inp --pdb 1KF1.cif \
-  --frame-convention standard --axis-convention legacy --no-grooves
+  --frame-convention standard --axis-convention global --no-grooves
 ```
 
-Legacy mode follows Curves 5.3 multi-strand conventions: all strands contribute
-to the common helical axis, and strand 1 is compared separately with every other
-strand for base-pair-axis, base-base, and inter-base-pair parameters. Groove
-analysis is duplex-only in Curves 5.3, so use `grv=.f.` or `--no-grooves` for
-three- and four-strand inputs.
+Global-axis mode follows Curves 5.3 multi-strand conventions: all strands
+contribute to the common helical axis, and strand 1 is compared separately with
+every other strand for base-pair-axis, base-base, and inter-base-pair
+parameters. Groove analysis is duplex-only in Curves 5.3, so use `grv=.f.` or
+`--no-grooves` for three- and four-strand inputs.
 
 The commands above retain pyCurves' standard base frames. For a direct numerical
 comparison with Curves 5.3, use both `--frame-convention legacy` and
-`--axis-convention legacy`.
+`--axis-convention global`.
 
 Use legacy Curves 5.3-style local frames when you need old-frame compatibility:
 
@@ -117,7 +117,7 @@ available when those workflows are needed.
 
 - Gemmi-backed PDB/mmCIF loading with automatic topology inference for DNA/RNA
   structures and a legacy fixed-column fallback for PDB files Gemmi cannot read.
-- Legacy Curves 5.3-style curvilinear-axis minimization in Python/JAX.
+- Global Curves 5.3-style curvilinear-axis minimization in Python/JAX.
 - Curves+/3DNA-compatible standard local frames by default, with legacy
   Curves 5.3 base frames still available.
 - Non-canonical-aware frame selection for mismatches, Hoogsteen/reverse
@@ -126,7 +126,7 @@ available when those workflows are needed.
   `[tWH]`, and `[tSS]`.
 - Text, JSON, and CSV outputs for local/global helical parameters, grooves,
   backbone torsions, curvature, and annotations.
-- MD trajectory analysis and a vectorized Curves+ batch path.
+- MD trajectory analysis and a vectorized local-axis (Curves+) batch path.
 - Optional HTML viewer payload generation.
 
 ## Important CLI Options
@@ -144,8 +144,8 @@ Common options:
   alternate-conformation code. If omitted, retain the first listed conformer.
 - `--frame-convention standard|legacy`: use Curves+/3DNA-style standard
   frames by default, or choose legacy Curves 5.3-compatible frames.
-- `--axis-convention legacy|curvesplus`: choose the legacy pyCurves/JAX axis or
-  the Curves+ smooth-axis path.
+- `--axis-convention global|local`: choose the global Curves minimization axis
+  (the default) or the local Curves+ smooth-axis path.
 - `--axis-weighting` / `--no-axis-weighting`: opt in to smoothly downweighting
   requested pairs whose fitted Curves base origins separate by 4--8 A during
   axis construction. The default is the historical unweighted axis.
@@ -158,7 +158,7 @@ Common options:
   is given, the `mini` value in the `.inp` file is used.
 - `--visualization`: include geometry needed by `pycurves-viewer` in JSON.
 
-In legacy-axis mode, `mini=.f.` or `--no-mini` constructs the axis once from
+In global-axis mode, `mini=.f.` or `--no-mini` constructs the axis once from
 the input XYTP values and runs the full downstream parameter calculation
 without BFGS minimization.
 
@@ -277,11 +277,11 @@ Store both per-frame rows and summary statistics:
 pycurves-md topology.pdb trajectory.dcd --mode both --format json --output-file dynamics_full.json
 ```
 
-For canonical two-strand Curves+/standard-frame trajectories, the vectorized
-batch path can be much faster:
+For canonical two-strand local-axis (Curves+)/standard-frame trajectories, the
+vectorized batch path can be much faster:
 
 ```bash
-pycurves-md-batch topology.pdb trajectory.xtc --axis-convention curvesplus --frame-convention standard --batch-size 256 --workers 4 --mode summary --output-file dynamics_batch.json
+pycurves-md-batch topology.pdb trajectory.xtc --axis-convention local --frame-convention standard --batch-size 256 --workers 4 --mode summary --output-file dynamics_batch.json
 ```
 
 `--workers` processes independent coordinate batches concurrently while keeping
@@ -289,7 +289,7 @@ trajectory reading and output ordering in the parent process. The default is 1;
 benchmark 2--4 workers for long trajectories because short runs, slow storage,
 and already-parallel groove calculations may not benefit.
 
-Use `pycurves-md` for legacy-axis minimization, non-canonical contact-geometry
+Use `pycurves-md` for global-axis minimization, non-canonical contact-geometry
 frames, `--no-comb`, or `--ends`.
 
 
@@ -318,7 +318,7 @@ payload = analyze_trajectory(
     frames="1000:5000:10",
     mode="both",
     frame_convention="standard",
-    axis_convention="curvesplus",
+    axis_convention="local",
 )
 
 # Long-form DataFrames from the in-memory payload.
@@ -365,7 +365,7 @@ payload = analyze_trajectory_batch(
 steps = extract_block(payload, "step")
 ```
 
-Use `analyze_trajectory` rather than the batch helper when you need legacy-axis
+Use `analyze_trajectory` rather than the batch helper when you need global-axis
 minimization, non-canonical contact-geometry frames, `comb=False`, or terminal
 end-level handling.
 
