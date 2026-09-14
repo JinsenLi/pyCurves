@@ -81,6 +81,16 @@ pycurves 149D.cif
 pycurves 1KF1.cif
 ```
 
+DSSR JSON reports containing one valid stack of `Gtetrads` or multiplets are
+selected automatically:
+
+```bash
+pycurves 2KM3.cif --dssr-json 2km3-dssr.json
+```
+
+Use `--dssr-unit multiplet:N` only when a report contains more than one valid
+multiplet stack.
+
 Use `--duplex-only` to skip multiplet inference and use the one-to-one duplex
 path:
 

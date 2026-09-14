@@ -109,7 +109,15 @@ def annotate_context(ctx) -> Dict[str, List[Dict[str, Any]]]:
         for row in source_base_pairs
         if row.get("mapped_level") is not None
     }
-    base_pairs = _classify_base_pairs(ctx, source_by_level)
+    selected_source_by_level: Dict[int, List[Dict[str, Any]]] = {}
+    for row in source_base_pairs:
+        if row.get("mapped_level") is not None and row.get("dssr_selected"):
+            selected_source_by_level.setdefault(int(row["mapped_level"]), []).append(row)
+    base_pairs = _classify_base_pairs(
+        ctx,
+        source_by_level,
+        selected_source_by_level,
+    )
     ctx.pair_contact_geometries = _pair_contact_geometry_index(base_pairs)
     skipped = []
     warnings = _collect_warnings(ctx, base_pairs, base_fit_quality, source_base_pairs)
@@ -531,11 +539,41 @@ def _hoogsteen_protonation_diagnostics(
 
 
 
-def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+def _classify_base_pairs(
+    ctx,
+    source_by_level: Optional[Dict[int, Dict[str, Any]]] = None,
+    selected_source_by_level: Optional[Dict[int, List[Dict[str, Any]]]] = None,
+) -> List[Dict[str, Any]]:
     source_by_level = source_by_level or {}
-    rows = []
+    selected_source_by_level = selected_source_by_level or {}
+    cases = []
     for level in range(1, ctx.nux + 1):
-        active = [strand for strand in range(ctx.nst) if _residue_for(ctx, strand, level) is not None]
+        active = [
+            strand
+            for strand in range(ctx.nst)
+            if _residue_for(ctx, strand, level) is not None
+        ]
+        selected_pairs = []
+        if len(active) > 2:
+            seen = set()
+            for source_pair in selected_source_by_level.get(level, []):
+                try:
+                    s1 = int(source_pair["mapped_strand_1"]) - 1
+                    s2 = int(source_pair["mapped_strand_2"]) - 1
+                except (KeyError, TypeError, ValueError):
+                    continue
+                pair = tuple(sorted((s1, s2)))
+                if s1 == s2 or s1 not in active or s2 not in active or pair in seen:
+                    continue
+                seen.add(pair)
+                selected_pairs.append((level, [s1, s2], source_pair))
+        if selected_pairs:
+            cases.extend(selected_pairs)
+        else:
+            cases.append((level, active, source_by_level.get(level)))
+
+    rows = []
+    for level, active, source_pair in cases:
         if len(active) < 2:
             continue
         if len(active) > 2:
@@ -583,7 +621,6 @@ def _classify_base_pairs(ctx, source_by_level: Optional[Dict[int, Dict[str, Any]
         b1 = parent_base_name(r1["residue_name"])
         b2 = parent_base_name(r2["residue_name"])
         family, subtype, canonical = _pair_family(b1, b2)
-        source_pair = source_by_level.get(level)
         source_hoogsteen = bool(source_pair and source_pair.get("is_hoogsteen"))
         manual_geometry = _pair_geometry_marker(ctx, level, s1 + 1, s2 + 1)
         contact_geometry = _contact_geometry_for_pair(
@@ -1740,6 +1777,8 @@ def _source_base_pair_annotations(ctx) -> List[Dict[str, Any]]:
         pairing_mode = source_assignment["pairing_mode"]
         annotation = {
             "source": row.get("source", ""),
+            "dssr_selected": bool(row.get("dssr_selected")),
+            "dssr_unit": row.get("dssr_unit", ""),
             "pair_number": row.get("pair_number"),
             "pair_name": row.get("pair_name", ""),
             "residue_1": _format_source_residue(row, "i"),

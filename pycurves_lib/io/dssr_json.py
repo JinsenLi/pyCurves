@@ -167,6 +167,64 @@ class DSSRUnit:
         return f"{self.kind}:{self.index}"
 
 
+@dataclass(frozen=True)
+class DSSRMultiplet:
+    kind: str
+    index: int
+    nt_ids: Tuple[str, ...]
+    planarity: Optional[float] = None
+    raw: Dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
+
+    @classmethod
+    def from_mapping(
+        cls,
+        kind: str,
+        value: Dict[str, Any],
+        *,
+        context: str,
+    ) -> "DSSRMultiplet":
+        if not isinstance(value, dict):
+            raise DSSRJSONError(
+                f"{context} must contain JSON objects, not {type(value).__name__}."
+            )
+        try:
+            index = int(value.get("index", 0))
+        except (TypeError, ValueError) as exc:
+            raise DSSRJSONError(f"{context} index must be an integer.") from exc
+        raw_ids = value.get("nts_long") or []
+        if isinstance(raw_ids, str):
+            nt_ids = tuple(
+                part.strip() for part in raw_ids.split(",") if part.strip()
+            )
+        elif isinstance(raw_ids, (list, tuple)):
+            nt_ids = tuple(
+                str(part).strip() for part in raw_ids if str(part).strip()
+            )
+        else:
+            raise DSSRJSONError(
+                f"{context} {index} nts_long must be text or a JSON list."
+            )
+        if not nt_ids:
+            raise DSSRJSONError(f"{context} {index} is missing nts_long.")
+        try:
+            planarity = (
+                float(value["planarity"])
+                if value.get("planarity") is not None
+                else None
+            )
+        except (TypeError, ValueError) as exc:
+            raise DSSRJSONError(
+                f"{context} {index} planarity must be numeric."
+            ) from exc
+        return cls(
+            kind=kind,
+            index=index,
+            nt_ids=nt_ids,
+            planarity=planarity,
+            raw=dict(value),
+        )
+
+
 @dataclass
 class DSSRDocument:
     path: str
@@ -175,6 +233,8 @@ class DSSRDocument:
     residues: Tuple[DSSRResidue, ...]
     stems: Tuple[DSSRUnit, ...]
     helices: Tuple[DSSRUnit, ...]
+    multiplets: Tuple[DSSRMultiplet, ...]
+    gtetrads: Tuple[DSSRMultiplet, ...]
     metadata: Dict[str, Any]
     raw_keys: Tuple[str, ...]
 
@@ -199,11 +259,15 @@ class DSSRDocument:
         raw_residues = data.get("nts") or []
         raw_stems = data.get("stems") or []
         raw_helices = data.get("helices") or []
+        raw_multiplets = data.get("multiplets") or []
+        raw_gtetrads = data.get("Gtetrads") or data.get("gtetrads") or []
         for key, value in (
             ("pairs", raw_pairs),
             ("nts", raw_residues),
             ("stems", raw_stems),
             ("helices", raw_helices),
+            ("multiplets", raw_multiplets),
+            ("Gtetrads", raw_gtetrads),
         ):
             if not isinstance(value, list):
                 raise DSSRJSONError(f"DSSR root field {key!r} must be a JSON list when present.")
@@ -232,6 +296,18 @@ class DSSRDocument:
                 DSSRUnit.from_mapping("helix", unit, context="DSSR helices")
                 for unit in raw_helices
             ),
+            multiplets=tuple(
+                DSSRMultiplet.from_mapping(
+                    "multiplet", unit, context="DSSR multiplets"
+                )
+                for unit in raw_multiplets
+            ),
+            gtetrads=tuple(
+                DSSRMultiplet.from_mapping(
+                    "gtetrad", unit, context="DSSR Gtetrads"
+                )
+                for unit in raw_gtetrads
+            ),
             metadata=dict(metadata),
             raw_keys=tuple(sorted(str(key) for key in data)),
         )
@@ -240,7 +316,18 @@ class DSSRDocument:
 
     @property
     def kind(self) -> str:
-        return "full" if (self.residues or self.stems or self.helices or self.metadata) else "pair_only"
+        return (
+            "full"
+            if (
+                self.residues
+                or self.stems
+                or self.helices
+                or self.multiplets
+                or self.gtetrads
+                or self.metadata
+            )
+            else "pair_only"
+        )
 
     @property
     def residues_by_id(self) -> Dict[str, DSSRResidue]:

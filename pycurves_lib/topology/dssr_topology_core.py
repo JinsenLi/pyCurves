@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import networkx as nx
 import numpy as np
 
 from pycurves_lib.core.curves_dataclasses import MolecularStructure
@@ -16,7 +17,11 @@ from pycurves_lib.io.dssr_json import (
     DSSRUnit,
     matched_pair_identities,
 )
-from pycurves_lib.topology.topology_inferrer import InferredTopology
+from pycurves_lib.topology.topology_inferrer import (
+    BasePairCandidate,
+    InferredTopology,
+    RobustTopologyInferrer,
+)
 
 
 _VALID_LW_TAG = re.compile(r"^[ct][WHS][WHS]$", re.IGNORECASE)
@@ -81,9 +86,18 @@ class DSSRTopologyBuilder:
         self._resolved_nt_ids: Dict[str, int] = {}
         self._next_links = self._build_directed_backbone_links()
         self._synthetic_cache: Optional[Tuple[Tuple[DSSRUnit, ...], Tuple[str, ...]]] = None
+        self._multiplet_cache: Optional[
+            Tuple[Tuple[DSSRUnit, ...], Tuple[str, ...]]
+        ] = None
 
-    def build(self, unit_selector: Optional[str] = None) -> DSSRBuildResult:
-        unit = self.select_unit(unit_selector)
+    def build(
+        self,
+        unit_selector: Optional[str] = None,
+        duplex_only: bool = False,
+    ) -> DSSRBuildResult:
+        unit = self.select_unit(unit_selector, duplex_only=duplex_only)
+        if unit.kind == "multiplet":
+            return self._build_multiplet(unit)
         oriented = self._orient_unit(unit)
         ni_map = np.asarray([oriented.row1, oriented.row2], dtype=int)
         pair_geometry_markers = {}
@@ -124,7 +138,11 @@ class DSSRTopologyBuilder:
             provenance=provenance,
         )
 
-    def select_unit(self, selector: Optional[str]) -> DSSRUnit:
+    def select_unit(
+        self,
+        selector: Optional[str],
+        duplex_only: bool = False,
+    ) -> DSSRUnit:
         if selector:
             kind, index = self._parse_selector(selector)
             candidates = self._units_for_kind(kind)
@@ -134,6 +152,14 @@ class DSSRTopologyBuilder:
             available = ", ".join(unit.selector for unit in candidates) or "none"
             raise DSSRSelectionError(
                 f"DSSR unit {kind}:{index} is not present; available {kind} units: {available}."
+            )
+
+        multiplet_units = self._multiplet_units()[0]
+        if multiplet_units and not duplex_only:
+            if len(multiplet_units) == 1:
+                return multiplet_units[0]
+            raise DSSRSelectionError(
+                self._selection_message("multiplet", multiplet_units)
             )
 
         if self.document.stems:
@@ -164,7 +190,11 @@ class DSSRTopologyBuilder:
     def unit_summaries(self) -> List[dict]:
         units: Tuple[DSSRUnit, ...]
         if self.document.stems or self.document.helices:
-            units = self.document.stems + self.document.helices
+            units = (
+                self._multiplet_units()[0]
+                + self.document.stems
+                + self.document.helices
+            )
         else:
             units = self._synthetic_pair_units()[0]
 
@@ -179,6 +209,20 @@ class DSSRTopologyBuilder:
                 "num_stems": unit.num_stems,
                 "helix_form": unit.helix_form,
             }
+            if unit.kind == "multiplet":
+                topology = self._multiplet_topology(unit)
+                summary.update({
+                    "representable": True,
+                    "level_count": topology.n_levels,
+                    "level_sizes": [
+                        int(np.count_nonzero(topology.ni_map[:, level]))
+                        for level in range(topology.n_levels)
+                    ],
+                    "chain_pairs": list(topology.chain_ids),
+                    "directions": [1 if value > 0 else -1 for value in topology.nu_raw],
+                })
+                summaries.append(summary)
+                continue
             try:
                 oriented = self._orient_unit(unit)
                 chain_pairs = {
@@ -201,6 +245,215 @@ class DSSRTopologyBuilder:
                 })
             summaries.append(summary)
         return summaries
+
+    def _build_multiplet(self, unit: DSSRUnit) -> DSSRBuildResult:
+        topology = self._multiplet_topology(unit)
+        source_rows, mapping_warnings = self._source_base_pair_rows(unit)
+        warnings = list(self._selection_warnings()) + mapping_warnings
+        source_by_level = {
+            frozenset(self._resolve_nt_id(nt_id) for nt_id in level): source
+            for level, source in zip(
+                unit.raw.get("level_nt_ids", ()),
+                unit.raw.get("level_sources", ()),
+            )
+        }
+        level_sources = [
+            source_by_level.get(
+                frozenset(
+                    int(value)
+                    for value in topology.ni_map[:, level]
+                    if value > 0
+                ),
+                "",
+            )
+            for level in range(topology.n_levels)
+        ]
+        provenance = {
+            "source": "dssr_json",
+            "json_file": self.document.path,
+            "document_kind": self.document.kind,
+            "program": self.document.program,
+            "version": self.document.version,
+            "metadata_input_file": self.document.metadata.get("input_file"),
+            "structure_id": self.document.metadata.get("str_id"),
+            "root_pair_count": len(self.document.pairs),
+            "unit": {
+                "selector": unit.selector,
+                "kind": unit.kind,
+                "index": unit.index,
+                "pair_count": len(unit.pairs),
+                "level_count": topology.n_levels,
+                "level_sizes": [
+                    int(np.count_nonzero(topology.ni_map[:, level]))
+                    for level in range(topology.n_levels)
+                ],
+                "chain_ids": list(topology.chain_ids),
+                "strand_directions": [
+                    1 if value > 0 else -1 for value in topology.nu_raw
+                ],
+                "level_sources": level_sources,
+            },
+            "warnings": list(dict.fromkeys(warnings)),
+        }
+        return DSSRBuildResult(
+            topology=topology,
+            unit=unit,
+            source_base_pairs=tuple(source_rows),
+            provenance=provenance,
+        )
+
+    def _multiplet_topology(self, unit: DSSRUnit) -> InferredTopology:
+        levels = [
+            tuple(self._resolve_nt_id(nt_id) for nt_id in level)
+            for level in unit.raw.get("level_nt_ids", ())
+        ]
+        inferrer = RobustTopologyInferrer(self.molecule, pdbfile=self.pdbfile)
+        inferrer._collect_residues()
+        inferrer._trace_strands()
+        strand_positions = {
+            subunit: (strand_idx, position)
+            for strand_idx, strand in enumerate(inferrer.strands)
+            for position, subunit in enumerate(strand)
+        }
+        candidates = []
+        for pair in unit.pairs:
+            resolved = self._resolve_pair(pair)
+            candidates.append(BasePairCandidate(
+                first=resolved.first,
+                second=resolved.second,
+                first_strand=strand_positions[resolved.first][0],
+                second_strand=strand_positions[resolved.second][0],
+                hbond_count=1,
+                mean_distance=0.0,
+                score=0.0,
+                pair_family="dssr_multiplet",
+                atom_pairs=(),
+            ))
+        topology = inferrer._multiplet_topology_from_levels(
+            levels,
+            candidates,
+            strand_positions,
+        )
+        if topology is None:
+            raise DSSRTopologyError(
+                f"DSSR {unit.selector} does not trace into two to four monotonic strands."
+            )
+        return topology
+
+    def _multiplet_units(self) -> Tuple[Tuple[DSSRUnit, ...], Tuple[str, ...]]:
+        if self._multiplet_cache is not None:
+            return self._multiplet_cache
+        records = self.document.gtetrads + self.document.multiplets
+        if not records:
+            self._multiplet_cache = ((), ())
+            return self._multiplet_cache
+
+        inferrer = RobustTopologyInferrer(self.molecule, pdbfile=self.pdbfile)
+        inferrer._collect_residues()
+        inferrer._trace_strands()
+        strand_positions = {
+            subunit: (strand_idx, position)
+            for strand_idx, strand in enumerate(inferrer.strands)
+            for position, subunit in enumerate(strand)
+        }
+        entries = []
+        seen_levels = set()
+        warnings = []
+        for record in records:
+            if not 2 <= len(record.nt_ids) <= 4:
+                continue
+            try:
+                level = tuple(self._resolve_nt_id(nt_id) for nt_id in record.nt_ids)
+            except DSSRTopologyError as exc:
+                warnings.append(str(exc))
+                continue
+            identity = frozenset(level)
+            if identity in seen_levels:
+                continue
+            seen_levels.add(identity)
+            if not inferrer._multiplet_level_is_valid(level):
+                warnings.append(
+                    f"ignored DSSR {record.kind}:{record.index}: invalid level geometry"
+                )
+                continue
+            entries.append((record, level))
+
+        stack_graph = nx.Graph()
+        stack_graph.add_nodes_from(range(len(entries)))
+        for first_idx, (_first_record, first_level) in enumerate(entries):
+            for second_idx in range(first_idx + 1, len(entries)):
+                if inferrer._multiplet_levels_are_consecutive(
+                    first_level,
+                    entries[second_idx][1],
+                    strand_positions,
+                ):
+                    stack_graph.add_edge(first_idx, second_idx)
+
+        selected_groups = []
+        for component in nx.connected_components(stack_graph):
+            if len(component) < 2:
+                continue
+            subgraph = stack_graph.subgraph(component)
+            if (
+                not nx.is_tree(subgraph)
+                or max(dict(subgraph.degree()).values()) > 2
+            ):
+                warnings.append("ignored branched DSSR multiplet stack")
+                continue
+            endpoints = sorted(node for node in component if subgraph.degree(node) == 1)
+            order = []
+            previous = None
+            current = endpoints[0]
+            while current is not None:
+                order.append(current)
+                following = [
+                    neighbor
+                    for neighbor in subgraph.neighbors(current)
+                    if neighbor != previous
+                ]
+                previous, current = current, (following[0] if following else None)
+
+            valid_windows = []
+            for length in range(len(order), 1, -1):
+                for start in range(len(order) - length + 1):
+                    window = order[start:start + length]
+                    levels = [entries[index][1] for index in window]
+                    if not any(len(level) > 2 for level in levels):
+                        continue
+                    topology = inferrer._multiplet_topology_from_levels(
+                        levels,
+                        (),
+                        strand_positions,
+                    )
+                    if topology is not None:
+                        valid_windows.append((window, topology.n_strands))
+                if valid_windows:
+                    break
+            selected_groups.extend(valid_windows)
+
+        units = []
+        for index, (group, strand_count) in enumerate(selected_groups, start=1):
+            level_records = [entries[node][0] for node in group]
+            level_sets = [set(record.nt_ids) for record in level_records]
+            selected_pairs = tuple(
+                pair
+                for pair in self.document.pairs
+                if any(pair.identity <= level_set for level_set in level_sets)
+            )
+            units.append(DSSRUnit(
+                kind="multiplet",
+                index=index,
+                pairs=selected_pairs,
+                raw={
+                    "level_nt_ids": tuple(record.nt_ids for record in level_records),
+                    "level_sources": tuple(
+                        f"{record.kind}:{record.index}" for record in level_records
+                    ),
+                    "strand_count": strand_count,
+                },
+            ))
+        self._multiplet_cache = (tuple(units), tuple(warnings))
+        return self._multiplet_cache
 
     def _collect_molecule_residues(self) -> Dict[int, MoleculeResidue]:
         boundaries = self.molecule.subunit_boundaries
@@ -498,6 +751,8 @@ class DSSRTopologyBuilder:
         return self._synthetic_cache
 
     def _units_for_kind(self, kind: str) -> Tuple[DSSRUnit, ...]:
+        if kind == "multiplet":
+            return self._multiplet_units()[0]
         if kind == "stem":
             return self.document.stems
         if kind == "helix":
@@ -505,7 +760,7 @@ class DSSRTopologyBuilder:
         if kind == "pairs":
             return self._synthetic_pair_units()[0]
         raise DSSRSelectionError(
-            f"Unknown DSSR unit kind {kind!r}; use stem:N, helix:N, or pairs:N."
+            f"Unknown DSSR unit kind {kind!r}; use multiplet:N, stem:N, helix:N, or pairs:N."
         )
 
     @staticmethod
@@ -513,7 +768,7 @@ class DSSRTopologyBuilder:
         text = str(selector or "").strip().lower()
         if ":" not in text:
             raise DSSRSelectionError(
-                f"Invalid DSSR unit selector {selector!r}; use stem:N, helix:N, or pairs:N."
+                f"Invalid DSSR unit selector {selector!r}; use multiplet:N, stem:N, helix:N, or pairs:N."
             )
         kind, raw_index = text.split(":", 1)
         kind = kind.rstrip("s") if kind != "pairs" else kind
@@ -526,6 +781,12 @@ class DSSRTopologyBuilder:
     def _selection_message(self, kind: str, units: Sequence[DSSRUnit]) -> str:
         summaries = []
         for unit in units:
+            if unit.kind == "multiplet":
+                summaries.append(
+                    f"{unit.selector} ({len(unit.raw.get('level_nt_ids', ()))} levels; "
+                    f"{unit.raw.get('strand_count', '?')} strands)"
+                )
+                continue
             chain_pairs = ",".join(self._unit_chain_pairs(unit)) or "unknown chains"
             summaries.append(f"{unit.selector} ({len(unit.pairs)} pairs; {chain_pairs})")
         return (
@@ -602,6 +863,7 @@ class DSSRTopologyBuilder:
                 "Pair-only DSSR JSON lacks authoritative stem/helix grouping; pyCurves reconstructed continuous pair segments."
             )
         warnings.extend(self._synthetic_pair_units()[1] if not (self.document.stems or self.document.helices) else ())
+        warnings.extend(self._multiplet_units()[1])
         return tuple(warnings)
 
     def _provenance(

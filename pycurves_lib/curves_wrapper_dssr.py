@@ -123,7 +123,11 @@ class CurvesWrapper(_CoreCurvesWrapper):
             self.dssr_document,
             pdbfile=pdbfile,
         )
-        result = builder.build(self.dssr_unit)
+        selected_duplex_only = self.duplex_only if duplex_only is None else duplex_only
+        result = builder.build(
+            self.dssr_unit,
+            duplex_only=selected_duplex_only,
+        )
         topology = result.topology
         for attribute, override in (
             ("fit", getattr(self, "fit_override", None)),
@@ -166,15 +170,9 @@ class CurvesWrapper(_CoreCurvesWrapper):
         ]
         molecule.source_base_pairs = existing + [dict(row) for row in self.dssr_source_base_pairs]
 
-    def analyze(self, *args, **kwargs):
-        result = super().analyze(*args, **kwargs)
-        if self.ctx is not None:
-            self.attach_dssr_annotations(self.ctx.molecule)
-        return result
-
-    def analyze_molecule(self, molecule: MolecularStructure, *args, **kwargs):
-        self.attach_dssr_annotations(molecule)
-        return super().analyze_molecule(molecule, *args, **kwargs)
+    def _analyze_loaded_context(self, *args, **kwargs):
+        self.attach_dssr_annotations(self.ctx.molecule)
+        return super()._analyze_loaded_context(*args, **kwargs)
 
 
 __all__ = ["CurvesWrapper"]

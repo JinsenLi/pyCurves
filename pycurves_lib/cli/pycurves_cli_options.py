@@ -22,8 +22,8 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dssr-unit",
         help=(
-            "DSSR unit selector such as stem:1, helix:2, or pairs:1. Required "
-            "when the report contains multiple candidate units."
+            "DSSR unit selector such as multiplet:1, stem:1, helix:2, or "
+            "pairs:1. Required when the report contains multiple candidate units."
         ),
     )
 

@@ -54,11 +54,13 @@ observed frame classifications.
 
 ### `dssr_topology_core.py`
 
-Resolves normalized DSSR residues against loaded coordinates, selects a stem,
-helix, or synthetic pair unit, validates representability, constructs Curves
-strand maps, orients LW tags to the chosen strand order, and records source
-rows plus topology provenance. Ambiguous selection and unsafe topology have
-separate public error types.
+Resolves normalized DSSR residues against loaded coordinates, selects a
+multiplet, stem, helix, or synthetic pair unit, validates representability,
+constructs Curves strand maps, orients LW tags to the chosen strand order, and
+records source rows plus topology provenance. A single valid stack of DSSR
+`Gtetrads` or two- to four-base `multiplets` takes precedence over pairwise
+helix projections. Ambiguous selection and unsafe topology have separate public
+error types.
 
 ### `dssr_topology.py`
 
