@@ -49,6 +49,7 @@ class MDTrajectoryAnalyzer:
         comb_override: Optional[bool] = None,
         ends_override: Optional[bool] = None,
         topology_mode: str = "reference",
+        duplex_only: bool = False,
     ):
         self.topology_file = topology_file
         self.trajectory_file = trajectory_file
@@ -58,6 +59,7 @@ class MDTrajectoryAnalyzer:
             axis_convention,
         )
         self.continuous_strands = continuous_strands
+        self.duplex_only = duplex_only
         self.altloc = MolecularLoader.normalize_altloc(altloc)
         self.fit_override = fit_override
         self.grv_override = grv_override
@@ -74,6 +76,7 @@ class MDTrajectoryAnalyzer:
         self.template_molecule = self._load_template_molecule(self.reference_topology_file, self.altloc)
         self.runner_kwargs = {
             "continuous_strands": continuous_strands,
+            "duplex_only": duplex_only,
             "altloc": self.altloc,
             "frame_convention": self.frame_convention,
             "axis_convention": self.axis_convention,
@@ -178,6 +181,7 @@ class MDTrajectoryAnalyzer:
             },
             "analysis_options": {
                 "continuous_strands": self.continuous_strands,
+                "duplex_only": getattr(self, "duplex_only", False),
                 "altloc": self.altloc or "first",
                 "fit": self.fit_override,
                 "grooves": self.grv_override,
@@ -605,6 +609,7 @@ def analyze_trajectory(
     verbose: bool = False,
     warm_start: bool = True,
     axis_continuity: bool = True,
+    duplex_only: bool = False,
 ) -> Dict:
     """Run pyCurves trajectory analysis from Python and return the JSON-like payload.
 
@@ -627,6 +632,7 @@ def analyze_trajectory(
         axis_convention=axis_convention,
         axis_weighting=axis_weighting,
         continuous_strands=continuous_strands,
+        duplex_only=duplex_only,
         altloc=altloc,
         fit_override=fit,
         grv_override=grooves,

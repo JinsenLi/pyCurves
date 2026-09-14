@@ -55,6 +55,7 @@ class CurvesWrapper(_CoreCurvesWrapper):
         axis_convention: str = "global",
         dssr_json: Optional[str] = None,
         dssr_unit: Optional[str] = None,
+        duplex_only: bool = False,
         **kwargs,
     ):
         suffix = Path(path).suffix.lower()
@@ -67,6 +68,7 @@ class CurvesWrapper(_CoreCurvesWrapper):
                 inpfile=path,
                 output_dir=output_dir,
                 continuous_strands=continuous_strands,
+                duplex_only=duplex_only,
                 altloc=altloc,
                 frame_convention=frame_convention,
                 axis_convention=axis_convention,
@@ -76,6 +78,7 @@ class CurvesWrapper(_CoreCurvesWrapper):
             pdbfile=path,
             output_dir=output_dir,
             continuous_strands=continuous_strands,
+            duplex_only=duplex_only,
             altloc=altloc,
             frame_convention=frame_convention,
             axis_convention=axis_convention,
@@ -91,6 +94,7 @@ class CurvesWrapper(_CoreCurvesWrapper):
         prefix: Optional[str] = None,
         continuous_strands: bool = False,
         altloc: Optional[str] = None,
+        duplex_only: Optional[bool] = None,
     ):
         if self.dssr_document is None:
             return super().generate_inp(
@@ -98,6 +102,7 @@ class CurvesWrapper(_CoreCurvesWrapper):
                 output_dir=output_dir,
                 prefix=prefix,
                 continuous_strands=continuous_strands,
+                duplex_only=duplex_only,
                 altloc=altloc,
             )
         if continuous_strands:

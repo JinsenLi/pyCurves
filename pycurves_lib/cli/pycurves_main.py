@@ -74,6 +74,7 @@ def _generate_inp_only(args, runner_kwargs) -> None:
                 output_dir=args.output_dir,
                 prefix=_unique_inp_prefix(path, used_prefixes),
                 continuous_strands=args.continuous_strands,
+                duplex_only=args.duplex_only,
             )
             runner.generated_inpfiles = generated_inpfiles
         except Exception as exc:

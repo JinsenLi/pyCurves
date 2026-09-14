@@ -73,9 +73,26 @@ Analyze an existing Curves `.inp` file:
 pycurves your_input.inp --pdb your_structure.pdb
 ```
 
-For triplexes and G-quadruplexes, provide the logical strands explicitly until
-multi-strand topology inference is available. Example inputs for PDB 149D and
-1KF1 are in `examples/manual_multistrand`:
+Triplex and G-quadruplex topologies are inferred automatically from consecutive
+coplanar base multiplets and their covalent or stacking continuity:
+
+```bash
+pycurves 149D.cif
+pycurves 1KF1.cif
+```
+
+Use `--duplex-only` to skip multiplet inference and use the one-to-one duplex
+path:
+
+```bash
+pycurves 149D.cif --duplex-only
+```
+
+If no qualifying duplex is found, pyCurves emits its single-strand fallback.
+
+For ambiguous or discontinuous logical strands, provide an explicit Curves
+input. Example inputs for PDB 149D and 1KF1 are in
+`examples/manual_multistrand`:
 
 ```bash
 pycurves examples/manual_multistrand/149D_triplex.inp --pdb 149D.cif \
@@ -116,7 +133,8 @@ available when those workflows are needed.
 ## What pyCurves Adds
 
 - Gemmi-backed PDB/mmCIF loading with automatic topology inference for DNA/RNA
-  structures and a legacy fixed-column fallback for PDB files Gemmi cannot read.
+  duplexes, triplexes, and quadruplexes, plus a legacy fixed-column fallback
+  for PDB files Gemmi cannot read.
 - Global Curves 5.3-style curvilinear-axis minimization in Python/JAX.
 - Curves+/3DNA-compatible standard local frames by default, with legacy
   Curves 5.3 base frames still available.
@@ -153,6 +171,8 @@ Common options:
   fitting, minimization, or parameter calculation.
 - `--continuous-strands`: treat connected split-chain helices as one biological
   helix when possible.
+- `--duplex-only`: skip triplex and quadruplex inference and use one-to-one
+  duplex inference.
 - `--fit`, `--grooves`, `--mini`, `--comb`, and `--ends`: override inferred
   analysis flags. Each also accepts the `--no-*` form. When neither mini option
   is given, the `mini` value in the `.inp` file is used.
@@ -408,6 +428,9 @@ runner = CurvesWrapper.from_file("test_data/1A1F_b_c.pdb")
 runner.analyze()
 json_text = runner.output(fmt="json")
 ```
+
+Pass `duplex_only=True` to `CurvesWrapper` or `from_file()` to disable
+triplex and quadruplex topology inference.
 
 Generate `.inp` files programmatically without analysis:
 

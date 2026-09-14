@@ -94,6 +94,14 @@ OPPOSING_GAP_MISMATCH_CENTER_CUTOFF = 7.0
 OPPOSING_GAP_MISMATCH_HBOND_CENTER_CUTOFF = 6.2
 OPPOSING_GAP_MISMATCH_STACKING_CUTOFF = 4.0
 MIN_PAIR_COUNT_FOR_TOPOLOGY = 2
+MULTIPLET_MIN_SAME_STRAND_SEPARATION = 3
+MULTIPLET_MIN_BASE_CENTER_DISTANCE = 4.0
+MULTIPLET_NORMAL_ALIGNMENT_CUTOFF = 0.75
+MULTIPLET_STACK_MIN_DISTANCE = 1.5
+MULTIPLET_STACK_MAX_DISTANCE = 5.5
+MULTIPLET_STACK_MIN_RISE = 1.5
+MULTIPLET_STACK_MAX_RISE = 5.5
+MULTIPLET_STACK_MAX_LATERAL_SHIFT = 3.0
 
 # Heavy-atom proxies for common nucleobase H-bonds. Hydrogens are normally
 # absent from PDB/mmCIF files, so topology inference uses these donor/acceptor
@@ -218,11 +226,28 @@ class RobustTopologyInferrer:
         self.complexes: List[List[int]] = []
         self.pair_edges: List[Tuple[int, int]] = []
 
-    def infer(self, continuous_strands: bool = False) -> List[InferredTopology]:
+    def infer(
+        self,
+        continuous_strands: bool = False,
+        duplex_only: bool = False,
+    ) -> List[InferredTopology]:
         self._collect_residues()
         self._trace_strands()
 
-        if continuous_strands:
+        if not duplex_only:
+            multiplet_topologies, multiplet_subunits = self._generate_multiplet_topologies()
+            if multiplet_topologies:
+                pair_candidates = [
+                    candidate
+                    for candidate in self._find_base_pair_candidates()
+                    if candidate.first not in multiplet_subunits
+                    and candidate.second not in multiplet_subunits
+                ]
+                return multiplet_topologies + self._generate_pair_topologies(
+                    pair_candidates
+                )
+
+        if continuous_strands and not duplex_only:
             pairing_graph = self._build_pairing_graph()
             self._partition_complexes(pairing_graph)
             topologies = []
@@ -247,6 +272,7 @@ class RobustTopologyInferrer:
         grv_override: Optional[bool] = None,
         comb_override: Optional[bool] = None,
         ends_override: Optional[bool] = None,
+        duplex_only: bool = False,
     ) -> List[str]:
         output_root = Path(output_dir)
         output_root.mkdir(parents=True, exist_ok=True)
@@ -258,7 +284,10 @@ class RobustTopologyInferrer:
             self._trace_strands()
             topologies = [self._single_strand_topology(idx) for idx in range(len(self.strands))]
         else:
-            topologies = self.infer(continuous_strands=continuous_strands)
+            topologies = self.infer(
+                continuous_strands=continuous_strands,
+                duplex_only=duplex_only,
+            )
         for idx, topology in enumerate(topologies, start=1):
             if fit_override is not None:
                 topology.fit = fit_override
@@ -482,6 +511,355 @@ class RobustTopologyInferrer:
             for candidates in grouped.values()
             for candidate in self._select_one_to_one_pairs(candidates)
         ]
+
+    def _generate_multiplet_topologies(self) -> Tuple[List[InferredTopology], set[int]]:
+        candidates = self._multiplet_contact_candidates()
+        contact_graph = nx.Graph()
+        contact_graph.add_edges_from(
+            (candidate.first, candidate.second) for candidate in candidates
+        )
+        levels = [
+            tuple(sorted(component))
+            for component in nx.connected_components(contact_graph)
+            if 2 <= len(component) <= 4
+            and self._multiplet_level_is_valid(component)
+        ]
+        if not any(len(level) > 2 for level in levels):
+            return [], set()
+
+        strand_positions = {
+            subunit: (strand_idx, position)
+            for strand_idx, strand in enumerate(self.strands)
+            for position, subunit in enumerate(strand)
+        }
+        stack_graph = nx.Graph()
+        stack_graph.add_nodes_from(range(len(levels)))
+        for first_idx, first in enumerate(levels):
+            for second_idx in range(first_idx + 1, len(levels)):
+                if self._multiplet_levels_are_consecutive(
+                    first,
+                    levels[second_idx],
+                    strand_positions,
+                ):
+                    stack_graph.add_edge(first_idx, second_idx)
+
+        topologies = []
+        used_subunits: set[int] = set()
+        for component in nx.connected_components(stack_graph):
+            if len(component) < 2 or not any(len(levels[idx]) > 2 for idx in component):
+                continue
+            subgraph = stack_graph.subgraph(component)
+            if (
+                not nx.is_tree(subgraph)
+                or max(dict(subgraph.degree()).values()) > 2
+            ):
+                raise ValueError(
+                    "Ambiguous stacked base-multiplet topology; provide an explicit Curves .inp file."
+                )
+            endpoints = sorted(
+                (idx for idx in component if subgraph.degree(idx) == 1),
+                key=lambda idx: levels[idx],
+            )
+            ordered_indices = []
+            previous = None
+            current = endpoints[0]
+            while current is not None:
+                ordered_indices.append(current)
+                following = [
+                    neighbor
+                    for neighbor in subgraph.neighbors(current)
+                    if neighbor != previous
+                ]
+                previous, current = current, (following[0] if following else None)
+
+            ordered_levels = [levels[idx] for idx in ordered_indices]
+            topology = self._multiplet_topology_from_levels(
+                ordered_levels,
+                candidates,
+                strand_positions,
+            )
+            if topology is None:
+                raise ValueError(
+                    "Ambiguous logical strands in a stacked base multiplet; provide an explicit Curves .inp file."
+                )
+            topologies.append(topology)
+            used_subunits.update(
+                subunit for level in ordered_levels for subunit in level
+            )
+
+        topologies.sort(
+            key=lambda topology: min(
+                int(value) for value in topology.ni_map.flat if value > 0
+            )
+        )
+        return topologies, used_subunits
+
+    def _multiplet_contact_candidates(self) -> List[BasePairCandidate]:
+        strand_positions = {
+            subunit: (strand_idx, position)
+            for strand_idx, strand in enumerate(self.strands)
+            for position, subunit in enumerate(strand)
+        }
+        strand_of = {
+            subunit: strand_idx
+            for subunit, (strand_idx, _position) in strand_positions.items()
+        }
+        by_pair = {
+            tuple(sorted((candidate.first, candidate.second))): candidate
+            for candidate in self._source_base_pair_candidates(strand_of)
+        }
+        subunits = sorted(strand_positions)
+        for first_idx, first in enumerate(subunits):
+            first_strand, first_position = strand_positions[first]
+            residue_1 = self.residues[first]
+            for second in subunits[first_idx + 1:]:
+                second_strand, second_position = strand_positions[second]
+                if (
+                    first_strand == second_strand
+                    and abs(first_position - second_position)
+                    < MULTIPLET_MIN_SAME_STRAND_SEPARATION
+                ):
+                    continue
+                residue_2 = self.residues[second]
+                if (
+                    np.linalg.norm(residue_1.hbond_center - residue_2.hbond_center)
+                    > HBOND_PREFILTER_DISTANCE
+                ):
+                    continue
+                candidate = self._score_base_pair(
+                    first,
+                    second,
+                    first_strand,
+                    second_strand,
+                )
+                if candidate is None:
+                    continue
+                key = (first, second)
+                current = by_pair.get(key)
+                if current is None or candidate.score < current.score:
+                    by_pair[key] = candidate
+        coplanar = []
+        for candidate in by_pair.values():
+            plane_offset = self._base_pair_plane_offset(
+                self.residues[candidate.first],
+                self.residues[candidate.second],
+            )
+            if (
+                plane_offset is not None
+                and plane_offset <= PAIR_GEOMETRY_PLANE_OFFSET_CUTOFF
+            ):
+                coplanar.append(candidate)
+        return coplanar
+
+    def _multiplet_level_is_valid(self, level: Iterable[int]) -> bool:
+        subunits = list(level)
+        normals = [self._base_normal(self.residues[subunit]) for subunit in subunits]
+        if any(normal is None for normal in normals):
+            return False
+        for first_idx, first in enumerate(subunits):
+            for second_idx in range(first_idx + 1, len(subunits)):
+                second = subunits[second_idx]
+                center_distance = np.linalg.norm(
+                    self.residues[first].center - self.residues[second].center
+                )
+                if not (
+                    MULTIPLET_MIN_BASE_CENTER_DISTANCE
+                    <= center_distance
+                    <= FITTED_PAIR_ORIGIN_DISTANCE_CUTOFF
+                ):
+                    return False
+                plane_offset = self._base_pair_plane_offset(
+                    self.residues[first],
+                    self.residues[second],
+                )
+                if plane_offset is None or plane_offset > BASE_PAIR_PLANE_OFFSET_CUTOFF:
+                    return False
+                normal_alignment = abs(
+                    float(np.dot(normals[first_idx], normals[second_idx]))
+                )
+                if normal_alignment < MULTIPLET_NORMAL_ALIGNMENT_CUTOFF:
+                    return False
+        return True
+
+    def _multiplet_levels_are_consecutive(
+        self,
+        first: Sequence[int],
+        second: Sequence[int],
+        strand_positions: Dict[int, Tuple[int, int]],
+    ) -> bool:
+        backbone_links = [
+            (left, right)
+            for left in first
+            for right in second
+            if strand_positions[left][0] == strand_positions[right][0]
+            and abs(strand_positions[left][1] - strand_positions[right][1]) == 1
+        ]
+        if len(backbone_links) < 2:
+            return False
+
+        first_center = np.mean(
+            [self.residues[subunit].center for subunit in first], axis=0
+        )
+        second_center = np.mean(
+            [self.residues[subunit].center for subunit in second], axis=0
+        )
+        displacement = second_center - first_center
+        center_distance = float(np.linalg.norm(displacement))
+        if not (
+            MULTIPLET_STACK_MIN_DISTANCE
+            <= center_distance
+            <= MULTIPLET_STACK_MAX_DISTANCE
+        ):
+            return False
+
+        first_normal = self._multiplet_level_normal(first)
+        second_normal = self._multiplet_level_normal(second)
+        if first_normal is None or second_normal is None:
+            return False
+        if np.dot(first_normal, second_normal) < 0.0:
+            second_normal = -second_normal
+        if float(np.dot(first_normal, second_normal)) < MULTIPLET_NORMAL_ALIGNMENT_CUTOFF:
+            return False
+        stack_normal = self._unit_vector(first_normal + second_normal)
+        if stack_normal is None:
+            return False
+        rise = abs(float(np.dot(displacement, stack_normal)))
+        lateral_shift = float(
+            np.linalg.norm(displacement - np.dot(displacement, stack_normal) * stack_normal)
+        )
+        return (
+            MULTIPLET_STACK_MIN_RISE <= rise <= MULTIPLET_STACK_MAX_RISE
+            and lateral_shift <= MULTIPLET_STACK_MAX_LATERAL_SHIFT
+        )
+
+    def _multiplet_level_normal(self, level: Sequence[int]) -> Optional[np.ndarray]:
+        normals = [self._base_normal(self.residues[subunit]) for subunit in level]
+        if any(normal is None for normal in normals):
+            return None
+        reference = normals[0]
+        aligned = [
+            normal if np.dot(normal, reference) >= 0.0 else -normal
+            for normal in normals
+        ]
+        return self._unit_vector(np.sum(aligned, axis=0))
+
+    def _multiplet_topology_from_levels(
+        self,
+        levels: Sequence[Sequence[int]],
+        candidates: Sequence[BasePairCandidate],
+        strand_positions: Dict[int, Tuple[int, int]],
+    ) -> Optional[InferredTopology]:
+        level_by_subunit = {
+            subunit: level_idx
+            for level_idx, level in enumerate(levels)
+            for subunit in level
+        }
+        track_graph = nx.Graph()
+        track_graph.add_nodes_from(level_by_subunit)
+        for first, second in zip(levels, levels[1:]):
+            track_graph.add_edges_from(
+                (left, right)
+                for left in first
+                for right in second
+                if strand_positions[left][0] == strand_positions[right][0]
+                and abs(strand_positions[left][1] - strand_positions[right][1]) == 1
+            )
+
+        tracks = [set(component) for component in nx.connected_components(track_graph)]
+        if not 2 <= len(tracks) <= 4:
+            return None
+        if any(
+            len({level_by_subunit[subunit] for subunit in track}) != len(track)
+            or max(dict(track_graph.subgraph(track).degree()).values(), default=0) > 2
+            for track in tracks
+        ):
+            return None
+
+        contact_degree = {subunit: 0 for subunit in level_by_subunit}
+        group_candidates = []
+        for candidate in candidates:
+            first_level = level_by_subunit.get(candidate.first)
+            second_level = level_by_subunit.get(candidate.second)
+            if first_level is None or first_level != second_level:
+                continue
+            group_candidates.append(candidate)
+            contact_degree[candidate.first] += 1
+            contact_degree[candidate.second] += 1
+
+        primary = max(
+            tracks,
+            key=lambda track: (
+                sum(contact_degree[subunit] for subunit in track),
+                len(track),
+                -min(track),
+            ),
+        )
+        primary_positions = [
+            strand_positions[subunit][1]
+            for subunit in sorted(primary, key=level_by_subunit.get)
+        ]
+        if len(primary_positions) > 1 and primary_positions[-1] < primary_positions[0]:
+            levels = list(reversed(levels))
+            level_by_subunit = {
+                subunit: level_idx
+                for level_idx, level in enumerate(levels)
+                for subunit in level
+            }
+
+        def track_order(track: set[int]) -> Tuple[int, int]:
+            first_level = min(level_by_subunit[subunit] for subunit in track)
+            first_subunit = min(
+                subunit
+                for subunit in track
+                if level_by_subunit[subunit] == first_level
+            )
+            return first_level, first_subunit
+
+        ordered_tracks = [primary] + sorted(
+            (track for track in tracks if track is not primary),
+            key=track_order,
+        )
+        rows = []
+        nu_raw = []
+        for track in ordered_tracks:
+            row = [0] * len(levels)
+            for subunit in track:
+                row[level_by_subunit[subunit]] = subunit
+            positions = [
+                strand_positions[subunit][1]
+                for subunit in row
+                if subunit > 0
+            ]
+            if len(positions) > 1:
+                steps = np.diff(positions)
+                if not (np.all(steps > 0) or np.all(steps < 0)):
+                    return None
+                direction = 1 if steps[0] > 0 else -1
+            else:
+                direction = 1
+            rows.append(row)
+            nu_raw.append(direction * len(levels))
+
+        ni_map = np.asarray(rows, dtype=int)
+        chain_ids = [
+            self.residues[next(subunit for subunit in row if subunit > 0)].chain
+            for row in rows
+        ]
+        return InferredTopology(
+            pdbfile=self.pdbfile,
+            output_prefix=Path(self.pdbfile).stem,
+            strands=[[subunit for subunit in row if subunit > 0] for row in rows],
+            nu_raw=nu_raw,
+            ni_map=ni_map,
+            pair_edges=[
+                (candidate.first, candidate.second)
+                for candidate in group_candidates
+            ],
+            chain_ids=chain_ids,
+            comb=True,
+            fit=True,
+            grv=False,
+        )
 
     def _find_base_pair_candidates(self) -> List[BasePairCandidate]:
         """Return one-to-one H-bonded base pairs for each strand pair."""

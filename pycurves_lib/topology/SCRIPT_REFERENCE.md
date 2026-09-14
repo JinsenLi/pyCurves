@@ -9,14 +9,17 @@
 are:
 
 1. collect nucleic-acid residues and trace covalently connected strands;
-2. combine coordinate contacts, fitted standard-frame geometry, source
-   annotations, and Leontis-Westhof exemplars into base-pair candidates;
-3. choose one-to-one pairs and project them onto strand order;
-4. repair plausible mismatches, gaps, and terminal register extensions without
+2. collect unfiltered inter-strand and long-range same-chain base contacts;
+3. assemble consecutive coplanar two- to four-base multiplets into logical
+   strands with variable level occupancy;
+4. fall back to one-to-one base pairs and project them onto strand order;
+5. repair plausible mismatches, gaps, and terminal register extensions without
    silently inventing unsupported pairs;
-5. partition complexes or emit per-duplex/single-strand topologies;
-6. attach explicit geometry markers only where downstream frame construction
+6. partition complexes or emit per-duplex/single-strand topologies;
+7. attach explicit geometry markers only where downstream frame construction
    needs them.
+
+`duplex_only=True` skips stage 3 and uses the one-to-one duplex path.
 
 `InferredTopology.to_inp_text()` serializes the final signed strand directions,
 level map, analysis flags, and pair markers.
