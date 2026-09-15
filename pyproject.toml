@@ -36,6 +36,9 @@ dev = [
   "build>=1.0",
   "pytest>=8.0",
 ]
+docs = [
+  "sphinx>=8",
+]
 
 [project.scripts]
 pycurves = "pycurves:main"

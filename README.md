@@ -2,14 +2,14 @@
 
 pyCurves is a Python implementation and extension of Curves-style nucleic acid
 helical analysis. It reads PDB/mmCIF structures, infers DNA/RNA topology, and
-calculates helical axes, base/base-pair parameters, groove measurements,
+calculates global (Curves) or local (Curves+) helical axes, base/base-pair parameters, groove measurements,
 backbone torsions, curvature summaries, and machine-readable tables.
 
 This project is under active development. Interfaces and output details may
 change before publication. If you use it before publication, please cite this
 GitHub repository.
 
-## Install
+## Installation
 
 Use Python 3.10 or newer. Python 3.12 is recommended.
 
@@ -34,24 +34,14 @@ pip install ".[all]"
 CPU JAX is installed by default. On GPU clusters, install the matching JAX build
 for your CUDA environment before installing pyCurves.
 
-## Quick Examples
+## Quick Start
 
-Run a structure directly:
+Run a structure directly to get Curves-like text output:
 
 ```bash
 pycurves test_data/1A1F_b_c.pdb
 pycurves test_data/1A6Y.cif
 ```
-
-Select a specific alternate conformation when the structure contains altlocs:
-
-```bash
-pycurves test_data/4q10.cif --altloc B
-```
-
-Without `--altloc`, pyCurves follows Gemmi's
-`remove_alternative_conformations()` behavior and retains the first listed
-conformer. This is file order, not highest occupancy.
 
 Write JSON or CSV tables:
 
@@ -73,60 +63,6 @@ Analyze an existing Curves `.inp` file:
 pycurves your_input.inp --pdb your_structure.pdb
 ```
 
-Triplex and G-quadruplex topologies are inferred automatically from consecutive
-coplanar base multiplets and their covalent or stacking continuity:
-
-```bash
-pycurves 149D.cif
-pycurves 1KF1.cif
-```
-
-DSSR JSON reports containing one valid stack of `Gtetrads` or multiplets are
-selected automatically:
-
-```bash
-pycurves 2KM3.cif --dssr-json 2km3-dssr.json
-```
-
-Use `--dssr-unit multiplet:N` only when a report contains more than one valid
-multiplet stack.
-
-Use `--duplex-only` to skip multiplet inference and use the one-to-one duplex
-path:
-
-```bash
-pycurves 149D.cif --duplex-only
-```
-
-If no qualifying duplex is found, pyCurves emits its single-strand fallback.
-
-For ambiguous or discontinuous logical strands, provide an explicit Curves
-input. Example inputs for PDB 149D and 1KF1 are in
-`examples/manual_multistrand`:
-
-```bash
-pycurves examples/manual_multistrand/149D_triplex.inp --pdb 149D.cif \
-  --frame-convention standard --axis-convention global --no-grooves
-pycurves examples/manual_multistrand/1KF1_g4.inp --pdb 1KF1.cif \
-  --frame-convention standard --axis-convention global --no-grooves
-```
-
-Global-axis mode follows Curves 5.3 multi-strand conventions: all strands
-contribute to the common helical axis, and strand 1 is compared separately with
-every other strand for base-pair-axis, base-base, and inter-base-pair
-parameters. Groove analysis is duplex-only in Curves 5.3, so use `grv=.f.` or
-`--no-grooves` for three- and four-strand inputs.
-
-The commands above retain pyCurves' standard base frames. For a direct numerical
-comparison with Curves 5.3, use both `--frame-convention legacy` and
-`--axis-convention global`.
-
-Use legacy Curves 5.3-style local frames when you need old-frame compatibility:
-
-```bash
-pycurves test_data/1A1F_b_c.pdb --frame-convention legacy --format json --output-file 1a1f_legacy.json
-```
-
 ## Main Commands
 
 ```bash
@@ -143,19 +79,15 @@ available when those workflows are needed.
 ## What pyCurves Adds
 
 - Gemmi-backed PDB/mmCIF loading with automatic topology inference for DNA/RNA
-  duplexes, triplexes, and quadruplexes, plus a legacy fixed-column fallback
-  for PDB files Gemmi cannot read.
-- Global Curves 5.3-style curvilinear-axis minimization in Python/JAX.
-- Curves+/3DNA-compatible standard local frames by default, with legacy
-  Curves 5.3 base frames still available.
-- Non-canonical-aware frame selection for mismatches, Hoogsteen/reverse
-  Hoogsteen contacts, and other edge-pair geometries.
-- Editable geometry markers in generated `.inp` files, for example `[cWW]`,
-  `[tWH]`, and `[tSS]`.
-- Text, JSON, and CSV outputs for local/global helical parameters, grooves,
-  backbone torsions, curvature, and annotations.
-- MD trajectory analysis and a vectorized local-axis (Curves+) batch path.
-- Optional HTML viewer payload generation.
+  duplexes, triplexes, and quadruplexes. 
+- Global Curves 5.3-style curvilinear-axis minimization in JAX autograd.
+- Tsukuba/Standard reference frame by default.
+- Curves-like editable `.inp` input files.
+- Non-canonical base pairs use contact-geometry reference frame.
+- Curves-like text output, or JSON, and CSV outputs.
+- Regular MD trajectory analysis and a superfast vectorized Curves+ batch path.
+- Optional HTML viewer/pyMOL payload generation.
+- ...
 
 ## Important CLI Options
 
@@ -176,34 +108,26 @@ Common options:
   (the default) or the local Curves+ smooth-axis path.
 - `--axis-weighting` / `--no-axis-weighting`: opt in to smoothly downweighting
   requested pairs whose fitted Curves base origins separate by 4--8 A during
-  axis construction. The default is the historical unweighted axis.
+  axis construction. The default is the unweighted axis.
 - `--generate-inp-only` / `--inp-only`: infer `.inp` files and exit before
   fitting, minimization, or parameter calculation.
 - `--continuous-strands`: treat connected split-chain helices as one biological
   helix when possible.
 - `--duplex-only`: skip triplex and quadruplex inference and use one-to-one
   duplex inference.
-- `--fit`, `--grooves`, `--mini`, `--comb`, and `--ends`: override inferred
-  analysis flags. Each also accepts the `--no-*` form. When neither mini option
-  is given, the `mini` value in the `.inp` file is used.
 - `--visualization`: include geometry needed by `pycurves-viewer` in JSON.
-
-In global-axis mode, `mini=.f.` or `--no-mini` constructs the axis once from
-the input XYTP values and runs the full downstream parameter calculation
-without BFGS minimization.
 
 ## Non-Canonical Pairing
 
 pyCurves reports base-pair identity, interacting edges, and cis/trans
 orientation separately from the geometry used for shape calculations. Canonical
 Watson-Crick pairs keep the selected canonical frame convention; by default this
-is the Curves+/3DNA-compatible standard frame. Explicit `.inp` LW tags and
+is the standard reference frame. Explicit `.inp` LW tags and
 authoritative reference annotations may select non-canonical calculation
-frames, but a coordinate-only observation never changes a calculated parameter.
+frames.
 
 Generated `.inp` files can carry editable geometry tags such as `[cWW]`,
-`[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, or `[tSS]`. Mismatches are still reported as
-mismatches even when they have a clear edge-contact geometry. Pair geometry in
+`[tWW]`, `[cWH]`, `[tWH]`, `[cWS]`, `[tSS]` or `[unresolved]`. Pair geometry in
 `.inp` files is represented exclusively by explicit three-character LW tags.
 
 The annotation report is part of the Curves text output, and annotation records
@@ -247,35 +171,33 @@ pycurves-md topology.pdb trajectory.xtc --topology-mode annotate --mode both --o
 reports missing reference pairs as absent, and adds newly detected pairs with
 `reference_pair=false`. The authoritative `base_pair_observations` table
 contains pair presence, observed/reference LW family, named pairing mode,
-classification status, helical context, and diagnostic flags in the
-`pycurves-trajectory-slim-v2` schema. Calculation-frame, contact, and
+classification status, helical context, and diagnostic flags. Calculation-frame, contact, and
 glycosidic details remain internal rather than being repeated per pair. In
 JSON, `frame` and `time` belong to the containing frame object; flattened CSV
 rows include them as columns.
 
 Axis weighting is independent of topology annotation: it never changes the
-requested residue map or assigns a pairing family. It affects both legacy
-global-axis optimization and Curves+ local smoothing; local base, base-pair,
+requested residue map or assigns a pairing family. It affects both global-axis optimization and Curves+ local smoothing; local base, base-pair,
 step, and backbone parameters remain calculated from the fixed input topology.
 Axis-dependent rows report `axis_weight`, and geometrically unsupported
 base-pair-axis values are null.
 
 Each per-frame `base_pair_observations` row contains exactly these keys:
 
-| Key | What users should expect |
-| --- | --- |
-| `pair_id` | Stable pair identifier made from the two sorted molecular subunit IDs, for example `2:129`. |
-| `reference_pair` | `true` for a pair from the reference map; `false` for a pair newly detected in this frame. |
-| `level` | Curves reference level, or `null` for a newly detected pair that has no reference level. |
-| `residue_1`, `residue_2` | Human-readable chain, residue name, and residue number, for example `B:DT2`. |
-| `pair_status` | `present`, `absent`, or `uncertain` from current-frame coordinate evidence. |
-| `pairing_mode` | Definitive named mode: `watson_crick`, `reverse_watson_crick`, `hoogsteen`, `reverse_hoogsteen`, `wobble`, or `other_noncanonical`; otherwise an empty string. |
-| `observed_lw_family` | Confident current-frame LW family such as `cWW`, `tWW`, `cHW`, or `tWH`; otherwise an empty string. |
-| `reference_lw_family` | LW family supplied by the reference/input topology; may be populated when `observed_lw_family` is empty. |
-| `candidate_mode` | Tentative named mode when the evidence supports a possibility but not a definitive assignment; otherwise an empty string. |
-| `classification_status` | `assigned`, `possible`, `unassigned`, or `conflict`. |
-| `helical_context` | `left_handed_cww` when the pair belongs to a coordinate-confirmed left-handed cWW run; otherwise an empty string. |
-| `diagnostic_flags` | Machine-readable reasons requiring review; normally an empty list. |
+| Key                      | What users should expect                                                                                                                                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pair_id`                | Stable pair identifier made from the two sorted molecular subunit IDs, for example `2:129`.                                                                    |
+| `reference_pair`         | `true` for a pair from the reference map; `false` for a pair newly detected in this frame.                                                                     |
+| `level`                  | Curves reference level, or `null` for a newly detected pair that has no reference level.                                                                       |
+| `residue_1`, `residue_2` | Human-readable chain, residue name, and residue number, for example `B:DT2`.                                                                                   |
+| `pair_status`            | `present`, `absent`, or `uncertain` from current-frame coordinate evidence.                                                                                    |
+| `pairing_mode`           | Definitive named mode: `watson_crick`, `reverse_watson_crick`, `hoogsteen`, `reverse_hoogsteen`, `wobble`, or `other_noncanonical`; otherwise an empty string. |
+| `observed_lw_family`     | Confident current-frame LW family such as `cWW`, `tWW`, `cHW`, or `tWH`; otherwise an empty string.                                                            |
+| `reference_lw_family`    | LW family supplied by the reference/input topology; may be populated when `observed_lw_family` is empty.                                                       |
+| `candidate_mode`         | Tentative named mode when the evidence supports a possibility but not a definitive assignment; otherwise an empty string.                                      |
+| `classification_status`  | `assigned`, `possible`, `unassigned`, or `conflict`.                                                                                                           |
+| `helical_context`        | `left_handed_cww` when the pair belongs to a coordinate-confirmed left-handed cWW run; otherwise an empty string.                                              |
+| `diagnostic_flags`       | Machine-readable reasons requiring review; normally an empty list.                                                                                             |
 
 Empty `pairing_mode` and `observed_lw_family` values mean **unclassified**, not
 noncanonical. For example, `pair_status="present"`,
@@ -321,7 +243,6 @@ and already-parallel groove calculations may not benefit.
 
 Use `pycurves-md` for global-axis minimization, non-canonical contact-geometry
 frames, `--no-comb`, or `--ends`.
-
 
 ## MD Analysis In Notebooks
 
@@ -438,9 +359,6 @@ runner = CurvesWrapper.from_file("test_data/1A1F_b_c.pdb")
 runner.analyze()
 json_text = runner.output(fmt="json")
 ```
-
-Pass `duplex_only=True` to `CurvesWrapper` or `from_file()` to disable
-triplex and quadruplex topology inference.
 
 Generate `.inp` files programmatically without analysis:
 
