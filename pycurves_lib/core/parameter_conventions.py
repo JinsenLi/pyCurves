@@ -1898,13 +1898,14 @@ class StandardParameterConvention(LegacyParameterConvention):
         translation_sign: float,
         rotation_sign: float,
     ) -> np.ndarray:
-        middle = self._middle_frame(first, second)
-        translation = translation_sign * (second.origin - first.origin)
-        displacement = middle.axes @ translation
-
         rotation, _ = Rotation.align_vectors(second.axes, first.axes)
+        half_rotation = Rotation.from_rotvec(0.5 * rotation.as_rotvec())
+        middle_axes = self._orthonormalize_axes(half_rotation.apply(first.axes))
+        translation = translation_sign * (second.origin - first.origin)
+        displacement = middle_axes @ translation
+
         rotvec = rotation_sign * rotation.as_rotvec() * degrees_per_radian
-        angles = middle.axes @ rotvec
+        angles = middle_axes @ rotvec
         return np.array([
             displacement[0],
             displacement[1],
