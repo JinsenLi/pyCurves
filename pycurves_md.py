@@ -144,6 +144,7 @@ def analyze_trajectory(
     dssr_json: Optional[str] = None,
     dssr_unit: Optional[str] = None,
     duplex_only: bool = False,
+    workers: int = 1,
 ) -> Dict:
     if mode not in {"per-frame", "summary", "both"}:
         raise ValueError("mode must be one of: per-frame, summary, both")
@@ -178,6 +179,7 @@ def analyze_trajectory(
         verbose=verbose,
         warm_start=warm_start,
         axis_continuity=axis_continuity,
+        workers=workers,
     )
 
 

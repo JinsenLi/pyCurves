@@ -5,8 +5,11 @@ import copy
 import csv
 import json
 import sys
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -106,65 +109,108 @@ class MDTrajectoryAnalyzer:
         verbose: bool = False,
         warm_start: bool = True,
         axis_continuity: bool = True,
+        workers: int = 1,
     ) -> Dict:
+        if workers <= 0:
+            raise ValueError("workers must be positive")
         if self.axis_convention == "local":
             mini = False
             warm_start = False
+        if workers > 1 and warm_start:
+            raise ValueError("workers > 1 requires warm_start=False")
+        if workers > 1 and axis_continuity:
+            raise ValueError("workers > 1 requires axis_continuity=False")
         frame_payloads = []
         table_records: Dict[str, List[Dict]] = {}
         processed = 0
         effective_mini = False
+        effective_axis_weighting = False
 
         prev_helical = None
         axis_sign_reference = None
-        runner = self.reference_runner
+        iterator = TrajectoryLoader.iter_frames(
+            self.topology_file,
+            self.trajectory_file,
+            frame_selector,
+        )
 
-        for frame in tqdm(TrajectoryLoader.iter_frames(self.topology_file, self.trajectory_file, frame_selector), desc="Processing frames"):
-            molecule = self._molecule_for_frame(frame.coordinates)
-            runner.analyze_molecule(
-                molecule,
-                mini=mini,
-                verbose=verbose,
-                prev_opt_helical=prev_helical if warm_start else None,
-                axis_sign_reference=axis_sign_reference if axis_continuity else None,
-            )
-            if self.topology_mode == "annotate":
-                reference_rows = runner.ctx.annotations.get(
-                    "base_pair_annotations", []
-                )
-                runner.ctx.annotations["frame_base_pair_observations"] = (
-                    infer_frame_pair_observations(molecule, reference_rows)
-                )
-            effective_mini = bool(runner.ctx.cfg.mini)
-
-            if warm_start and effective_mini and hasattr(runner, 'ctx') and hasattr(runner.ctx, 'params') and hasattr(runner.ctx.params, 'helical'):
-                prev_helical = runner.ctx.params.helical.copy()
-            axis_direction_signs = []
-            if hasattr(runner, "calc") and hasattr(runner.calc, "axis_direction_sign"):
-                axis_direction_signs = [int(v) for v in np.asarray(runner.calc.axis_direction_sign[:runner.ctx.nst]).tolist()]
-                if axis_continuity and axis_sign_reference is None:
-                    axis_sign_reference = np.asarray(axis_direction_signs, dtype=int)
-
-            formatter = CurvesOutputFormatter(runner)
-            dataframes = self._normalize_frame_dataframes(formatter._build_dataframes())
-
+        def collect_frame(frame_index, frame_time, dataframes) -> None:
+            nonlocal processed
             if mode in {"summary", "both"}:
                 for table_name, rows in dataframes.items():
                     if isinstance(rows, list):
                         for row in rows:
                             row = dict(row)
-                            row["frame"] = frame.index
-                            row["time"] = frame.time
+                            row["frame"] = frame_index
+                            row["time"] = frame_time
                             table_records.setdefault(table_name, []).append(row)
 
             if mode in {"per-frame", "both"}:
                 frame_payloads.append({
-                    "frame": frame.index,
-                    "time": frame.time,
+                    "frame": frame_index,
+                    "time": frame_time,
                     "dataframes": dataframes,
                 })
-
             processed += 1
+
+        if workers == 1:
+            for frame in tqdm(iterator, desc="Processing frames"):
+                (
+                    dataframes,
+                    effective_mini,
+                    current_helical,
+                    axis_direction_signs,
+                    effective_axis_weighting,
+                ) = self._analyze_frame(
+                    frame.coordinates,
+                    mini,
+                    verbose,
+                    prev_helical=prev_helical if warm_start else None,
+                    axis_sign_reference=axis_sign_reference if axis_continuity else None,
+                    capture_helical=warm_start,
+                )
+                if current_helical is not None:
+                    prev_helical = current_helical
+                if axis_continuity and axis_sign_reference is None and axis_direction_signs:
+                    axis_sign_reference = np.asarray(axis_direction_signs, dtype=int)
+                collect_frame(frame.index, frame.time, dataframes)
+        else:
+            pending = deque()
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                mp_context=get_context("spawn"),
+                initializer=_initialize_md_worker,
+                initargs=(self,),
+            ) as executor, tqdm(desc="Processing frames") as progress:
+                for frame in iterator:
+                    pending.append(executor.submit(
+                        _process_md_frame_worker,
+                        frame.coordinates,
+                        frame.index,
+                        frame.time,
+                        mini,
+                        verbose,
+                    ))
+                    if len(pending) >= workers:
+                        (
+                            frame_index,
+                            frame_time,
+                            dataframes,
+                            effective_mini,
+                            effective_axis_weighting,
+                        ) = pending.popleft().result()
+                        collect_frame(frame_index, frame_time, dataframes)
+                        progress.update()
+                while pending:
+                    (
+                        frame_index,
+                        frame_time,
+                        dataframes,
+                        effective_mini,
+                        effective_axis_weighting,
+                    ) = pending.popleft().result()
+                    collect_frame(frame_index, frame_time, dataframes)
+                    progress.update()
 
         if processed == 0:
             raise ValueError("No trajectory frames matched the requested frame selection.")
@@ -189,8 +235,9 @@ class MDTrajectoryAnalyzer:
                 "comb": self.comb_override,
                 "ends": self.ends_override,
                 "axis_convention": self.axis_convention,
-                "axis_weighting": bool(runner.ctx.cfg.axis_weighting),
+                "axis_weighting": effective_axis_weighting,
                 "topology_mode": self.topology_mode,
+                "workers": workers,
             },
             "selection": {
                 **selection,
@@ -213,6 +260,57 @@ class MDTrajectoryAnalyzer:
                 total_frames=processed,
             )
         return payload
+
+    def _analyze_frame(
+        self,
+        coordinates: np.ndarray,
+        mini: Optional[bool],
+        verbose: bool,
+        prev_helical: Optional[np.ndarray] = None,
+        axis_sign_reference: Optional[np.ndarray] = None,
+        capture_helical: bool = False,
+    ) -> Tuple[Dict, bool, Optional[np.ndarray], List[int], bool]:
+        molecule = self._molecule_for_frame(coordinates)
+        runner = self.reference_runner
+        runner.analyze_molecule(
+            molecule,
+            mini=mini,
+            verbose=verbose,
+            prev_opt_helical=prev_helical,
+            axis_sign_reference=axis_sign_reference,
+        )
+        if self.topology_mode == "annotate":
+            reference_rows = runner.ctx.annotations.get(
+                "base_pair_annotations", []
+            )
+            runner.ctx.annotations["frame_base_pair_observations"] = (
+                infer_frame_pair_observations(molecule, reference_rows)
+            )
+
+        effective_mini = bool(runner.ctx.cfg.mini)
+        current_helical = (
+            runner.ctx.params.helical.copy()
+            if capture_helical and effective_mini
+            else None
+        )
+        axis_direction_signs: List[int] = []
+        if hasattr(runner.calc, "axis_direction_sign"):
+            axis_direction_signs = [
+                int(value)
+                for value in np.asarray(
+                    runner.calc.axis_direction_sign[:runner.ctx.nst]
+                ).tolist()
+            ]
+
+        formatter = CurvesOutputFormatter(runner)
+        dataframes = self._normalize_frame_dataframes(formatter._build_dataframes())
+        return (
+            dataframes,
+            effective_mini,
+            current_helical,
+            axis_direction_signs,
+            bool(runner.ctx.cfg.axis_weighting),
+        )
 
     def write_csv(self, payload: Dict, prefix: str) -> None:
         prefix_path = Path(prefix)
@@ -523,6 +621,33 @@ class MDTrajectoryAnalyzer:
             writer.writerows(rows)
 
 
+_WORKER_MD_ANALYZER: Optional[MDTrajectoryAnalyzer] = None
+
+
+def _initialize_md_worker(analyzer: MDTrajectoryAnalyzer) -> None:
+    global _WORKER_MD_ANALYZER
+    _WORKER_MD_ANALYZER = analyzer
+
+
+def _process_md_frame_worker(
+    coordinates: np.ndarray,
+    frame_index: int,
+    frame_time: Optional[float],
+    mini: Optional[bool],
+    verbose: bool,
+):
+    if _WORKER_MD_ANALYZER is None:  # pragma: no cover - process-pool guard
+        raise RuntimeError("MD worker was not initialized.")
+    dataframes, effective_mini, _, _, axis_weighting = (
+        _WORKER_MD_ANALYZER._analyze_frame(
+            coordinates,
+            mini,
+            verbose,
+        )
+    )
+    return frame_index, frame_time, dataframes, effective_mini, axis_weighting
+
+
 def make_frame_selector(spec: Optional[str], start: Optional[int], stop: Optional[int], step: int):
     if spec:
         exact = set()
@@ -610,6 +735,7 @@ def analyze_trajectory(
     warm_start: bool = True,
     axis_continuity: bool = True,
     duplex_only: bool = False,
+    workers: int = 1,
 ) -> Dict:
     """Run pyCurves trajectory analysis from Python and return the JSON-like payload.
 
@@ -649,6 +775,7 @@ def analyze_trajectory(
         verbose=verbose,
         warm_start=warm_start,
         axis_continuity=axis_continuity,
+        workers=workers,
     )
 
 def main() -> None:
@@ -684,6 +811,15 @@ def main() -> None:
         action="store_true",
         help="Do not keep the Curves global-axis direction signs aligned to the first processed frame.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help=(
+            "Independent frame worker processes (default: 1). Values above 1 "
+            "require --no-warm-start and --no-axis-continuity."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Print per-frame pyCurves logs.")
     args = parser.parse_args()
 
@@ -705,6 +841,7 @@ def main() -> None:
             verbose=args.verbose,
             warm_start=not args.no_warm_start,
             axis_continuity=not args.no_axis_continuity,
+            workers=args.workers,
         )
     except (ValueError, ImportError, NotImplementedError) as exc:
         raise SystemExit(str(exc)) from exc

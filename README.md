@@ -229,6 +229,18 @@ Store both per-frame rows and summary statistics:
 pycurves-md topology.pdb trajectory.dcd --mode both --format json --output-file dynamics_full.json
 ```
 
+Independent frames can run in separate processes. Because warm-starting and
+axis-sign continuity depend on the preceding frame, disable both when using
+more than one worker:
+
+```bash
+pycurves-md topology.pdb trajectory.dcd --no-warm-start --no-axis-continuity --workers 2 --mode summary --output-file dynamics.json
+```
+
+The default remains one worker and preserves the sequential trajectory
+semantics. Benchmark the worker count for long trajectories; process startup
+can outweigh the gain on short runs.
+
 For canonical two-strand local-axis (Curves+)/standard-frame trajectories, the
 vectorized batch path can be much faster:
 

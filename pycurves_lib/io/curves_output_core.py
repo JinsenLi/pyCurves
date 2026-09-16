@@ -884,10 +884,13 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
     def _annotations(self) -> Dict[str, List[Dict[str, Any]]]:
         if self._annotation_cache is None:
             ctx = self.runner.ctx
-            frame_observations = getattr(
-                ctx, "annotations", {}
-            ).get("frame_base_pair_observations")
-            self._annotation_cache = annotate_context(ctx)
+            existing = getattr(ctx, "annotations", {})
+            frame_observations = existing.get("frame_base_pair_observations")
+            self._annotation_cache = (
+                existing
+                if "base_pair_annotations" in existing
+                else annotate_context(ctx)
+            )
             if frame_observations is not None:
                 self._annotation_cache["frame_base_pair_observations"] = frame_observations
             from pycurves_lib.core.parameter_conventions import (
