@@ -35,6 +35,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
         topology_mode: str = "reference",
         dssr_json: Optional[str] = None,
         dssr_unit: Optional[str] = None,
+        duplex_only: bool = False,
     ):
         if dssr_json and inpfile:
             raise ValueError("Use either --inp or --dssr-json for trajectory topology, not both.")
@@ -48,6 +49,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
                 axis_convention=axis_convention,
                 axis_weighting=axis_weighting,
                 continuous_strands=continuous_strands,
+                duplex_only=duplex_only,
                 altloc=altloc,
                 fit_override=fit_override,
                 grv_override=grv_override,
@@ -68,6 +70,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
             pdbfile=reference_topology,
             output_dir=output_dir,
             continuous_strands=continuous_strands,
+            duplex_only=duplex_only,
             altloc=altloc,
             frame_convention=frame_convention,
             axis_convention=axis_convention,
@@ -89,6 +92,7 @@ class MDTrajectoryAnalyzer(_core.MDTrajectoryAnalyzer):
             axis_convention=axis_convention,
             axis_weighting=axis_weighting,
             continuous_strands=False,
+            duplex_only=duplex_only,
             altloc=altloc,
             fit_override=fit_override,
             grv_override=grv_override,
@@ -139,6 +143,7 @@ def analyze_trajectory(
     axis_continuity: bool = True,
     dssr_json: Optional[str] = None,
     dssr_unit: Optional[str] = None,
+    duplex_only: bool = False,
 ) -> Dict:
     if mode not in {"per-frame", "summary", "both"}:
         raise ValueError("mode must be one of: per-frame, summary, both")
@@ -154,6 +159,7 @@ def analyze_trajectory(
         axis_convention=axis_convention,
         axis_weighting=axis_weighting,
         continuous_strands=continuous_strands,
+        duplex_only=duplex_only,
         altloc=altloc,
         fit_override=fit,
         grv_override=grooves,

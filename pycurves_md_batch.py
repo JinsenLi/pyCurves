@@ -20,6 +20,7 @@ try:
 except ImportError:  # pragma: no cover - exercised by minimal installations
     msgspec = None
 
+from pycurves_lib.cli.pycurves_cli_options import add_pycurves_topology_options
 from pycurves_lib.io.curves_output import _to_jsonable
 from pycurves_lib.md.trajectory_loader import TrajectoryLoader
 from pycurves_lib.md.trajectory_statistics import (
@@ -150,6 +151,7 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
         inpfile=args.inp,
         output_dir=args.output_dir,
         continuous_strands=args.continuous_strands,
+        duplex_only=getattr(args, "duplex_only", False),
         fit_override=args.fit,
         comb_override=args.comb,
         ends_override=args.ends,
@@ -232,6 +234,7 @@ def run_batch(args, frame_sink: Optional[Callable[[List[Dict]], None]] = None) -
             "batch_size": args.batch_size,
             "workers": workers,
             "continuous_strands": args.continuous_strands,
+            "duplex_only": getattr(args, "duplex_only", False),
             "altloc": args.altloc or "first",
             "fit": True if args.fit is None else args.fit,
             "comb": True if args.comb is None else args.comb,
@@ -340,6 +343,7 @@ def analyze_trajectory_batch(
     fit_quality: bool = False,
     axis_weighting: Optional[bool] = None,
     workers: int = 1,
+    duplex_only: bool = False,
 ) -> Dict:
     """Run the vectorized local-axis/standard-frame MD path from Python.
 
@@ -364,6 +368,7 @@ def analyze_trajectory_batch(
         batch_size=batch_size,
         workers=workers,
         continuous_strands=continuous_strands,
+        duplex_only=duplex_only,
         fit=fit,
         grooves=grooves,
         comb=comb,
@@ -405,8 +410,7 @@ def main() -> None:
         default=1,
         help="Batch worker processes (default: 1). Use 2-4 for long trajectories and benchmark on your system.",
     )
-    parser.add_argument("--continuous-strands", action="store_true", help="Treat connected helical components as continuous during .inp inference.")
-    parser.add_argument("--altloc", help="Alternate conformation such as A or B; default keeps Gemmi's first-listed conformer.")
+    add_pycurves_topology_options(parser)
     parser.add_argument("--fit", action=argparse.BooleanOptionalAction, default=None, help="Override least-squares base fitting; batch mode currently requires true.")
     parser.add_argument("--comb", action=argparse.BooleanOptionalAction, default=None, help="Override combined strand analysis; batch mode currently requires true.")
     parser.add_argument("--ends", action=argparse.BooleanOptionalAction, default=None, help="Override terminal virtual end levels; batch mode currently requires false.")

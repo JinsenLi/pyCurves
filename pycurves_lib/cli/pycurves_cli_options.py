@@ -6,8 +6,13 @@ import argparse
 
 from pycurves_lib.cli.pycurves_cli_options_core import (
     add_pycurves_analysis_options as _add_core_options,
+    add_pycurves_topology_options as _add_core_topology_options,
     pycurves_runner_kwargs as _core_runner_kwargs,
 )
+
+
+def add_pycurves_topology_options(parser: argparse.ArgumentParser) -> None:
+    _add_core_topology_options(parser)
 
 
 def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
@@ -37,4 +42,8 @@ def pycurves_runner_kwargs(args) -> dict:
     return values
 
 
-__all__ = ["add_pycurves_analysis_options", "pycurves_runner_kwargs"]
+__all__ = [
+    "add_pycurves_analysis_options",
+    "add_pycurves_topology_options",
+    "pycurves_runner_kwargs",
+]

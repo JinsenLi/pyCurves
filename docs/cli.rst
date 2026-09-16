@@ -267,12 +267,6 @@ The general trajectory command also accepts the shared frame, axis, fitting,
 groove, input-generation, and DSSR options listed for
 :ref:`pycurves-cli`. The same incompatibilities apply.
 
-.. note::
-
-   ``--duplex-only`` currently appears in the shared parser help, but the
-   public trajectory wrapper does not accept it. Use an explicit ``--inp``
-   topology when duplex-only inference is required for a trajectory.
-
 Example
 ~~~~~~~
 
@@ -319,6 +313,10 @@ options with ``pycurves-md``. Its default output file is
 
    Treat connected helical components as continuous during inferred Curves
    input generation.
+
+.. option:: --duplex-only
+
+   Skip triplex and quadruplex inference and generate two-strand inputs.
 
 .. option:: --altloc CODE
 

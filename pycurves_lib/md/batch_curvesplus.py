@@ -286,6 +286,7 @@ class BatchCurvesPlusMDAnalyzer:
         include_curvesplus_axis_steps: bool = False,
         include_fit_quality: bool = False,
         axis_weighting: Optional[bool] = None,
+        duplex_only: bool = False,
     ):
         self.topology_file = topology_file
         self.altloc = MolecularLoader.normalize_altloc(altloc)
@@ -298,6 +299,7 @@ class BatchCurvesPlusMDAnalyzer:
             inpfile,
             output_dir,
             continuous_strands,
+            duplex_only=duplex_only,
             fit_override=fit_override,
             comb_override=comb_override,
             ends_override=ends_override,
@@ -355,6 +357,7 @@ class BatchCurvesPlusMDAnalyzer:
             pdbfile=topology_file,
             output_dir=output_dir,
             continuous_strands=continuous_strands,
+            duplex_only=overrides.get("duplex_only", False),
             frame_convention="standard",
             axis_convention="local",
             fit_override=overrides.get("fit_override"),

@@ -1,8 +1,8 @@
 import argparse
 
 
-def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
-    """Add pyCurves analysis options shared by structure and trajectory CLIs."""
+def add_pycurves_topology_options(parser: argparse.ArgumentParser) -> None:
+    """Add topology-inference options shared by pyCurves CLIs."""
     parser.add_argument(
         "--continuous-strands",
         action="store_true",
@@ -18,6 +18,11 @@ def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
         help=("Alternate-conformation identifier to analyze, such as A or B. "
               "By default Gemmi keeps the first-listed conformer, not the highest-occupancy conformer."),
     )
+
+
+def add_pycurves_analysis_options(parser: argparse.ArgumentParser) -> None:
+    """Add pyCurves analysis options shared by structure and trajectory CLIs."""
+    add_pycurves_topology_options(parser)
     parser.add_argument(
         "--fit",
         action=argparse.BooleanOptionalAction,

@@ -1,8 +1,7 @@
 pyCurves documentation
 ======================
 
-pyCurves analyzes DNA and RNA geometry from static PDB/mmCIF structures,
-Curves ``.inp`` files, and molecular-dynamics trajectories.
+pyCurves analyzes DNA (and/or RNA) shape from static PDB/mmCIF structures and molecular-dynamics trajectories.
 
 .. warning::
 
@@ -23,31 +22,16 @@ pyCurves requires Python 3.10 or newer. Python 3.12 is recommended.
 
 .. code-block:: console
 
-   git clone https://github.com/JinsenLi/pyCurves.git
+   git clone https://github.com/JinsenLi/pyCurves/
    cd pyCurves
-   python -m pip install .
+   pip install .
 
 Install the optional dependencies for trajectories, plotting, and the batch
 trajectory engine:
 
 .. code-block:: console
 
-   python -m pip install ".[all]"
-
-Install the documentation dependency and build this site:
-
-.. code-block:: console
-
-   python -m pip install ".[docs]"
-   python -m sphinx -W -b html docs docs/_build/html
-
-Preview the built site locally:
-
-.. code-block:: console
-
-   python -m http.server 8000 --directory docs/_build/html
-
-Then open http://127.0.0.1:8000/.
+   pip install ".[all]"
 
 First analysis
 --------------
