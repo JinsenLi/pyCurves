@@ -116,9 +116,15 @@ def _backbone_number(value):
 class CurvesOutputFormatter(VisualizationPayloadMixin):
     """Render pyCurves results as Curves-style text or structured JSON/Pandas."""
 
-    def __init__(self, runner, visualization: bool = False):
+    def __init__(
+        self,
+        runner,
+        visualization: bool = False,
+        fast_groove: bool = False,
+    ):
         self.runner = runner
         self.include_visualization = visualization
+        self.fast_groove = bool(fast_groove and not visualization)
         self._annotation_cache = None
 
     def get_dataframes(self):
@@ -676,7 +682,10 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
         # 7. Groove Parameters
         if ctx.cfg.comb and ctx.nst > 1 and getattr(ctx.cfg, "grv", False):
             if not hasattr(calc, "groove_params"):
-                self._capture(calc.groove)
+                if self.fast_groove:
+                    self._capture(lambda: calc.groove(fast=True))
+                else:
+                    self._capture(calc.groove)
             if hasattr(calc, "groove_params") and calc.groove_params:
                 records["groove"] = self._groove_records(calc.groove_params)
 

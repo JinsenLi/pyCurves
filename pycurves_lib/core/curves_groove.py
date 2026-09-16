@@ -5,6 +5,7 @@ Curves+ smooth-axis adapter hooks used by the main calculator.
 """
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -330,7 +331,91 @@ class GrooveAnalysisMixin:
         tip = self._wrap_180(self._angle_aver(self.ctx.params.helical[0, level, 4], -self.ctx.params.helical[1, level, 4]))
         return float(xdi), float(tip)
 
-    def groove(self):
+    def _fast_groove_rows(
+        self,
+        uxb,
+        cor,
+        dya,
+        ind,
+        nma,
+        box,
+        nsu,
+        spline_start,
+        num,
+        numa,
+        bato,
+        vdw,
+        nlevel,
+    ):
+        """Reuse the compiled scanner after scalar axis/backbone construction."""
+        from pycurves_lib.md.batch_groove import (
+            _SCAN_WINDOW_FROM_BOX_FAST,
+            _scan_groove_frame,
+        )
+
+        if _SCAN_WINDOW_FROM_BOX_FAST is None:
+            return None
+
+        depth_axis = np.full((self.ctx.n_levels + 2, 4), np.nan, dtype=float)
+        for level in range(num, min(numa + 2, depth_axis.shape[0])):
+            xdisp, tip = self._groove_depth_reference(level)
+            depth_axis[level, 0] = xdisp
+            depth_axis[level, 3] = tip
+
+        labels = {
+            (strand, level): label
+            for strand in range(2)
+            for level in range(num, numa + 1)
+            if (label := self._residue_label(strand, level)) is not None
+        }
+        return _scan_groove_frame(
+            SimpleNamespace(_residue_labels=labels),
+            depth_axis,
+            uxb,
+            cor,
+            dya,
+            ind,
+            nma,
+            box,
+            nsu,
+            spline_start,
+            num,
+            numa,
+            bato,
+            abs(int(self.ctx.nu[0])),
+            nlevel,
+            vdw,
+        )
+
+    def _install_fast_groove_rows(self, rows, bato, nlevel):
+        data = {}
+        for row in rows:
+            level = str(row["level"])
+            level_data = data.setdefault(
+                level,
+                {"base_pair": row["base_pair"], "sub_levels": {}},
+            )
+            level_data["sub_levels"][str(row["sub_level"])] = {
+                key: row[key]
+                for key in (
+                    "minor_width",
+                    "minor_depth",
+                    "minor_angle",
+                    "major_width",
+                    "major_depth",
+                    "major_angle",
+                    "diameter",
+                )
+            }
+        self.groove_backbone_splines = []
+        self.groove_params = {
+            "atom_defining_backbone": bato.strip(),
+            "levels": abs(int(self.ctx.nu[0])),
+            "sub_levels": nlevel,
+            "data": data,
+        }
+
+    def groove(self, fast: bool = False):
         if not self.ctx.cfg.comb or self.ctx.nst != 2:
             print("\n  -----------------------")
             print("  |K| Groove parameters |")
@@ -374,7 +459,28 @@ class GrooveAnalysisMixin:
                 numa = i
         uxb, cor, dya, ind, nma = self._groove_axeint(num, numa, nlevel)
         box, nsu, spline_start = self._groove_bacint(nat_index, num, numa, uxb, ind)
+        if fast:
+            rows = self._fast_groove_rows(
+                uxb,
+                cor,
+                dya,
+                ind,
+                nma,
+                box,
+                nsu,
+                spline_start,
+                num,
+                numa,
+                bato,
+                vdw,
+                nlevel,
+            )
+            if rows is not None:
+                self._install_fast_groove_rows(rows, bato, nlevel)
+                return
+
         self.groove_backbone_splines = []
+        self._groove_flat_refs = []
         for strand in range(2):
             spline_points = []
             for sample_index in range(int(nsu[strand]) + 1):
@@ -736,8 +842,6 @@ class GrooveAnalysisMixin:
                 }
                 self.groove_params["data"][str(i)]["sub_levels"][str(n)] = sub_level_data
                 
-                if not hasattr(self, "_groove_flat_refs"):
-                    self._groove_flat_refs = []
                 self._groove_flat_refs.append(sub_level_data)
 
         clear = "   --       --     --"

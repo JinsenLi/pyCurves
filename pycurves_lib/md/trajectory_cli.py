@@ -302,7 +302,7 @@ class MDTrajectoryAnalyzer:
                 ).tolist()
             ]
 
-        formatter = CurvesOutputFormatter(runner)
+        formatter = CurvesOutputFormatter(runner, fast_groove=True)
         dataframes = self._normalize_frame_dataframes(formatter._build_dataframes())
         return (
             dataframes,
