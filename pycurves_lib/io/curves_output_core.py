@@ -340,6 +340,8 @@ class CurvesOutputFormatter(VisualizationPayloadMixin):
     def _analysis_options_payload(self) -> Dict[str, Any]:
         cfg = self.runner.ctx.cfg
         return {
+            "continuous_strands": bool(getattr(self.runner, "continuous_strands", False)),
+            "duplex_only": bool(getattr(self.runner, "duplex_only", False)),
             "comb": bool(getattr(cfg, "comb", False)),
             "groove": bool(getattr(cfg, "grv", False)),
             "ends": bool(getattr(cfg, "ends", False)),
